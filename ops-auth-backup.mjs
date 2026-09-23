@@ -448,6 +448,12 @@ export async function runImport(action, options = {}, deps = {}) {
   const usersJson = JSON.stringify({ users: payload.auth_export.users });
   const temp = path.join(os.tmpdir(), 'resq-auth-import-' + process.pid + '.json');
   const extras = [hashConfig.hash_key, hashConfig.salt_separator, passphrase];
+  const claimsMap = (payload.custom_claims && typeof payload.custom_claims === 'object')
+    ? payload.custom_claims
+    : {};
+  const claimsExpected = payload.includes_custom_claims
+    ? Object.keys(claimsMap).length
+    : 0;
   try {
     fs.writeFileSync(temp, usersJson, { flag: 'wx' });
     if (typeof deps.authImportFn === 'function') {
@@ -468,17 +474,49 @@ export async function runImport(action, options = {}, deps = {}) {
     } else {
       throw new Error('import אמיתי דורש authImportFn מוזרק או allowFirebaseCli מפורש');
     }
+    const importedUsers = countUsers(payload);
     let claimsRestored = 0;
-    if (payload.includes_custom_claims && typeof deps.setCustomUserClaims === 'function') {
-      for (const [uid, claims] of Object.entries(payload.custom_claims || {})) {
-        await deps.setCustomUserClaims(uid, claims, { target: action.target });
-        claimsRestored += 1;
+    let claimsFailed = 0;
+    if (claimsExpected > 0) {
+      if (typeof deps.setCustomUserClaims !== 'function') {
+        return {
+          ok: false,
+          status: 'PARTIAL',
+          imported_users: importedUsers,
+          claims_expected: claimsExpected,
+          claims_restored: 0,
+          claims_failed: claimsExpected,
+          target: action.target,
+          error: 'setCustomUserClaims חסר — הרשאות לא שוחזרו'
+        };
+      }
+      for (const [uid, claims] of Object.entries(claimsMap)) {
+        try {
+          await deps.setCustomUserClaims(uid, claims, { target: action.target });
+          claimsRestored += 1;
+        } catch {
+          // Never log claims or PII.
+          claimsFailed += 1;
+        }
+      }
+      if (claimsFailed > 0) {
+        return {
+          ok: false,
+          status: 'PARTIAL',
+          imported_users: importedUsers,
+          claims_expected: claimsExpected,
+          claims_restored: claimsRestored,
+          claims_failed: claimsFailed,
+          target: action.target
+        };
       }
     }
     return {
       ok: true,
-      imported_users: countUsers(payload),
+      imported_users: importedUsers,
+      claims_expected: claimsExpected,
       claims_restored: claimsRestored,
+      claims_failed: 0,
       target: action.target
     };
   } catch (error) {
@@ -490,38 +528,81 @@ export async function runImport(action, options = {}, deps = {}) {
 
 
 /**
- * Admin SDK claims reader — dynamic import only. Safe for execute path.
- * Reads customClaims per uid via auth.getUser (never logs claim bodies).
+ * Admin SDK claims reader — paginated listUsers (never per-uid getUser N+1).
+ * Missing export users are a hard mismatch (not silent empty claims).
+ * Never logs claim bodies or PII.
  */
 export async function createAdminClaimsProvider(projectId, options = {}) {
-  const root = options.root || ROOT;
-  const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
-  const resolved = require.resolve('firebase-admin');
-  const imported = await import(pathToFileURL(resolved).href);
-  const admin = imported.default || imported;
-  if (!admin.apps.length) admin.initializeApp(projectId ? { projectId } : undefined);
-  const auth = admin.auth();
+  let auth = options.auth || null;
+  const pageSize = Number(options.pageSize) > 0 ? Number(options.pageSize) : 1000;
+  const stats = options.stats || { listUsersCalls: 0 };
+  if (!auth) {
+    const root = options.root || ROOT;
+    const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
+    const resolved = require.resolve('firebase-admin');
+    const imported = await import(pathToFileURL(resolved).href);
+    const admin = imported.default || imported;
+    if (!admin.apps.length) admin.initializeApp(projectId ? { projectId } : undefined);
+    auth = admin.auth();
+  }
   return async function claimsProvider(users) {
-    const out = {};
-    const list = Array.isArray(users) ? users : [];
-    for (const user of list) {
+    const needed = new Set();
+    for (const user of Array.isArray(users) ? users : []) {
       const uid = user && (user.localId || user.uid);
-      if (!uid) continue;
-      try {
-        const record = await auth.getUser(uid);
-        out[uid] = record.customClaims && typeof record.customClaims === 'object'
-          ? record.customClaims
-          : {};
-      } catch (error) {
-        const code = error && error.code;
-        if (code === 'auth/user-not-found') {
-          out[uid] = {};
-          continue;
-        }
-        throw error;
+      if (uid) needed.add(String(uid));
+    }
+    const byUid = new Map();
+    let pageToken;
+    do {
+      stats.listUsersCalls += 1;
+      const result = await auth.listUsers(pageSize, pageToken);
+      const batch = (result && result.users) || [];
+      for (const record of batch) {
+        if (!record || !record.uid) continue;
+        byUid.set(String(record.uid),
+          record.customClaims && typeof record.customClaims === 'object'
+            ? record.customClaims
+            : {});
       }
+      pageToken = result && result.pageToken ? result.pageToken : undefined;
+    } while (pageToken);
+
+    const out = {};
+    let missing = 0;
+    for (const uid of needed) {
+      if (!byUid.has(uid)) {
+        missing += 1;
+        continue;
+      }
+      out[uid] = byUid.get(uid);
+    }
+    if (missing > 0) {
+      const err = new Error('claims coverage mismatch: ' + missing + ' users missing from Auth listUsers');
+      err.code = 'CLAIMS_COVERAGE_MISMATCH';
+      err.missingCount = missing;
+      throw err;
     }
     return out;
+  };
+}
+
+/**
+ * Admin SDK claims writer for import --execute only.
+ * Never logs claim bodies or PII.
+ */
+export async function createAdminClaimsRestorer(projectId, options = {}) {
+  let auth = options.auth || null;
+  if (!auth) {
+    const root = options.root || ROOT;
+    const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
+    const resolved = require.resolve('firebase-admin');
+    const imported = await import(pathToFileURL(resolved).href);
+    const admin = imported.default || imported;
+    if (!admin.apps.length) admin.initializeApp(projectId ? { projectId } : undefined);
+    auth = admin.auth();
+  }
+  return async function setCustomUserClaims(uid, claims) {
+    await auth.setCustomUserClaims(String(uid), claims && typeof claims === 'object' ? claims : {});
   };
 }
 
@@ -538,7 +619,7 @@ async function main() {
     console.log(JSON.stringify(await runExport(action, { env: process.env }, {
       allowFirebaseCli: true,
       claimsProvider,
-      claimsSource: 'admin.getUser',
+      claimsSource: 'admin.listUsers',
       splitClaimsFile: true
     })));
     return;
@@ -547,7 +628,17 @@ async function main() {
     console.log(JSON.stringify(await runVerify(action, { env: process.env })));
     return;
   }
-  console.log(JSON.stringify(await runImport(action, { env: process.env }, { allowFirebaseCli: true })));
+  if (command === 'import') {
+    const setCustomUserClaims = await createAdminClaimsRestorer(action.target);
+    const imported = await runImport(action, { env: process.env }, {
+      allowFirebaseCli: true,
+      setCustomUserClaims
+    });
+    console.log(JSON.stringify(imported));
+    if (!imported.ok) process.exitCode = 1;
+    return;
+  }
+  throw new Error('פקודה לא נתמכת: ' + command);
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;

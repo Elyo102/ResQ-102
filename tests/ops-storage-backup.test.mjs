@@ -7,10 +7,11 @@ import {
   SCHEMA, DEFAULT_BUCKET, DEFAULT_PREFIX, parseArgs,
   refuseProdStorageBucket, runBackup, runVerify,
   runRestore, refuseRestoreTarget, denyTargets, isValidObjectName, objectKey,
-  readManifest
+  readManifest, mapListedFilesToObjects, listMetaMissingRequired, SEAL_PASSPHRASE_ENV
 } from '../ops-storage-backup.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SEAL_ENV = { [SEAL_PASSPHRASE_ENV]: 'correct-horse-storage-seal!!' };
 let passed = 0;
 async function check(name, fn) { await fn(); console.log('PASS ' + name); passed++; }
 
@@ -113,7 +114,7 @@ await check('incremental backup by generation; resume; COMPLETE', async () => {
   });
   const result = await runBackup(
     parseArgs(['backup', '--out', dir, '--execute', '--project', 'demo-src']),
-    { storageApi: api, now: () => new Date('2026-09-23T15:00:00.000Z') }
+    { storageApi: api, env: SEAL_ENV, now: () => new Date('2026-09-23T15:00:00.000Z') }
   );
   assert.equal(result.status, 'COMPLETE');
   assert.equal(result.ok, true);
@@ -128,7 +129,7 @@ await check('incremental backup by generation; resume; COMPLETE', async () => {
   assert.equal(byName[o1].firestore_link.attachment_id, 'a1');
   assert.equal(byName[o3].firestore_link.parent_kind, 'document');
   // resume: second run skips completed
-  const again = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api });
+  const again = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
   assert.equal(again.counts.skipped, 3);
   assert.equal(again.counts.copied, 0);
 });
@@ -144,12 +145,12 @@ await check('partial backup marked PARTIAL/FAILED not success', async () => {
     if (req.name === o2) throw new Error('injected failure');
     return realDownload(req);
   };
-  const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api });
+  const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
   assert.equal(result.ok, false);
   assert.equal(result.status, 'PARTIAL');
   assert.equal(result.counts.copied, 1);
   assert.equal(result.counts.failed, 1);
-  const v = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api });
+  const v = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api, env: SEAL_ENV });
   assert.equal(v.ok, false);
   assert.equal(v.status, 'PARTIAL');
 });
@@ -159,14 +160,17 @@ await check('verify without restore checks local checksums + adapter metadata', 
   const api = createFakeStorage({
     [o1]: { generation: '7', size: 4, contentType: 'application/pdf', md5Hash: 'm1', crc32c: 'c1', bytes: 'data' }
   });
-  await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api });
-  const v = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api, compareRemote: true });
+  await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+  const v = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api, compareRemote: true, env: SEAL_ENV });
   assert.equal(v.ok, true);
-  // Tamper local bytes
+  // One-byte tamper must fail verify
   const manifest = readManifest(dir);
   const file = path.join(dir, manifest.objects[0].backup_destination);
-  fs.writeFileSync(file, 'XXXX');
-  const bad = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api });
+  const orig = fs.readFileSync(file);
+  const flipped = Buffer.from(orig);
+  flipped[0] = (flipped[0] ^ 0xff) & 0xff;
+  fs.writeFileSync(file, flipped);
+  const bad = await runVerify(parseArgs(['verify', '--set', dir]), { storageApi: api, env: SEAL_ENV });
   assert.equal(bad.ok, false);
 });
 
@@ -175,8 +179,8 @@ await check('restore dry-run writes nothing; execute to demo only; no silent ove
   const src = createFakeStorage({
     [o1]: { generation: '9', size: 3, contentType: 'application/pdf', md5Hash: 'm', crc32c: 'c', bytes: 'abc' }
   });
-  await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: src });
-  const dry = await runRestore(parseArgs(['restore', '--set', dir, '--target', 'demo-resq']), { root });
+  await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: src, env: SEAL_ENV });
+  const dry = await runRestore(parseArgs(['restore', '--set', dir, '--target', 'demo-resq']), { root, env: SEAL_ENV });
   assert.equal(dry.dryRun, true);
   assert.equal(dry.writes, 'none');
 
@@ -187,20 +191,20 @@ await check('restore dry-run writes nothing; execute to demo only; no silent ove
   await assert.rejects(
     runRestore(
       parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-      { root, storageApi: dest, env: { RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: '' } }
+      { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: '' } }
     ),
     /ALLOWLIST/
   );
   const ok = await runRestore(
     parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-    { root, storageApi: dest, env: { RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
+    { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
   );
   assert.equal(ok.ok, true);
   assert.equal(ok.written, 1);
   // second restore: exists → skipped, not overwritten
   const again = await runRestore(
     parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
-    { root, storageApi: dest, env: { RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
+    { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
   );
   assert.equal(again.skipped_exists, 1);
   assert.equal(again.written, 0);
@@ -217,7 +221,7 @@ await check('invalid object path fails closed during backup', async () => {
     objects: [{ name: 'evil/path', generation: '1', size: 1, contentType: 't', md5Hash: 'm', crc32c: 'c' }],
     nextPageToken: null
   });
-  const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api });
+  const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
   assert.equal(result.ok, false);
   assert.ok(['FAILED', 'PARTIAL'].includes(result.status));
 });
@@ -227,6 +231,87 @@ await check('refuseProdStorageBucket blocks default production bucket', () => {
   assert.throws(() => refuseProdStorageBucket('station-102-hr-private-europe-west1', { env: {} }), /סירוב|ייצור|production/i);
   assert.doesNotThrow(() => refuseProdStorageBucket('demo-resq-hr-private', { env: {} }));
   assert.doesNotThrow(() => refuseProdStorageBucket('station-102-hr-private-europe-west1', { env: { RESQ_STORAGE_ALLOW_PROD_BUCKET: '1' } }));
+});
+
+
+await check('encrypted backup: no plaintext on disk; wrong passphrase fails clean; one-byte tamper fails', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-enc-'));
+  const SECRET = 'FIXTURE_PLAINTEXT_MEDICAL_MARKER_XYZ';
+  const api = createFakeStorage({
+    [o1]: { generation: '1', size: Buffer.byteLength(SECRET), contentType: 'application/pdf', md5Hash: 'm', crc32c: 'c', bytes: SECRET }
+  });
+  const result = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+  assert.equal(result.ok, true);
+  const manifest = readManifest(dir);
+  assert.equal(manifest.sealed, true);
+  assert.equal(manifest.seal_passphrase_env, SEAL_PASSPHRASE_ENV);
+  assert.equal(JSON.stringify(manifest).includes(SECRET), false);
+  assert.equal(JSON.stringify(manifest).includes(SEAL_ENV[SEAL_PASSPHRASE_ENV]), false);
+  // Walk all files under backup dir — fixture plaintext must not appear clear
+  function walk(d) {
+    for (const name of fs.readdirSync(d)) {
+      const p = path.join(d, name);
+      const st = fs.statSync(p);
+      if (st.isDirectory()) walk(p);
+      else {
+        const buf = fs.readFileSync(p);
+        assert.equal(buf.includes(Buffer.from(SECRET)), false, 'plaintext leaked in ' + p);
+        assert.ok(name.endsWith('.json') || name.endsWith('.bin.enc') || name.includes('state'), 'unexpected file ' + name);
+      }
+    }
+  }
+  walk(dir);
+  const objPath = path.join(dir, manifest.objects[0].backup_destination);
+  assert.ok(objPath.endsWith('.bin.enc'));
+  assert.equal(manifest.objects[0].encrypted, true);
+  // wrong passphrase: verify integrity decrypt fails, no plaintext leftover
+  const wrong = await runVerify(parseArgs(['verify', '--set', dir]), {
+    storageApi: api,
+    env: { [SEAL_PASSPHRASE_ENV]: 'wrong-passphrase-xxxxxxxxxx' }
+  });
+  assert.equal(wrong.ok, false);
+  walk(dir);
+  await assert.rejects(
+    runRestore(
+      parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
+      { root, storageApi: createFakeStorage(), env: { ...SEAL_ENV, [SEAL_PASSPHRASE_ENV]: 'wrong-passphrase-xxxxxxxxxx', RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
+    ),
+    /integrity|פענוח|חותם|auth|failed|נכשל/i
+  );
+  walk(dir);
+});
+
+await check('mapListedFilesToObjects: no N+1 getMetadata when list metadata present', async () => {
+  let fetchCalls = 0;
+  const files = [];
+  for (let i = 0; i < 50; i++) {
+    files.push({
+      name: 'hr-private/eilat_102/request/p/a' + i,
+      metadata: {
+        generation: String(1000 + i),
+        size: 10 + i,
+        contentType: 'application/pdf',
+        md5Hash: 'm' + i,
+        crc32c: 'c' + i,
+        updated: '2026-01-01T00:00:00.000Z',
+        metadata: {}
+      }
+    });
+  }
+  const mapped = await mapListedFilesToObjects(files, {
+    fetchMetadata: async () => { fetchCalls += 1; return {}; }
+  });
+  assert.equal(mapped.objects.length, 50);
+  assert.equal(mapped.fetchCalls, 0);
+  assert.equal(fetchCalls, 0);
+  assert.equal(listMetaMissingRequired(files[0].metadata), false);
+  // Missing generation triggers exactly one fetch
+  const sparse = [{ name: 'hr-private/eilat_102/request/p/z', metadata: { size: 3 } }];
+  const mapped2 = await mapListedFilesToObjects(sparse, {
+    fetchMetadata: async () => ({ generation: '9', size: 3, contentType: 't', md5Hash: '', crc32c: '' })
+  });
+  assert.equal(mapped2.fetchCalls, 1);
+  assert.equal(mapped2.objects[0].generation, '9');
 });
 
 console.log('ops-storage-backup: ' + passed + '/' + passed + ' PASS (fake adapter; no real files/medical data)');

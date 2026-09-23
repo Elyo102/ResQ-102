@@ -9,7 +9,7 @@ import {
   assertExternalDestination, backupManifest, plan, collectHashConfig,
   buildAuthPayload, selectClaimsForBackup, parsePayload, runExport, runImport,
   runVerify, refuseImportTarget, denyImportTargets, redactSecrets, fingerprint,
-  hashConfigFingerprints
+  hashConfigFingerprints, createAdminClaimsProvider, createAdminClaimsRestorer
 } from '../ops-auth-backup.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -196,8 +196,11 @@ await checkAsync('import restores users+claims on demo via adapters; station-102
         setCustomUserClaims: async (uid, claims) => { calls.claims.push({ uid, claims }); }
       }
     );
+    assert.equal(imported.ok, true);
     assert.equal(imported.imported_users, 1);
+    assert.equal(imported.claims_expected, 1);
     assert.equal(imported.claims_restored, 1);
+    assert.equal(imported.claims_failed, 0);
     assert.equal(calls.import, 1);
     assert.deepEqual(calls.claims[0].claims.role, 'firefighter');
     assert.throws(
@@ -216,6 +219,147 @@ await checkAsync('import restores users+claims on demo via adapters; station-102
     fs.rmSync(outside, { recursive: true, force: true });
   }
 });
+
+
+await checkAsync('import user without claims succeeds without restorer', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-auth-noclaim-'));
+  try {
+    const exported = await runExport(
+      plan('export', { project: 'demo-resq', out: outside, execute: true }),
+      { env: hashEnv },
+      {
+        authExportFn: async () => JSON.stringify({ users: [{ localId: 'u0', email: 'n@test', passwordHash: 'H' }] }),
+        claimsProvider: async () => ({}),
+        claimsSource: 'fixture'
+      }
+    );
+    const imported = await runImport(
+      plan('import', { file: exported.file, target: 'resq-dr-demo', confirmTarget: 'resq-dr-demo', execute: true, root }),
+      { env: { ...hashEnv, RESQ_AUTH_IMPORT_TARGET_ALLOWLIST: 'resq-dr-demo' } },
+      { authImportFn: async () => {} }
+    );
+    assert.equal(imported.ok, true);
+    assert.equal(imported.claims_expected, 0);
+    assert.equal(imported.claims_restored, 0);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+await checkAsync('import with claims but missing restorer is PARTIAL not ok', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-auth-missrest-'));
+  try {
+    const exported = await runExport(
+      plan('export', { project: 'demo-resq', out: outside, execute: true }),
+      { env: hashEnv },
+      {
+        authExportFn: async () => JSON.stringify({ users: [{ localId: 'u1', email: 'a@test', passwordHash: 'H' }] }),
+        claimsProvider: async () => ({ u1: { role: 'admin' } }),
+        claimsSource: 'fixture'
+      }
+    );
+    const imported = await runImport(
+      plan('import', { file: exported.file, target: 'resq-dr-demo', confirmTarget: 'resq-dr-demo', execute: true, root }),
+      { env: { ...hashEnv, RESQ_AUTH_IMPORT_TARGET_ALLOWLIST: 'resq-dr-demo' } },
+      { authImportFn: async () => {} }
+    );
+    assert.equal(imported.ok, false);
+    assert.equal(imported.status, 'PARTIAL');
+    assert.equal(imported.claims_expected, 1);
+    assert.equal(imported.claims_failed, 1);
+    assert.equal(imported.claims_restored, 0);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+await checkAsync('import mid-failure claims restore returns PARTIAL counts', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-auth-midfail-'));
+  try {
+    const exported = await runExport(
+      plan('export', { project: 'demo-resq', out: outside, execute: true }),
+      { env: hashEnv },
+      {
+        authExportFn: async () => JSON.stringify({
+          users: [
+            { localId: 'ok1', email: 'a@test', passwordHash: 'H' },
+            { localId: 'bad2', email: 'b@test', passwordHash: 'I' }
+          ]
+        }),
+        claimsProvider: async () => ({ ok1: { role: 'user' }, bad2: { role: 'admin' } }),
+        claimsSource: 'fixture'
+      }
+    );
+    const imported = await runImport(
+      plan('import', { file: exported.file, target: 'resq-dr-demo', confirmTarget: 'resq-dr-demo', execute: true, root }),
+      { env: { ...hashEnv, RESQ_AUTH_IMPORT_TARGET_ALLOWLIST: 'resq-dr-demo' } },
+      {
+        authImportFn: async () => {},
+        setCustomUserClaims: async (uid) => {
+          if (uid === 'bad2') throw new Error('injected');
+        }
+      }
+    );
+    assert.equal(imported.ok, false);
+    assert.equal(imported.status, 'PARTIAL');
+    assert.equal(imported.imported_users, 2);
+    assert.equal(imported.claims_expected, 2);
+    assert.equal(imported.claims_restored, 1);
+    assert.equal(imported.claims_failed, 1);
+    assert.equal(JSON.stringify(imported).includes('admin'), false);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+await checkAsync('createAdminClaimsProvider uses paginated listUsers not N+1 getUser', async () => {
+  const TOTAL = 3000;
+  const PAGE = 1000;
+  const users = [];
+  for (let i = 0; i < TOTAL; i++) users.push({ localId: 'u' + i });
+  let listUsersCalls = 0;
+  let getUserCalls = 0;
+  const auth = {
+    async listUsers(max, pageToken) {
+      listUsersCalls += 1;
+      const start = pageToken ? Number(pageToken) : 0;
+      const slice = [];
+      for (let i = start; i < Math.min(start + max, TOTAL); i++) {
+        slice.push({ uid: 'u' + i, customClaims: i % 10 === 0 ? { role: 'r' } : {} });
+      }
+      const next = start + max < TOTAL ? String(start + max) : undefined;
+      return { users: slice, pageToken: next };
+    },
+    async getUser() { getUserCalls += 1; throw new Error('getUser must not be used'); }
+  };
+  const stats = { listUsersCalls: 0 };
+  const provider = await createAdminClaimsProvider('demo', { auth, pageSize: PAGE, stats });
+  const claims = await provider(users);
+  assert.equal(Object.keys(claims).length, TOTAL);
+  assert.equal(stats.listUsersCalls, 3);
+  assert.equal(listUsersCalls, 3);
+  assert.equal(getUserCalls, 0);
+  // missing user must not silently become empty claims
+  const sparseAuth = {
+    async listUsers() {
+      return { users: [{ uid: 'only', customClaims: {} }], pageToken: undefined };
+    }
+  };
+  const sparse = await createAdminClaimsProvider('demo', { auth: sparseAuth, stats: { listUsersCalls: 0 } });
+  await assert.rejects(sparse([{ localId: 'missing-user' }]), /coverage mismatch|missing/);
+});
+
+await checkAsync('createAdminClaimsRestorer wires setCustomUserClaims', async () => {
+  const calls = [];
+  const auth = {
+    async setCustomUserClaims(uid, claims) { calls.push({ uid, claims }); }
+  };
+  const restore = await createAdminClaimsRestorer('demo', { auth });
+  await restore('u1', { role: 'x' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].uid, 'u1');
+});
+
 
 const dry = spawnSync(process.execPath, ['ops-auth-backup.mjs', 'export', '--project', 'station-102', '--out', path.join(os.tmpdir(), 'resq-auth-cli-dry')], {
   cwd: root, encoding: 'utf8', env: { ...process.env, RESQ_AUTH_BACKUP_PASSPHRASE: '' }

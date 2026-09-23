@@ -9,6 +9,7 @@
  *   hr-private/{station_id}/{parent_kind}/{parent_id}/{attachment_id}
  *
  * Real medical/PII bytes never appear in tests; adapters are injectable.
+ * Object bytes are AES-256-GCM sealed via ops-backup-seal (passphrase env only).
  * Partial runs are marked FAILED/PARTIAL — never success.
  * Restore targets refuse station-102 and .firebaserc default.
  *
@@ -19,11 +20,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
+import os from 'node:os';
+import {
+  sealBuffer, unsealBuffer, requireSealPassphrase, sealedFileStats,
+  SEAL_PASSPHRASE_ENV, SEAL_SCHEMA
+} from './ops-backup-seal.mjs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const SCHEMA = 'resq-storage-backup-v1';
+export const SCHEMA = 'resq-storage-backup-v2';
 export const MANIFEST_NAME = 'storage-manifest.json';
 export const STATE_NAME = 'storage-backup-state.json';
 export const DEFAULT_BUCKET = 'station-102-hr-private-europe-west1';
@@ -32,7 +38,7 @@ export const HARD_DENY_TARGETS = Object.freeze(['station-102']);
 export const OBJECT_PATH_RE = /^hr-private\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/;
 
 const sha256Hex = (input) => createHash('sha256').update(input).digest('hex');
-export { sha256Hex };
+export { sha256Hex, SEAL_PASSPHRASE_ENV, SEAL_SCHEMA };
 
 export function denyTargets(options = {}) {
   const deny = new Set(HARD_DENY_TARGETS);
@@ -152,20 +158,84 @@ export function writeManifest(dir, manifest) {
   fs.renameSync(tmp, file);
 }
 
-function durableObjectFile(dir, name, generation, bytes) {
+/**
+ * Write sealed object bytes only. Never leaves plaintext on disk.
+ * On any failure: remove temp/partial files.
+ */
+function durableObjectFile(dir, name, generation, plainBytes, passphrase) {
   const safe = Buffer.from(objectKey(name, generation)).toString('base64url');
   const objectsDir = path.join(dir, 'objects');
   fs.mkdirSync(objectsDir, { recursive: true, mode: 0o700 });
-  const dest = path.join(objectsDir, safe + '.bin');
+  const dest = path.join(objectsDir, safe + '.bin.enc');
   if (fs.existsSync(dest)) throw new Error('אובייקט גיבוי כבר קיים (אין דריסה שקטה): ' + name + '#' + generation);
-  const fd = fs.openSync(dest, 'wx', 0o600);
+  const tmp = dest + '.tmp-' + process.pid + '-' + Date.now();
   try {
-    fs.writeFileSync(fd, bytes);
-    if (typeof fs.fsyncSync === 'function') fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+    const box = sealBuffer(plainBytes, passphrase);
+    const encBytes = Buffer.from(JSON.stringify(box));
+    const stats = sealedFileStats(encBytes);
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, encBytes);
+      if (typeof fs.fsyncSync === 'function') fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, dest);
+    return {
+      relative: path.join('objects', safe + '.bin.enc'),
+      enc_sha256: stats.enc_sha256,
+      enc_bytes: stats.enc_bytes,
+      plain_sha256: box.plain_sha256,
+      plain_bytes: box.plain_bytes,
+      encrypted: true,
+      seal_schema: SEAL_SCHEMA
+    };
+  } catch (error) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* best-effort */ }
+    try { if (fs.existsSync(dest)) fs.unlinkSync(dest); } catch { /* best-effort */ }
+    throw error;
   }
-  return { relative: path.join('objects', safe + '.bin'), sha256: sha256Hex(bytes), bytes: bytes.length };
+}
+
+/** Required list metadata fields — fetch getMetadata only when missing. */
+export function listMetaMissingRequired(meta) {
+  if (!meta || typeof meta !== 'object') return true;
+  if (meta.generation === undefined || meta.generation === null || meta.generation === '') return true;
+  if (meta.size === undefined || meta.size === null || meta.size === '') return true;
+  return false;
+}
+
+/**
+ * Map GCS list File-like entries to backup object metadata.
+ * Calls fetchMetadata only when list metadata lacks required fields (kills N+1).
+ */
+export async function mapListedFilesToObjects(files, options = {}) {
+  const fetchMetadata = options.fetchMetadata;
+  let fetchCalls = 0;
+  const objects = [];
+  for (const file of files || []) {
+    const name = file && (file.name || (file.metadata && file.metadata.name));
+    let meta = { ...(file && file.metadata ? file.metadata : {}) };
+    if (listMetaMissingRequired(meta)) {
+      if (typeof fetchMetadata !== 'function') {
+        throw new Error('מטא-דאטה חסרה מ-list ואין fetchMetadata');
+      }
+      fetchCalls += 1;
+      const fresh = await fetchMetadata(file);
+      meta = { ...meta, ...(fresh || {}) };
+    }
+    objects.push({
+      name: name,
+      generation: String(meta.generation || ''),
+      size: Number(meta.size || 0),
+      contentType: meta.contentType || 'application/octet-stream',
+      md5Hash: meta.md5Hash || '',
+      crc32c: meta.crc32c || '',
+      updated: meta.updated || '',
+      metadata: meta.metadata || {}
+    });
+  }
+  return { objects, fetchCalls };
 }
 
 /**
@@ -192,6 +262,8 @@ export async function runBackup(args, options = {}) {
   if (!api || typeof api.listObjects !== 'function') {
     throw new Error('backup אמיתי דורש storageApi מוזרק (אין הורדת production בבדיקות)');
   }
+  const env = options.env || process.env;
+  const passphrase = requireSealPassphrase(env[SEAL_PASSPHRASE_ENV]);
   const dest = path.resolve(args.out);
   fs.mkdirSync(dest, { recursive: true, mode: 0o700 });
   const state = readState(dest);
@@ -224,17 +296,21 @@ export async function runBackup(args, options = {}) {
         if (Number.isFinite(Number(obj.size)) && bytes.length !== Number(obj.size)) {
           throw new Error('גודל הבייטים אינו תואם למטא-דאטה');
         }
-        const stored = durableObjectFile(dest, obj.name, obj.generation, bytes);
+        const stored = durableObjectFile(dest, obj.name, obj.generation, bytes, passphrase);
         const entry = {
           name: obj.name,
           generation: String(obj.generation),
-          size: bytes.length,
+          size: stored.plain_bytes,
           contentType: obj.contentType || null,
           md5Hash: obj.md5Hash || null,
           crc32c: obj.crc32c || null,
           backup_time: nowIso,
           backup_destination: stored.relative,
-          content_sha256: stored.sha256,
+          encrypted: true,
+          seal_schema: stored.seal_schema,
+          content_sha256: stored.enc_sha256,
+          enc_bytes: stored.enc_bytes,
+          plain_sha256: stored.plain_sha256,
           firestore_link: {
             // Preserve link between Firestore attachment metadata and object generation.
             object_path: obj.name,
@@ -277,6 +353,9 @@ export async function runBackup(args, options = {}) {
     prefix: args.prefix,
     source_project: args.project || null,
     created_at: nowIso,
+    sealed: true,
+    seal_schema: SEAL_SCHEMA,
+    seal_passphrase_env: SEAL_PASSPHRASE_ENV,
     counts: { listed, copied, skipped, failed, entries: entries.length },
     errors,
     objects: entries
@@ -311,15 +390,43 @@ export async function runVerify(args, options = {}) {
     errors.push('status=COMPLETE אך יש כשלונות');
   }
   const api = options.storageApi;
+  const env = options.env || process.env;
+  const passphrase = env[SEAL_PASSPHRASE_ENV] ? requireSealPassphrase(env[SEAL_PASSPHRASE_ENV]) : null;
   for (const obj of manifest.objects || []) {
     const file = path.join(dir, obj.backup_destination);
     if (!fs.existsSync(file)) {
       errors.push('קובץ גיבוי חסר: ' + obj.name);
       continue;
     }
+    if (obj.encrypted !== true) {
+      errors.push('אובייקט גיבוי אינו מוצפן: ' + obj.name);
+      continue;
+    }
     const bytes = fs.readFileSync(file);
-    if (bytes.length !== obj.size) errors.push('גודל מקומי לא תואם: ' + obj.name);
-    if (sha256Hex(bytes) !== obj.content_sha256) errors.push('sha256 מקומי לא תואם: ' + obj.name);
+    if (Number.isInteger(obj.enc_bytes) && bytes.length !== obj.enc_bytes) {
+      errors.push('enc_bytes מקומי לא תואם: ' + obj.name);
+    }
+    if (obj.content_sha256 && sha256Hex(bytes) !== obj.content_sha256) {
+      errors.push('enc_sha256 מקומי לא תואם: ' + obj.name);
+    }
+    let box = null;
+    try {
+      box = JSON.parse(bytes.toString('utf8'));
+      if (!box || box.schema !== SEAL_SCHEMA) errors.push('seal schema לא נתמך: ' + obj.name);
+      if (obj.plain_sha256 && box.plain_sha256 && obj.plain_sha256 !== box.plain_sha256) {
+        errors.push('plain_sha256 בחותם אינו תואם למניפסט: ' + obj.name);
+      }
+    } catch {
+      errors.push('קובץ חתום אינו JSON תקין: ' + obj.name);
+    }
+    // Authenticated integrity check without restore when passphrase present.
+    if (passphrase && box) {
+      try {
+        unsealBuffer(box, passphrase);
+      } catch {
+        errors.push('integrity/פענוח נכשל: ' + obj.name);
+      }
+    }
     // Optional compare to live/adapter metadata (verify --compare-remote). Restore uses local-only.
     if (options.compareRemote && api && typeof api.getMetadata === 'function') {
       const meta = await api.getMetadata({ name: obj.name, generation: obj.generation });
@@ -328,6 +435,9 @@ export async function runVerify(args, options = {}) {
         if (String(meta.generation) !== String(obj.generation)) errors.push('generation לא תואם: ' + obj.name);
         if (meta.md5Hash && obj.md5Hash && meta.md5Hash !== obj.md5Hash) errors.push('md5Hash לא תואם: ' + obj.name);
         if (meta.crc32c && obj.crc32c && meta.crc32c !== obj.crc32c) errors.push('crc32c לא תואם: ' + obj.name);
+        if (Number.isFinite(Number(meta.size)) && Number.isInteger(obj.size) && Number(meta.size) !== obj.size) {
+          errors.push('גודל מקור לא תואם ל-plain_bytes: ' + obj.name);
+        }
       }
     }
     if (!obj.firestore_link || obj.firestore_link.object_generation !== String(obj.generation)) {
@@ -363,19 +473,25 @@ export async function runRestore(args, options = {}) {
     throw new Error('restore אמיתי דורש storageApi.uploadObject');
   }
   const dir = path.resolve(args.set);
-  const verification = await runVerify({ set: dir, command: 'verify' }, options);
+  const passphrase = requireSealPassphrase(env[SEAL_PASSPHRASE_ENV]);
+  const verification = await runVerify({ set: dir, command: 'verify' }, { ...options, env });
   if (!verification.ok) throw new Error('הסט נכשל באימות לפני שחזור: ' + verification.errors.join('; '));
   const manifest = readManifest(dir);
   const written = [];
   const skipped_exists = [];
   const errors = [];
   for (const obj of manifest.objects || []) {
-    const bytes = fs.readFileSync(path.join(dir, obj.backup_destination));
+    const encPath = path.join(dir, obj.backup_destination);
+    let plain = null;
+    let tempFile = null;
     try {
+      const encBytes = fs.readFileSync(encPath);
+      const box = JSON.parse(encBytes.toString('utf8'));
+      plain = unsealBuffer(box, passphrase);
       await api.uploadObject({
         name: obj.name,
         generation: obj.generation,
-        bytes,
+        bytes: plain,
         contentType: obj.contentType,
         metadata: {
           resq_firestore_link: JSON.stringify(obj.firestore_link || {}),
@@ -388,7 +504,12 @@ export async function runRestore(args, options = {}) {
       if (error && (error.code === 'precondition-failed' || /exists|precondition/i.test(String(error.message)))) {
         skipped_exists.push(obj.name);
       } else {
-        errors.push(obj.name + ': ' + error.message);
+        errors.push(obj.name + ': ' + (error && error.message ? error.message : String(error)));
+      }
+    } finally {
+      plain = null;
+      if (tempFile) {
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { /* best-effort */ }
       }
     }
   }
@@ -463,22 +584,14 @@ export async function loadStorageApi(bucketName, options = {}) {
       const query = { prefix: prefix || '', autoPaginate: false, maxResults: PAGE };
       if (pageToken) query.pageToken = pageToken;
       const [files, , apiResponse] = await bucket.getFiles(query);
-      const objects = [];
-      for (const file of files) {
-        const [meta] = await file.getMetadata();
-        objects.push({
-          name: file.name,
-          generation: String(meta.generation || ''),
-          size: Number(meta.size || 0),
-          contentType: meta.contentType || 'application/octet-stream',
-          md5Hash: meta.md5Hash || '',
-          crc32c: meta.crc32c || '',
-          updated: meta.updated || '',
-          metadata: meta.metadata || {}
-        });
-      }
+      const mapped = await mapListedFilesToObjects(files, {
+        fetchMetadata: async (file) => {
+          const [meta] = await file.getMetadata();
+          return meta;
+        }
+      });
       const nextPageToken = (apiResponse && apiResponse.nextPageToken) || null;
-      return { objects, nextPageToken };
+      return { objects: mapped.objects, nextPageToken, fetchMetadataCalls: mapped.fetchCalls };
     },
     async downloadObject({ name, generation }) {
       const file = bucket.file(name, generation ? { generation } : undefined);
