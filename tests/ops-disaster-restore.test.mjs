@@ -716,7 +716,7 @@ try {
   });
 
 
-  
+
   await check('identity gate skip with docs present → ok false (execute fail-closed)', async () => {
     const api = createFakeApi();
     delete api.commitAtomic;

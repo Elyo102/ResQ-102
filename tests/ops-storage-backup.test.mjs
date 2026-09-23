@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   SCHEMA, DEFAULT_BUCKET, DEFAULT_PREFIX, parseArgs,
@@ -50,7 +51,9 @@ function createFakeStorage(seed = {}) {
       return Buffer.from(item.bytes);
     },
     async getMetadata({ name, generation }) {
-      const item = store.get(objectKey(name, generation));
+      const item = generation === undefined
+        ? [...store.values()].filter((o) => o.name === name).sort((a, b) => Number(b.generation) - Number(a.generation))[0]
+        : store.get(objectKey(name, generation));
       if (!item) return null;
       const { bytes, ...meta } = item;
       return meta;
@@ -94,6 +97,15 @@ await check('path template validation', async () => {
   assert.equal(isValidObjectName(o1), true);
   assert.equal(isValidObjectName('hr-private/bad'), false);
   assert.equal(isValidObjectName('other/x/y/z/w'), false);
+});
+
+await check('backup command exits nonzero for PARTIAL and zero for COMPLETE', async () => {
+  const moduleUrl = new URL('../ops-storage-backup.mjs', import.meta.url).href;
+  for (const [status, expectedCode] of [['PARTIAL', 1], ['COMPLETE', 0]]) {
+    const script = `import { reportBackupCommandResult } from ${JSON.stringify(moduleUrl)}; reportBackupCommandResult({ok:${status === 'COMPLETE'},status:'${status}'},()=>{});`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(child.status, expectedCode, child.stderr);
+  }
 });
 
 await check('backup dry-run opens no content and loads no api', async () => {
@@ -207,6 +219,7 @@ await check('restore dry-run writes nothing; execute to demo only; no silent ove
     { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
   );
   assert.equal(again.skipped_exists, 1);
+  assert.equal(again.ok, true);
   assert.equal(again.written, 0);
   assert.equal(Buffer.from(dest.store.get(objectKey(o1, '9')).bytes).toString(), 'abc');
 });
@@ -360,6 +373,55 @@ await check('mid-page stop/resume: sibling on same page is backed up; COMPLETE o
   assert.equal(manifest.counts.failed, 0);
 });
 
+await check('failed object before next page remains pending until copied', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-failed-page-'));
+  const api = createFakeStorage({
+    [o1]: { generation: '1', size: 2, bytes: 'p1' },
+    [o2]: { generation: '2', size: 2, bytes: 'p2' },
+    [o3]: { generation: '3', size: 2, bytes: 'p3' }
+  });
+  const realList = api.listObjects.bind(api);
+  let abortOnLaterPage = true;
+  api.listObjects = async (req) => {
+    if (req.pageToken && abortOnLaterPage) throw new Error('injected later-page interruption');
+    return realList(req);
+  };
+  const firstPage = await realList({ prefix: DEFAULT_PREFIX, pageToken: null });
+  const failedName = firstPage.objects[0].name;
+  const realDownload = api.downloadObject.bind(api);
+  let failOnce = true;
+  api.downloadObject = async (req) => {
+    if (req.name === failedName && failOnce) {
+      failOnce = false;
+      throw new Error('injected download failure');
+    }
+    return realDownload(req);
+  };
+  const first = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+  assert.equal(first.ok, false);
+  assert.equal(readState(dir).pendingFailures[objectKey(failedName, firstPage.objects[0].generation)].includes('injected'), true);
+  abortOnLaterPage = false;
+  const second = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+  assert.equal(second.ok, true);
+  assert.deepEqual(readManifest(dir).objects.map((o) => o.name).sort(), [o1, o2, o3].sort());
+  assert.deepEqual(readState(dir).pendingFailures, {});
+});
+
+await check('resumed backup refuses missing or damaged completed ciphertext', async () => {
+  for (const damage of ['delete', 'corrupt']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-damaged-'));
+    const api = createFakeStorage({ [o1]: { generation: '1', size: 2, bytes: 'ok' } });
+    await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+    const file = path.join(dir, readManifest(dir).objects[0].backup_destination);
+    if (damage === 'delete') fs.unlinkSync(file);
+    else fs.writeFileSync(file, 'corrupt');
+    const resumed = await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: api, env: SEAL_ENV });
+    assert.equal(resumed.ok, false);
+    assert.equal(resumed.status, 'PARTIAL');
+    assert.match(resumed.errors.join(' '), /גיבוי|פענוח/);
+  }
+});
+
 await check('restore prefers newest generation per object name (not old-first)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-gens-'));
   const api = createFakeStorage({
@@ -397,6 +459,21 @@ await check('restore prefers newest generation per object name (not old-first)',
   assert.equal(byName.length, 1);
   assert.equal(Buffer.from(byName[0].bytes).toString(), 'new');
   assert.equal(String(byName[0].generation), '2');
+});
+
+await check('existing older destination bytes cannot be reported as restored', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-st-old-dest-'));
+  const source = createFakeStorage({ [o1]: { generation: '2', size: 3, bytes: 'new' } });
+  await runBackup(parseArgs(['backup', '--out', dir, '--execute']), { storageApi: source, env: SEAL_ENV });
+  const dest = createFakeStorage({ [o1]: { generation: '1', size: 3, bytes: 'old' } });
+  const result = await runRestore(
+    parseArgs(['restore', '--set', dir, '--target', 'demo-resq', '--execute', '--confirm-target', 'demo-resq']),
+    { root, storageApi: dest, env: { ...SEAL_ENV, RESQ_STORAGE_RESTORE_TARGET_ALLOWLIST: 'demo-resq' } }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.skipped_exists, 0);
+  assert.match(result.errors.join(' '), /שונה מהגיבוי/);
+  assert.equal(Buffer.from(dest.store.get(objectKey(o1, '1')).bytes).toString(), 'old');
 });
 
 console.log('ops-storage-backup: ' + passed + '/' + passed + ' PASS (fake adapter; no real files/medical data)');

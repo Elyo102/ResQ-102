@@ -55,7 +55,9 @@ Operator → OWNER → Billing (if platform backup cost/PITR) → legal/privacy 
 | Signing | `RESQ_RESTORE_SIGNING_KEY` required for execute |
 | Drill | Latest drill report OK or NOT RUN reasons understood |
 | Sheet backup | Not counted as active protection while retired/fail-closed |
-| PITR / schedules | Not claimed active without OWNER evidence |
+| PITR / schedules | Read-only GCP check on 2026-09-23 confirmed PITR, daily and weekly schedules, and a latest backup in READY; recheck freshness before a drill |
+
+If a resumed Storage backup reports `PARTIAL` because a completed encrypted file is missing or damaged, preserve the failed set for diagnosis and start a new destination. Do not delete or overwrite the old set, and do not count it as a successful backup.
 
 ## RPO / RTO
 

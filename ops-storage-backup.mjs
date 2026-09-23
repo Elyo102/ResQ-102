@@ -150,6 +150,26 @@ export function readManifest(dir) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+function archivedEntryError(dir, entry, passphrase) {
+  const objectsDir = path.resolve(dir, 'objects');
+  const file = path.resolve(dir, String(entry.backup_destination || ''));
+  if (!file.startsWith(objectsDir + path.sep)) return 'נתיב קובץ גיבוי לא תקין: ' + entry.name;
+  if (!fs.existsSync(file)) return 'קובץ גיבוי חסר: ' + entry.name;
+  try {
+    const bytes = fs.readFileSync(file);
+    if (bytes.length !== entry.enc_bytes || sha256Hex(bytes) !== entry.content_sha256) {
+      return 'קובץ גיבוי פגום: ' + entry.name;
+    }
+    const plain = unsealBuffer(JSON.parse(bytes.toString('utf8')), passphrase);
+    if (plain.length !== entry.size || sha256Hex(plain) !== entry.plain_sha256) {
+      return 'תוכן גיבוי אינו תואם למניפסט: ' + entry.name;
+    }
+    return null;
+  } catch {
+    return 'פענוח קובץ גיבוי נכשל: ' + entry.name;
+  }
+}
+
 export function writeManifest(dir, manifest) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, MANIFEST_NAME);
@@ -269,12 +289,25 @@ export async function runBackup(args, options = {}) {
   const state = readState(dest);
   const completed = new Set(Array.isArray(state.completed) ? state.completed : []);
   const entries = Array.isArray(state.entries) ? state.entries.slice() : [];
+  if (state.status !== 'new' && (state.bucket !== args.bucket || state.prefix !== args.prefix)) {
+    throw new Error('מצב גיבוי קיים שייך לדלי או לתחילית אחרים');
+  }
+  const pendingFailures = new Map(Object.entries(state.pendingFailures || {}));
+  const entriesByKey = new Map(entries.map((entry) => [objectKey(entry.name, entry.generation), entry]));
+  const checkedArchiveKeys = new Set();
+  if (entriesByKey.size !== entries.length || completed.size !== entries.length ||
+      [...completed].some((key) => !entriesByKey.has(key))) {
+    throw new Error('מצב גיבוי אינו תואם לרשומות הקבצים שהושלמו');
+  }
   const nowIso = (options.now ? options.now() : new Date()).toISOString();
   // cursor is the pageToken used to FETCH the page currently being processed
   // (page-start token). It advances to nextPageToken only after the whole page
   // has been attempted — so a mid-page crash resumes the same page and skips
   // via the completed Set, instead of silently dropping remaining siblings.
-  let pageToken = state.cursor || null;
+  // Older interrupted state did not persist per-object failures. Re-scan it
+  // from the beginning so an earlier failed page cannot disappear on resume.
+  let pageToken = state.status !== 'new' && !Object.hasOwn(state, 'pendingFailures')
+    ? null : (state.cursor || null);
   let pageStartToken = pageToken;
   let listed = 0;
   let copied = 0;
@@ -291,6 +324,7 @@ export async function runBackup(args, options = {}) {
       cursor,
       completed: [...completed],
       entries,
+      pendingFailures: Object.fromEntries(pendingFailures),
       updated_at: nowIso
     });
   };
@@ -300,11 +334,15 @@ export async function runBackup(args, options = {}) {
       pageStartToken = pageToken;
       const page = await api.listObjects({ prefix: args.prefix, pageToken });
       const objects = Array.isArray(page.objects) ? page.objects : [];
+      let pageFailed = false;
       for (const obj of objects) {
         listed += 1;
         if (!isValidObjectName(obj.name, args.prefix)) {
           failed += 1;
-          errors.push('נתיב לא תואם לתבנית hr-private: ' + String(obj.name));
+          pageFailed = true;
+          const message = 'נתיב לא תואם לתבנית hr-private: ' + String(obj.name);
+          errors.push(message);
+          pendingFailures.set('invalid:' + String(obj.name), message);
           persistProgress('IN_PROGRESS', pageStartToken);
           if (typeof options.afterObjectHook === 'function') {
             options.afterObjectHook({ obj, key: null, pageStartToken, failed: true });
@@ -313,7 +351,18 @@ export async function runBackup(args, options = {}) {
         }
         const key = objectKey(obj.name, obj.generation);
         if (completed.has(key)) {
-          skipped += 1;
+          const archiveError = archivedEntryError(dest, entriesByKey.get(key), passphrase);
+          checkedArchiveKeys.add(key);
+          if (archiveError) {
+            failed += 1;
+            pageFailed = true;
+            errors.push(archiveError);
+            pendingFailures.set(key, archiveError);
+          } else {
+            skipped += 1;
+            pendingFailures.delete(key);
+          }
+          persistProgress('IN_PROGRESS', pageStartToken);
           if (typeof options.afterObjectHook === 'function') {
             options.afterObjectHook({ obj, key, pageStartToken, skipped: true });
           }
@@ -352,18 +401,29 @@ export async function runBackup(args, options = {}) {
             }
           };
           entries.push(entry);
+          entriesByKey.set(key, entry);
           completed.add(key);
+          pendingFailures.delete(key);
           copied += 1;
           // Keep page-start token until every object on this page is attempted.
           persistProgress('IN_PROGRESS', pageStartToken);
         } catch (error) {
           failed += 1;
-          errors.push(obj.name + '#' + obj.generation + ': ' + error.message);
+          pageFailed = true;
+          const message = obj.name + '#' + obj.generation + ': ' + error.message;
+          errors.push(message);
+          pendingFailures.set(key, message);
           persistProgress('IN_PROGRESS', pageStartToken);
         }
         if (typeof options.afterObjectHook === 'function') {
           options.afterObjectHook({ obj, key, pageStartToken });
         }
+      }
+      if (pageFailed) {
+        // The next invocation must retry this page before any later page.
+        pageToken = pageStartToken;
+        persistProgress('IN_PROGRESS', pageStartToken);
+        break;
       }
       // Advance cursor only after the entire page has been attempted.
       pageToken = page.nextPageToken || null;
@@ -375,7 +435,18 @@ export async function runBackup(args, options = {}) {
     throw error;
   }
 
-  const status = failed > 0 ? (copied > 0 || skipped > 0 ? 'PARTIAL' : 'FAILED') : 'COMPLETE';
+  // A persisted failure remains unresolved even if its source object no
+  // longer appears in a later listing. Never turn that into success.
+  for (const [key, message] of pendingFailures) {
+    if (!errors.includes(message)) errors.push(key + ': ' + message);
+  }
+  for (const entry of entries) {
+    if (checkedArchiveKeys.has(objectKey(entry.name, entry.generation))) continue;
+    const archiveError = archivedEntryError(dest, entry, passphrase);
+    if (archiveError && !errors.includes(archiveError)) errors.push(archiveError);
+  }
+  failed = errors.length;
+  const status = failed > 0 ? (copied > 0 || skipped > 0 || entries.length > 0 ? 'PARTIAL' : 'FAILED') : 'COMPLETE';
   if (status !== 'COMPLETE') {
     // Explicit: partial/failed is never reported as success.
   }
@@ -399,9 +470,10 @@ export async function runBackup(args, options = {}) {
     status,
     bucket: args.bucket,
     prefix: args.prefix,
-    cursor: null,
+    cursor: status === 'COMPLETE' ? null : pageStartToken,
     completed: [...completed],
     entries,
+    pendingFailures: Object.fromEntries(pendingFailures),
     updated_at: nowIso
   });
   return {
@@ -411,6 +483,11 @@ export async function runBackup(args, options = {}) {
     counts: manifest.counts,
     errors
   };
+}
+
+export function reportBackupCommandResult(result, output = console.log) {
+  output(JSON.stringify(result));
+  if (!result || result.ok !== true) process.exitCode = 1;
 }
 
 export async function runVerify(args, options = {}) {
@@ -572,7 +649,20 @@ export async function runRestore(args, options = {}) {
       written.push(obj.name);
     } catch (error) {
       if (error && (error.code === 'precondition-failed' || /exists|precondition/i.test(String(error.message)))) {
-        skipped_exists.push(obj.name);
+        try {
+          if (typeof api.getMetadata !== 'function' || typeof api.downloadObject !== 'function') {
+            throw new Error('אין אפשרות לאמת קובץ קיים ביעד');
+          }
+          const current = await api.getMetadata({ name: obj.name });
+          if (!current || !current.generation) throw new Error('מטא-דאטה של קובץ קיים חסרה');
+          const currentBytes = await api.downloadObject({ name: obj.name, generation: current.generation });
+          if (!Buffer.isBuffer(currentBytes) || sha256Hex(currentBytes) !== obj.plain_sha256) {
+            throw new Error('תוכן הקובץ הקיים שונה מהגיבוי');
+          }
+          skipped_exists.push(obj.name);
+        } catch (verifyError) {
+          errors.push(obj.name + ': שחזור לא הושלם — ' + verifyError.message);
+        }
       } else {
         errors.push(obj.name + ': ' + (error && error.message ? error.message : String(error)));
       }
@@ -714,7 +804,7 @@ async function main() {
         throw new Error('סירוב: פרויקט ייצור אסור כמקור גיבוי Storage: ' + args.project);
       }
       const storageApi = await loadStorageApi(args.bucket, { projectId: args.project || undefined });
-      console.log(JSON.stringify(await runBackup(args, { storageApi })));
+      reportBackupCommandResult(await runBackup(args, { storageApi }));
       return;
     }
     case 'verify': {

@@ -9,7 +9,7 @@ Policy source: `functions/backup-policy.js` · Ops: `ops-disaster-restore.mjs`, 
 > `BLOCKED` = refused by code (e.g. restore to `station-102`).
 > `OWNER_DECISION` = retention / enablement not decided by owner.
 
-This map does **not** authorize this repo to enable/disable production PITR or Billing, run live Storage backup jobs against prod, or restore to `station-102`. Platform PITR may already be active in GCP independently of this branch.
+This map does **not** authorize this repo to enable/disable production PITR or Billing, run live Storage backup jobs against prod, or restore to `station-102`. Platform PITR was observed active in GCP on 2026-09-23 independently of this branch.
 
 | Component | Source | Sensitivity | Source-of-truth | Backup method | Proposed frequency | Destination | Encryption | Retention | RPO | RTO | Restore path | Verification path | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -27,7 +27,7 @@ This map does **not** authorize this repo to enable/disable production PITR or B
 | Firestore indexes | `firestore.indexes.json` | operational | Git | Git | With code | Git / `_גיבוי` | n/a | git history | Commit-based | Deploy indexes | `firebase deploy --only firestore:indexes` | index file digest | **IMPLEMENTED** |
 | Release manifests / attestations | `release-manifest.json`, `PILOT-INTEGRATION-MANIFEST.md`, `release-*.mjs` | operational | Git | Git | Per release | Git | n/a | permanent in git | Commit-based | Re-read manifest | Compare SHA / stamp | **IMPLEMENTED** |
 | Ops / release / DR docs | `DISASTER-RECOVERY-RUNBOOK.md`, `DR-WIRING.md`, `PILOT-DR-PLAN.md`, `README-ניטור-וגיבוי.md`, this map | operational | Git | Git | Continuous | Git | n/a | git history | — | — | Follow runbook (dry-run first) | Doc ↔ code review | **IMPLEMENTED** |
-| Managed Firestore PITR / scheduled export | GCP Billing + console | N/A (platform) | GCP | Platform PITR / scheduled backup | Platform schedule (observed active) | GCP-managed | GCP default | Platform default / retention **OWNER_DECISION** | Platform (not measured by this repo) | Platform restore | GCP console / support — **never** wired to auto-hit `station-102` from this repo; this branch does not enable/disable PITR or Billing | GCP audit (Codex live check 2026-09-23: PITR and/or scheduled backup **READY**) | **IMPLEMENTED (platform / GCP-managed; observed READY)** — this **repo branch still does not** enable/disable PITR or Billing |
+| Managed Firestore PITR / scheduled backup | `station-102` GCP | N/A (platform) | GCP | PITR + scheduled backup | PITR continuous 7 days; daily + Sunday weekly backups | GCP-managed (`eur3`) | GCP-managed | 98 days per backup | Not measured by this repo | Not measured by this repo | Isolated restore drill still required; this branch does not enable/disable PITR or Billing | Codex read-only check 2026-09-23: PITR enabled, both schedules present, latest backup `READY` | **ACTIVE IN GCP; restore not proven** |
 | Medical / HR attachment retention | FS + Storage | restricted_identity / sensitive_media | legal + owner | specialized paths only | **OWNER_DECISION** | **OWNER_DECISION** | Required if exported | **OWNER_DECISION** (medical) | **OWNER_DECISION** | **OWNER_DECISION** | specialized_restore unresolved | Manual | **OWNER_DECISION** |
 | Local code/docs backup (`ops-backup.mjs`) | Working tree + `_דיונים` docs | may include sensitive local notes | Git + private folders | `repository.bundle` + `documents.zip` | Operator-driven | `_גיבוי/resq-*` | Content hashes in manifest (not AES seal) | `--keep` 1..365 | File mtime / commit | Unpack bundle | Manifest SHA-256 | **IMPLEMENTED** |
 | Restore target `station-102` | n/a | production | `.firebaserc` default + `HARD_DENY_TARGETS` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **Hard refuse** | Unit + CLI tests | **BLOCKED** |
@@ -40,7 +40,7 @@ This map does **not** authorize this repo to enable/disable production PITR or B
 - Unclassified collections **abort** backup completion.
 - Unknown pagination token **aborts** (does not restart from page 0).
 - Storage object backup is **IMPLEMENTED** (adapter/offline via `ops-storage-backup.mjs`); live GCS drill may still be **NOT RUN**.
-- Managed Firestore PITR / scheduled backups are **OBSERVED ACTIVE in GCP** (READY as of 2026-09-23 per independent Codex live verification). This branch does **not** change GCP PITR/Billing settings and does **not** claim it activated them; restore-to-`station-102` remains **BLOCKED**. Retention / ops procedure remain **OWNER_DECISION**.
+- Managed Firestore PITR and daily/weekly backups were **observed active in GCP** on 2026-09-23; the latest backup was `READY` and both schedules retain backups for 98 days. This branch does not change those settings. An isolated restore and measured RPO/RTO remain open; restore-to-`station-102` remains blocked.
 
 ## Related commands (non-prod / dry-run first)
 

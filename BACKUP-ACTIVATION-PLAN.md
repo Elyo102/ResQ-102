@@ -1,9 +1,9 @@
-# Backup activation plan — FUTURE ONLY (DO NOT RUN)
+# Backup completion plan — remaining work (DO NOT RUN without approval)
 
-This document lists **commands and decisions** for turning on paid/platform backup controls.
-**Do not execute** any of these against `station-102` or billing accounts from an agent session. OWNER + Billing approval required.
+Read-only GCP checks on 2026-09-23 confirmed Firestore PITR enabled for seven days, daily and Sunday weekly backup schedules retaining each backup for 98 days, and a latest backup in `READY` state. These controls need no activation by this branch. Isolated restore, Auth/Storage backup execution, monitoring transport, and measured RPO/RTO remain open.
+**Do not execute** production or billing changes without the required OWNER approval.
 
-Qualitative cost: PITR + daily/weekly scheduled exports are usually modest vs. engineering time; encrypted monthly offsite and a second destination with retention lock dominate cost and ops load. Exact quotes belong in Billing console at decision time.
+Qualitative cost: existing PITR and daily/weekly scheduled backups incur platform charges; encrypted monthly offsite and a second destination with retention lock add cost and operational load. Check actual charges in Billing.
 
 ## Minimum IAM / role separation
 
@@ -21,11 +21,8 @@ Qualitative cost: PITR + daily/weekly scheduled exports are usually modest vs. e
 ## Command sketch (DO NOT RUN)
 
 ```text
-# PITR (Firestore) — OWNER/Billing
-# gcloud firestore databases update --project=station-102 --enable-pitr
-
-# Daily / weekly scheduled backups + retention — OWNER/Billing (console or gcloud firestore backups schedules …)
-# … set retention (e.g. 7d daily / 12w weekly) …
+# PITR and daily/weekly schedules are already active in station-102.
+# Verify their state before a drill; do not create duplicate schedules.
 
 # Encrypted monthly export to isolated bucket + retention lock — OWNER
 # … create bucket, uniform access, retention policy / bucket lock, CMEK optional …
@@ -45,5 +42,5 @@ Qualitative cost: PITR + daily/weekly scheduled exports are usually modest vs. e
 2. Named alert recipients and on-call.
 3. Confirm second destination + retention lock.
 4. Confirm IAM role separation.
-5. Run **demo/emulator** drill before any prod schedule enablement.
-6. Update `BACKUP-MAP.md` statuses from DOCUMENTED_ONLY → IMPLEMENTED only after evidence.
+5. Run a **demo/emulator** restore drill and measure RPO/RTO before claiming recovery readiness.
+6. Update `BACKUP-MAP.md` for Auth/Storage execution and monitoring only after evidence.
