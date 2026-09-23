@@ -1,7 +1,10 @@
 {
   "firestore": {
     "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
+    "indexes": "firestore.indexes.json",
+    "predeploy": [
+      "node tests/firestore-predeploy-gate.mjs"
+    ]
   },
   "functions": [
     {

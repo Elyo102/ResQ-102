@@ -6027,32 +6027,12 @@ exports.deliverMail = onDocumentCreated(
     } catch (e) {}
   }
 );
-
-
-// =======================================================================
-//  גיבוי הנתונים לגיליון Google Sheets
-// =======================================================================
-//  Firestore הוא בסיס נתונים שאי אפשר לפתוח ולהסתכל בו. גיבוי
-//  אמיתי כבר יש — PITR ל-7 ימים וגיבויים מתוזמנים ל-98 יום — אבל
-//  שניהם משחזרים לתוך Firestore, ואי אפשר לקרוא בהם.
-//
-//  הגיליון הזה הוא השכבה השלישית, וייעודה שונה: לשבת פתוח ולתת
-//  לקרוא. אם ביום מן הימים המערכת תיפול, או שיצטרכו להוכיח שעות
-//  מול משאבי אנוש בלי גישה לאפליקציה — הנתונים שם, בטבלה שכל
-//  אחד יודע לפתוח.
-//
-//  לשונית לכל אוסף, נכתבת מחדש בכל לילה.
-//
-//  ⚙️ הקמה — שני צעדים, פעם אחת:
-//
-//  1. הפעל את Sheets API:
-//     https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=station-102
-//
-//  2. פתח את הגיליון "פיירסטור-102", לחץ שיתוף, והוסף כעורך את:
-//     52676411962-compute@developer.gserviceaccount.com
-//
-//  3. הדבק כאן את מזהה הגיליון — החלק הארוך מתוך הכתובת שלו,
-//     בין /d/ לבין /edit:
+//  Sheet backup is RETIRED / FAIL-CLOSED while BACKUP_SHEET_ID is empty.
+//  Empty id must NOT report success. This is not an active backup control.
+//  Do not claim PITR or scheduled GCP backups are active from this helper.
+//  Future activation (OWNER only): dedicated sheet + least-privilege SA —
+//  never document the Compute Engine default account as the access recipient.
+//  See BACKUP-ACTIVATION-PLAN.md and PILOT-OPS-RUNBOOK.md (do not enable here).
 
 const BACKUP_SHEET_ID = '';
 
@@ -6125,8 +6105,17 @@ async function backupCollectionToSheet_(sheets, sheetId, colName, path) {
 
 async function runSheetBackup_() {
   if (!BACKUP_SHEET_ID) {
-    console.log('גיבוי לשיטס: BACKUP_SHEET_ID ריק — מדלג.');
-    return { skipped: true, reason: 'לא הוגדר מזהה גיליון' };
+    console.error('גיבוי לשיטס: BACKUP_SHEET_ID ריק — retired/fail-closed, לא מדווח הצלחה.');
+    return {
+      ok: false,
+      retired: true,
+      success: false,
+      skipped: false,
+      reason: 'BACKUP_SHEET_ID empty — sheet backup retired/fail-closed until OWNER configures a dedicated sheet + least-privilege SA',
+      collections: 0,
+      rows: 0,
+      failed: ['BACKUP_SHEET_ID_EMPTY']
+    };
   }
 
   const sheets = await sheetsClient_();
@@ -6187,7 +6176,15 @@ exports.nightlySheetBackup = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1',
   timeoutSeconds: 540
-}, async () => { await runSheetBackup_(); });
+}, async () => {
+  const result = await runSheetBackup_();
+  if (!result || result.ok !== true) {
+    const reason = (result && result.reason) || 'sheet backup fail-closed';
+    console.error('nightlySheetBackup fail-closed:', reason);
+    throw new Error('nightlySheetBackup fail-closed: ' + reason);
+  }
+  return result;
+});
 
 // הרצה ידנית מתוך check.html, לבדיקה אחרי ההקמה.
 exports.backupToSheetNow = onCall({ timeoutSeconds: 540 }, async (req) => {

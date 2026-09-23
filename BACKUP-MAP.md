@@ -50,3 +50,13 @@ node ops-disaster-restore.mjs backup --source <project> --execute     # seals sn
 node ops-auth-backup.mjs export --project <project> --out <outside-repo>
 node ops-backup.mjs --dry-run
 ```
+
+## Monitoring & full drill (packages 6–7)
+
+| Asset | Method | Status |
+|-------|--------|--------|
+| Observation evaluator `functions/backup-monitoring.js` | Pure function → PASS\|ALERT\|BLOCK\|ERROR | **IMPLEMENTED** (evaluator only — does **not** send alerts) |
+| Full DR drill `ops-dr-full-drill.mjs` + `FULL-DR-DRILL-RUNBOOK.md` | Offline/emulator procedure | **IMPLEMENTED** procedure; live Rules/emulator steps may be **NOT RUN** |
+| Sheet export `nightlySheetBackup` | Scheduled callable helper | **RETIRED / FAIL-CLOSED** while `BACKUP_SHEET_ID` empty — not an active control |
+| Policy count | `DATA_POLICIES.length` in `functions/backup-policy.js` | **158** rows (metrics rows included; `metrics-backup-policies.js` kept as wiring helper — do not delete) |
+

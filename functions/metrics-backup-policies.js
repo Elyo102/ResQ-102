@@ -1,5 +1,8 @@
-'use strict';
-/* מדיניות גיבוי לאוספי המדדים — רשומות מוצעות ל-DATA_POLICIES ב-backup-policy.js.
+/* מדיניות גיבוי לאוספי המדדים — רשומות מוצעות/כפולות ל-DATA_POLICIES ב-backup-policy.js.
+ *
+ * DO NOT DELETE: consumers include METRICS-WIRING.md, PRIVACY-DATA-MAP.md, and
+ * tests/metrics-source.mjs. Paths are already mirrored inside backup-policy.js;
+ * this module remains the wiring helper / proposed-source of truth for metrics rows.
  *
  * הקובץ אינו משנה את backup-policy.js. הוא מייצא את הרשומות בדיוק בצורה
  * שהמודול הקיים מאמת (validatePolicies), ובדיקת המקור מאמתת אותן יחד עם
@@ -10,6 +13,7 @@
  * (rebuild = מהמאורעות העתידיים בלבד). המכסות ורשומות הפעולה הן מצב זמני
  * שאסור לשחזר: שחזור מכסה ישנה יחסום או יפתח דיווח בטעות, ושחזור רשומת
  * פעולה יגרום ל-replay שגוי. */
+
 
 const policy = (path, scope, classification, monitorPolicy, backupPolicy, restorePolicy, sensitivity, retention, reason, extra) =>
   Object.freeze(Object.assign({ path, scope, classification, monitorPolicy, backupPolicy, restorePolicy, sensitivity, retention, reason }, extra || {}));

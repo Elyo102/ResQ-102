@@ -119,10 +119,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card">
     <h2>7 · גיבוי לגיליון</h2>
     <div class="sub" style="margin-bottom:0">
-      PITR וגיבויים מתוזמנים משחזרים לתוך Firestore, ואי אפשר לקרוא
-      בהם. הגיליון הוא השכבה שאפשר לפתוח ולהסתכל בה — לשונית לכל
-      אוסף, נכתבת מחדש כל לילה ב-03:40.
-      <br>דורש הקמה חד-פעמית. ראה את ההערות בראש הפונקציה ב-index.js.
+      גיבוי הגיליון <b>לא פעיל</b> כל עוד מזהה הגיליון ריק
+      (retired/fail-closed — הרצה לא מדווחת הצלחה). זה אינו מחליף
+      PITR או גיבויים מתוזמנים, ואין להניח שהם מופעלים בלי ראיות OWNER.
+      <br>הפעלה עתידית רק אחרי אישור OWNER וגיליון + חשבון שירות ייעודי
+      (לא חשבון ברירת המחדל של Compute Engine). ראה BACKUP-ACTIVATION-PLAN.md.
     </div>
     <div style="margin-top:12px">
       <button id="btnBk">הרץ גיבוי עכשיו</button>

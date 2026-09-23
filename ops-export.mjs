@@ -34,6 +34,27 @@ import telemetryContract from './functions/ops-telemetry-contract.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+export const HARD_DENY_DELETE_PROJECTS = Object.freeze(['station-102']);
+
+/** Hard deny destructive delete ops against production Firebase project ids. */
+export function refuseDeleteProject(project, options = {}) {
+  const id = String(project || '');
+  const deny = new Set(HARD_DENY_DELETE_PROJECTS);
+  try {
+    const rc = JSON.parse(fs.readFileSync(path.join(HERE, '.firebaserc'), 'utf8'));
+    const def = rc && rc.projects && rc.projects.default;
+    if (typeof def === 'string' && def) deny.add(def);
+  } catch { /* keep hard list */ }
+  if (deny.has(id)) {
+    throw new Error(
+      'Hard deny / סירוב קשיח: delete ops against production project "' + id +
+      '" are refused (station-102 / .firebaserc default). ' +
+      'מחיקה בפרויקט הייצור נחסמה. AGENTS.md does not authorize this.'
+    );
+  }
+}
+
+
 export const DEFAULTS = Object.freeze({
   out: '_ניטור',
   station: 'eilat_102',
@@ -79,6 +100,7 @@ export function parseArgs(argv) {
     }
   }
   if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(out.project || '')) throw new Error('Explicit valid --project is required');
+  if (out.deleteFeedback || out.deleteIncident) refuseDeleteProject(out.project);
   if (!/^[a-z0-9_-]{2,80}$/.test(String(out.station))) throw new Error('--station אינו תקין');
   if (!Number.isFinite(out.days) || out.days < 1 || out.days > 365) throw new Error('--days חייב להיות 1..365');
   const actions = ['--resolve', '--ignore', '--reopen', '--mark-read', '--delete-feedback', '--delete-incident']
@@ -117,6 +139,7 @@ export function parseArgs(argv) {
 // Admin-only, one exact document. Never resolve and delete in the same command,
 // and never export another copy of private content after deleting it.
 export async function performDeletion(args, services) {
+  refuseDeleteProject(args.project);
   if (args.deleteFeedback) {
     const result = await services.feedback.remove({ sid: args.station, id: args.deleteFeedback, by: args.by });
     if (!result || result.deleted !== true || result.id !== args.deleteFeedback) throw new Error('Invalid feedback deletion result');
@@ -343,6 +366,7 @@ async function main() {
   const sid = args.station;
 
   if (args.deleteFeedback || args.deleteIncident) {
+    refuseDeleteProject(args.project);
     const result = await performDeletion(args, { incidents, feedback });
     console.log(JSON.stringify({ project: args.project, station: sid, ...result,
       recovery: 'Code rollback cannot restore this document; existing exports/backups are unchanged.' }));

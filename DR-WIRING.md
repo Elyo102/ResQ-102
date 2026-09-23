@@ -91,3 +91,8 @@
 - `npm run static` המלא אחרי ההוספה — לא הורץ (אין עותק עבודה עם `tests/node_modules`).
 - שום ריצה מול Firebase, אמולטור או `station-102` — NOT RUN.
 - `ops-disaster-restore.ps1` לא הורץ ב-PowerShell (אין PowerShell בסביבה); נבדק סטטית בלבד.
+
+## RESQ_RESTORE_SIGNING_KEY (execute)
+
+`RESQ_RESTORE_SIGNING_KEY` is **required** for `restore --execute` (minimum 32 characters). Without it the restore adapter refuses before any canary write. Dry-run / verify-only may proceed unsigned (`unsigned: true`). Never commit the key.
+
