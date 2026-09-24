@@ -329,7 +329,12 @@ try {
   });
 
   await test('all 30 Firebase screens bootstrap monitoring and all 22 factories use the facade', async () => {
-    const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html'].includes(n));
+    const publicLegalPages = ['privacy.html', 'terms.html'];
+    for (const page of publicLegalPages) {
+      const source = fs.readFileSync(path.join(root, page), 'utf8');
+      assert.ok(!source.includes('initAppCheck('), page + ' must stay public and static');
+    }
+    const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html',...publicLegalPages].includes(n));
     const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
     assert.deepEqual(screens.sort(), expectedScreens.sort());
     const externalBootstrap = {
