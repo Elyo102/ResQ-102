@@ -28,6 +28,8 @@
     .cu-toolbar select{background:var(--input);color:var(--txt);border:1px solid var(--line)}
     .cu-toolbar button{background:var(--accent);color:var(--on-accent,#fff);border:0;cursor:pointer}
     .cu-toolbar button:disabled,.cu-toolbar select:disabled{opacity:.5;cursor:not-allowed}
+    .cu-start{min-height:44px;margin-top:10px;padding:8px 14px;border:1px solid var(--line);border-radius:var(--radius-sm,8px);background:var(--panel);color:var(--txt);font:inherit;cursor:pointer}
+    .cu-start:disabled{opacity:.5;cursor:not-allowed}
     .cu-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg,14px);padding:16px;margin-bottom:14px}
     .cu-section-title{font-size:16px;margin:0 0 10px}
     .cu-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
@@ -78,6 +80,7 @@
       <div class="cu-fact"><span>תחילת מדידה</span><strong id="measurement">—</strong></div>
       <div class="cu-fact"><span>שיוך (HMAC)</span><strong id="attribution">—</strong></div>
     </div>
+    <button id="btnStartMeasurement" class="cu-start cu-hidden" type="button">התחל מדידת קריאות מעכשיו</button>
     <div id="flags" class="cu-flags"></div>
     <div id="message" class="cu-note">טוען…</div>
   </section>
@@ -123,12 +126,13 @@ const elements={
   refresh:$('btnRefresh'), range:$('range'), rangeLabel:$('rangeLabel'),
   measurement:$('measurement'), attribution:$('attribution'), flags:$('flags'),
   message:$('message'), actual:$('actual'), load:$('load'), loadLegend:$('loadLegend'),
-  users:$('users'), stationCalls:$('stationCalls'), stationDay:$('stationDay'), nextStationPage:$('btnNextStations'), nextPage:$('btnNextUsers'), selfCost:$('selfCost')
+  users:$('users'), stationCalls:$('stationCalls'), stationDay:$('stationDay'), nextStationPage:$('btnNextStations'), nextPage:$('btnNextUsers'), startMeasurement:$('btnStartMeasurement'), selfCost:$('selfCost')
 };
 const ui=createCostUsageUi({
   elements,
   currentIdentity:()=>identity,
   onIdentityLost:()=>location.replace('./login.html'),
+  confirmAction:message=>window.confirm(message),
   call:async(name,data)=>(await httpsCallable(fns,name)(data||{})).data
 });
 elements.refresh.addEventListener('click',()=>{ui.resetPaging();ui.refresh();});
@@ -136,6 +140,7 @@ elements.range.addEventListener('change',()=>{ui.setDays(elements.range.value);u
 elements.nextPage.addEventListener('click',ui.nextPage);
 elements.stationDay.addEventListener('change',()=>{ui.setStationDay(elements.stationDay.value);ui.refresh();});
 elements.nextStationPage.addEventListener('click',ui.nextStationPage);
+elements.startMeasurement.addEventListener('click',ui.activateMeasurement);
 onIdTokenChanged(auth,async user=>{
   const mine=++epoch;
   identity=null;

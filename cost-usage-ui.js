@@ -36,7 +36,7 @@ function fmtCount(n) {
   return Number.isSafeInteger(n) && n >= 0 ? new Intl.NumberFormat('he-IL').format(n) : null;
 }
 
-export function createCostUsageUi({ elements, call, currentIdentity, onIdentityLost }) {
+export function createCostUsageUi({ elements, call, currentIdentity, onIdentityLost, confirmAction }) {
   if (!elements || typeof call !== 'function' || typeof currentIdentity !== 'function') {
     throw new TypeError('cost-usage ui dependencies required');
   }
@@ -48,6 +48,7 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
   let stationDay = null;
   let stationPageToken = null;
   let nextStationPageToken = null;
+  let measurementAvailable = false;
 
   function sameIdentity(before) {
     const now = currentIdentity();
@@ -56,7 +57,7 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
   function setBusy(value) {
     busy = value === true;
     [elements.refresh, elements.range, elements.nextPage, elements.stationDay,
-      elements.nextStationPage].forEach((control) => { if (control) control.disabled = busy; });
+      elements.nextStationPage, elements.startMeasurement].forEach((control) => { if (control) control.disabled = busy; });
   }
   function message(value, kind) {
     if (!elements.message) return;
@@ -66,6 +67,8 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
   function invalidate() {
     generation += 1;
     setBusy(false);
+    measurementAvailable = false;
+    if (elements.startMeasurement) elements.startMeasurement.classList.add('cu-hidden');
     text(elements.measurement, '—');
     text(elements.attribution, '—');
     text(elements.rangeLabel, '—');
@@ -265,6 +268,8 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
       ? ('פעילה מאז ' + dayText(m.measurement_start_at) + (m.locked ? ' (נעולה)' : ''))
       : 'לא הופעלה');
     const a = d.attribution || {};
+    measurementAvailable = m.status === 'not_started' && a.ready === true;
+    if (elements.startMeasurement) elements.startMeasurement.classList.toggle('cu-hidden', !measurementAvailable);
     text(elements.attribution, a.ready === true ? 'HMAC מוכן' : 'שיוך מושבת (אין מפתח)');
     text(elements.rangeLabel, Number.isSafeInteger(d.days) ? (d.days + ' ימים') : '—');
     if (elements.flags) {
@@ -349,9 +354,34 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
     stationPageToken = nextStationPageToken;
     await refresh();
   }
+  async function activateMeasurement() {
+    if (busy || !measurementAvailable) return false;
+    const before = currentIdentity();
+    if (!sameIdentity(before)) { onIdentityLost(); return false; }
+    const ask = typeof confirmAction === 'function' ? confirmAction : window.confirm.bind(window);
+    if (!ask('להתחיל למדוד מעכשיו? אי אפשר לשנות את תאריך ההתחלה או לשחזר היסטוריה קודמת. המדידה מכסה רק את שלוש פעולות השרת המצוינות במסך.')) return false;
+    const mine = ++generation;
+    setBusy(true);
+    try {
+      await call('setCostUsageMeasurementStart', {});
+      if (mine !== generation) return false;
+      if (!sameIdentity(before)) { onIdentityLost(); return false; }
+      message('תחילת המדידה נשמרה בשרת. מעדכן נתונים…', 'safe');
+      measurementAvailable = false;
+      if (elements.startMeasurement) elements.startMeasurement.classList.add('cu-hidden');
+    } catch (error) {
+      if (mine === generation && sameIdentity(before)) message('הפעלת המדידה לא אושרה בשרת. בדקו ונסו שוב.', 'warn');
+      else if (mine === generation) onIdentityLost();
+      return false;
+    } finally {
+      if (mine === generation) setBusy(false);
+    }
+    await refresh();
+    return true;
+  }
   function resetPaging() { pageToken = null; nextPageToken = null; }
 
-  return Object.freeze({ render, invalidate, refresh, setDays, setStationDay,
+  return Object.freeze({ render, invalidate, refresh, activateMeasurement, setDays, setStationDay,
     nextPage, nextStationPage, resetPaging, days: () => days });
 }
 
