@@ -24,7 +24,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc,
+  doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch,
   collection, getDocs, query, where, orderBy, limit, serverTimestamp
 } from 'firebase/firestore';
 
@@ -144,6 +144,16 @@ const anon    = env.unauthenticatedContext().firestore();
 
 await env.withSecurityRulesDisabled(async (c) => {
   const d = c.firestore();
+  const termsBatch = writeBatch(d);
+  for (const uid of ['u_ff', 'u_ffb', 'u_cmda', 'u_cmdb', 'u_dep', 'u_st', 'u_hr',
+    'u_st_inactive', 'u_hr_inactive', 'u_hr_stale', 'u_hr_missing', 'u_sup',
+    'u_out', 'u_out_hr', 'u_dist', 'u_new', 'u_tl', 'u_dtl', 'u_legacy_num']) {
+    termsBatch.set(doc(d, 'registration_terms_active/' + uid), {
+      uid, terms_version: '1.3', privacy_version: '2026-09-24',
+      receipt_path: 'registration_consents/' + uid + '/events/test-receipt'
+    });
+  }
+  await termsBatch.commit();
   await setDoc(doc(d, `stations/${SID}`), { name: 'אילת', districtId: 'south' });
   await setDoc(doc(d, `stations/${SID}/users/u_ff`),
     { role: 'firefighter', crew: 'א', employee_number: '101', is_active: true, full_name: 'כבאי א' });
@@ -517,11 +527,41 @@ const registration = {
   request_id: '1234567890abcdef1234567890abcdef',
   full_name: 'כבאי ממתין', email: 'pend@x.com', phone: '0500000000',
   districtId: 'south', stationId: SID, shift: 'A', status: 'pending',
-  created_at: null
+  created_at: serverTimestamp(),
+  legal_consent: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false }
 };
 
-await ok('נרשם יוצר בקשה רק תחת ה-uid והמייל שלו',
-  setDoc(doc(pending, 'registration_requests/u_pend'), registration));
+function registrationBatch(db, uid, value) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'registration_requests/' + uid), value);
+  batch.set(doc(db, 'registration_consents/' + uid + '/events/' + value.request_id), {
+    uid, request_id: value.request_id,
+    terms_version: value.legal_consent.terms_version,
+    privacy_version: value.legal_consent.privacy_version,
+    marketing_opt_in: value.legal_consent.marketing_opt_in,
+    accepted_at: serverTimestamp()
+  });
+  return batch.commit();
+}
+
+const consentedRequest = { ...registration, request_id: 'consent1234567890abcdef',
+  legal_consent: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false } };
+const consentReceipt = { uid: 'u_pend', request_id: consentedRequest.request_id,
+  terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false,
+  accepted_at: serverTimestamp() };
+const isolatedRequest = doc(pending, 'registration_requests/u_pend');
+const isolatedReceipt = doc(pending, 'registration_consents/u_pend/events/' + consentedRequest.request_id);
+await blocked('🔒 בקשה חדשה עם הסכמה ללא קבלה אטומית נחסמת',
+  setDoc(isolatedRequest, consentedRequest));
+await blocked('🔒 קבלה ללא בקשת הרשמה אטומית נחסמת',
+  setDoc(isolatedReceipt, consentReceipt));
+const consentBatch = writeBatch(pending);
+consentBatch.set(isolatedRequest, consentedRequest);
+consentBatch.set(isolatedReceipt, consentReceipt);
+await ok('בקשה וקבלת הסכמה תואמות נוצרות באותה אצווה', consentBatch.commit());
+await blocked('🔒 משתמש אינו קורא את קבלת ההסכמה', getDoc(isolatedReceipt));
+await blocked('🔒 משתמש אינו משנה את קבלת ההסכמה', updateDoc(isolatedReceipt, { marketing_opt_in: true }));
+await blocked('🔒 משתמש אינו מוחק את קבלת ההסכמה', deleteDoc(isolatedReceipt));
 
 await ok('נרשם קורא את הבקשה של עצמו',
   getDoc(doc(pending, 'registration_requests/u_pend')));
@@ -534,29 +574,28 @@ await blocked('🔒 משתמש אחר אינו קורא בקשה שאינה של
   getDoc(doc(pendingMail, 'registration_requests/u_pend')));
 
 await blocked('🔒 בקשה תחת uid של אדם אחר נחסמת',
-  setDoc(doc(pendingMail, 'registration_requests/u_other'), {
+  registrationBatch(pendingMail, 'u_other', {
     ...registration, email: 'right@x.com'
   }));
 
 await blocked('🔒 מייל שאינו המייל בטוקן נחסם',
-  setDoc(doc(pendingMail, 'registration_requests/u_pend_mail'), {
+  registrationBatch(pendingMail, 'u_pend_mail', {
     ...registration, email: 'wrong@x.com'
   }));
 
 await blocked('🔒 סטטוס שאינו pending נחסם ביצירה',
-  setDoc(doc(pendingStatus, 'registration_requests/u_pend_status'), {
+  registrationBatch(pendingStatus, 'u_pend_status', {
     ...registration, email: 'status@x.com', status: 'approved'
   }));
 
 const legacyRegistration = { ...registration, email: 'right@x.com' };
 delete legacyRegistration.request_id;
-await ok('לקוח 41A ישן עדיין רשאי ליצור בקשה בלי request_id',
+delete legacyRegistration.legal_consent;
+await blocked('🔒 לקוח ישן אינו יוצר בקשה ללא תקנון 1.3 וקבלה',
   setDoc(doc(pendingMail, 'registration_requests/u_pend_mail'), legacyRegistration));
-await ok('לקוח 41A רשאי למחוק את בקשת ה-legacy שלו',
-  deleteDoc(doc(pendingMail, 'registration_requests/u_pend_mail')));
 
 await blocked('🔒 לקוח אינו רשאי ליצור generation או תוכנית שרתית',
-  setDoc(doc(pendingStatus, 'registration_requests/u_pend_status'), {
+  registrationBatch(pendingStatus, 'u_pend_status', {
     ...registration,
     email: 'status@x.com',
     server_generation: 'copied-server-generation',
@@ -566,7 +605,7 @@ await blocked('🔒 לקוח אינו רשאי ליצור generation או תוכ
   }));
 
 await blocked('🔒 טוקן מעודכן של חשבון מאושר אינו פותח בקשת הרשמה חדשה',
-  setDoc(doc(ff, 'registration_requests/u_ff'), {
+  registrationBatch(ff, 'u_ff', {
     ...registration, email: 'ff@x.com'
   }));
 
@@ -579,7 +618,7 @@ for (const [label, client, uid, email] of [
   ['מנהל-על', regSuper, 'u_reg_super', 'reg-super@x.com']
 ]) {
   await blocked('🔒 claim חלקי (' + label + ') חוסם בקשת הרשמה',
-    setDoc(doc(client, 'registration_requests/' + uid), {
+    registrationBatch(client, uid, {
       ...registration, email
     }));
 }

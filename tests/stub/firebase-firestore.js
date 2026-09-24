@@ -1169,5 +1169,32 @@ function assertWritable(value, insideArray, path){
   }
 }
 export function writeBatch(){
-  return { set(){}, delete(){}, commit(){ return Promise.resolve(); } };
+  const writes = [];
+  return {
+    set(ref, value) { writes.push({ ref, value }); },
+    delete() {},
+    commit() {
+      writes.forEach(({ value }) => assertWritable(value, false, ''));
+      const paths = writes.map(({ ref }) => (ref && ref.path) || '');
+      const failures = typeof window !== 'undefined' && Array.isArray(window.__FIRESTORE_WRITE_FAIL_PATHS) ?
+        window.__FIRESTORE_WRITE_FAIL_PATHS : [];
+      if (paths.some((path) => failures.some((item) => path.indexOf(String(item)) !== -1))) {
+        return Promise.reject({ code:'firestore/unavailable', message:'stub batch failure' });
+      }
+      if (typeof window !== 'undefined') {
+        window.__FIRESTORE_WRITES = window.__FIRESTORE_WRITES || [];
+        writes.forEach(({ ref, value }) => {
+          const path = (ref && ref.path) || '';
+          window.__FIRESTORE_WRITES.push({ path, value, options:null });
+          if (path.indexOf('registration_requests/') === 0) window.__REGISTRATION_REQUEST_EXISTS = true;
+        });
+      }
+      const committedFailures = typeof window !== 'undefined' && Array.isArray(window.__FIRESTORE_WRITE_FAIL_AFTER_COMMIT_PATHS) ?
+        window.__FIRESTORE_WRITE_FAIL_AFTER_COMMIT_PATHS : [];
+      if (paths.some((path) => committedFailures.some((item) => path.indexOf(String(item)) !== -1))) {
+        return Promise.reject({ code:'firestore/unavailable', message:'stub response lost after commit' });
+      }
+      return Promise.resolve();
+    }
+  };
 }

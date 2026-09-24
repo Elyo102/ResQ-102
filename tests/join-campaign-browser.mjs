@@ -135,9 +135,31 @@ try {
     const payload = await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').pop()[1]);
     check('redeem payload has exactly the contract keys', Object.keys(payload).sort().join(',') === 'ack,full_name,phone,qualifications,request_id,shift,token');
     check('redeem payload carries no role/station/email', !('role' in payload) && !('station_id' in payload) && !('email' in payload));
+    check('ordinary join defaults to no marketing with the current legal versions',
+      payload.ack.marketing_opt_in === false && payload.ack.terms_version === '1.3' && payload.ack.privacy_version === '2026-09-24');
     check('shift and declaration come from the form', payload.shift === 'C' && payload.qualifications.length === 1 && payload.qualifications[0].key === 'driver' && payload.qualifications[0].valid_until_ms > Date.now());
     check('success text makes no grant claim', await page.locator('#joinStatus').textContent().then((t) => t.includes('עדיין לא הוענקו הרשאות')));
     check('route continues after redemption', await page.evaluate(() => routed === 1));
+    // Positive marketing path, and an uncertain result must not permit a
+    // different choice under the same request id.
+    await page.evaluate(() => panel.load());
+    await page.waitForFunction(() => document.getElementById('joinPanel').dataset.joinState === 'active');
+    await page.locator('#joinName').fill('בודק דמה');
+    await page.locator('#joinPhone').fill('050-1234567');
+    await page.locator('#joinShift_C').check();
+    await page.locator('#joinAck').check();
+    await page.evaluate(() => { redeemError = 'network'; });
+    await page.locator('#joinSubmitMarketing').click();
+    await page.waitForFunction(() => document.getElementById('joinStatus').textContent.includes('לא נשלחה'));
+    const beforeChangedChoice = await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').length);
+    await page.locator('#joinSubmit').click();
+    check('uncertain retry cannot silently switch the marketing choice',
+      await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').length) === beforeChangedChoice);
+    await page.evaluate(() => { redeemError = null; });
+    await page.locator('#joinSubmitMarketing').click();
+    await page.waitForFunction(() => document.getElementById('joinStatus').textContent.includes('ממתינה לאישור'));
+    check('positive marketing action is explicitly sent as true',
+      await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').pop()[1].ack.marketing_opt_in === true));
     // replay: same request id on retry
     const first = payload.request_id;
     await page.evaluate(() => { try { sessionStorage.setItem('resq_join_request_AAAAAAAAAAAAAAAA', 'jc_replay_0000000000000000'); } catch (e) {} });

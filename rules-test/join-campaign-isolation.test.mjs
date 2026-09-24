@@ -97,17 +97,28 @@ try {
   }
   assert.equal(denied, actors.length * 8 * 6);
 
-  // בעלים ממתין: יכול ליצור בקשת רישום legacy תקינה — אבל לא עם role,
+  // בעלים ממתין: יכול ליצור בקשת רישום עם אישור תקנון — אבל לא עם role,
   // לא עם provenance/campaign_id, ולא עם status אחר מ-pending.
   const pending = env.authenticatedContext(pendingUid, { email: pendingUid + '@example.invalid', email_verified: true }).firestore();
   const base = { request_id: 'req_' + hash(pendingUid).slice(0, 20), full_name: 'Synthetic fixture', email: pendingUid + '@example.invalid',
-    phone: '0500000000', districtId: 'synthetic', stationId: sid, shift: 'A', status: 'pending', created_at: serverTimestamp() };
-  await exactDenied('self-promotion via role', setDoc(doc(pending, 'registration_requests/' + pendingUid), { ...base, role: 'commander' }));
-  await exactDenied('forged campaign provenance on the request', setDoc(doc(pending, 'registration_requests/' + pendingUid), { ...base, campaign_id: campaignId }));
-  await exactDenied('forged provenance object on the request', setDoc(doc(pending, 'registration_requests/' + pendingUid), { ...base, provenance: { kind: 'join_campaign' } }));
-  await exactDenied('pre-approved status', setDoc(doc(pending, 'registration_requests/' + pendingUid), { ...base, status: 'approved' }));
-  await setDoc(doc(pending, 'registration_requests/' + pendingUid), base);
-  console.log('PASS pending owner: legacy request allowed only with the exact key set; role/provenance/status forgeries denied'); ++passed;
+    phone: '0500000000', districtId: 'synthetic', stationId: sid, shift: 'A', status: 'pending', created_at: serverTimestamp(),
+    legal_consent: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false }
+  };
+  const sendPending = (value) => {
+    const batch = writeBatch(pending);
+    batch.set(doc(pending, 'registration_requests/' + pendingUid), value);
+    batch.set(doc(pending, 'registration_consents/' + pendingUid + '/events/' + base.request_id), {
+      uid: pendingUid, request_id: base.request_id, terms_version: '1.3', privacy_version: '2026-09-24',
+      marketing_opt_in: false, accepted_at: serverTimestamp()
+    });
+    return batch.commit();
+  };
+  await exactDenied('self-promotion via role', sendPending({ ...base, role: 'commander' }));
+  await exactDenied('forged campaign provenance on the request', sendPending({ ...base, campaign_id: campaignId }));
+  await exactDenied('forged provenance object on the request', sendPending({ ...base, provenance: { kind: 'join_campaign' } }));
+  await exactDenied('pre-approved status', sendPending({ ...base, status: 'approved' }));
+  await sendPending(base);
+  console.log('PASS pending owner: consented request allowed only with the exact key set; role/provenance/status forgeries denied'); ++passed;
 
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore();

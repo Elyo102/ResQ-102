@@ -104,9 +104,15 @@ try{
   await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('טרם')||document.getElementById('invitationStatus').textContent.includes('עדיין לא אומתה'));
   check('unverified identity never reaches redeem',await lp.evaluate(()=>calls.length===0));
   await lp.evaluate(()=>{verifyAccount();window.nextError=true;});await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('connection lost'));
+  check('uncertain retry locks the marketing choice until explicit reset',
+    await lp.locator('#invitationRedeemMarketing').isDisabled() &&
+    await lp.locator('#invitationRedeem').isEnabled());
   await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('ההזמנה מומשה'));
   check('redeem exact retry preserves request and secret',await lp.evaluate(()=>JSON.stringify(calls[0])===JSON.stringify(calls[1])));
-  check('redeem input contains only three contract keys',await lp.evaluate(()=>Object.keys(calls[0]).sort().join(',')==='invite_id,request_id,secret'));
+  check('redeem input includes only identity keys and versioned legal choice',await lp.evaluate(()=>
+    Object.keys(calls[0]).sort().join(',')==='ack,invite_id,request_id,secret' &&
+    calls[0].ack.terms_version==='1.3' && calls[0].ack.privacy_version==='2026-09-24' &&
+    calls[0].ack.marketing_opt_in===false));
   check('success clears secret and makes no grant claim',await lp.locator('#invitationSecret').inputValue().then(v=>v==='')&&await lp.locator('#invitationStatus').textContent().then(s=>s.includes('עדיין לא הוענקו הרשאות')));
   await screenshot(lp,'login-invitation','invitationPanel');
   await lp.locator('#invitationSecret').fill('new_secret');await lp.evaluate(()=>switchActor('member2'));

@@ -14,7 +14,7 @@
 //  3. רק קוד שרת כותב לטוקן. זה הקובץ הזה.
 // =====================================================================
 
-const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { onCall: firebaseOnCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 // Use the narrow options entry point. firebase-functions v7 removed the
 // legacy config API that the broad v2 barrel used to re-export.
@@ -88,9 +88,26 @@ const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
 const runtimeModeModule = require('./runtime-mode-service');
 const faultReportModule = require('./fault-report-service');
+const { createRegistrationTermsGate, createPreApprovalOnCall } = require('./registration-terms-gate');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
+
+// Immediate Terms cutover: all authenticated business callables pass through
+// one server-owned gate. Registration/recovery endpoints use firebaseOnCall
+// explicitly below; they must remain reachable before approval.
+const readRegistrationTermsMarker = async uid => {
+  const snap = await admin.firestore().doc('registration_terms_active/' + uid).get();
+  return snap.exists ? snap.data() || {} : null;
+};
+const onCall = createRegistrationTermsGate({
+  firebaseOnCall,
+  HttpsError,
+  readMarker: readRegistrationTermsMarker
+});
+const preApprovalOnCall = createPreApprovalOnCall({ firebaseOnCall, HttpsError,
+  getLiveUser: uid => admin.auth().getUser(uid),
+  readMarker: readRegistrationTermsMarker });
 
 // ---------------------------------------------------------------------
 //  קבועים
@@ -483,8 +500,16 @@ const stationFirstAdminService = stationFirstAdminModule.createStationFirstAdmin
 exports.provisionStation = onCall({ enforceAppCheck: true }, req => stationProvisionService.provisionStation(req));
 exports.markStationReady = onCall({ enforceAppCheck: true }, req => stationProvisionService.markStationReady(req));
 exports.issueFirstAdminInvitation = onCall({ enforceAppCheck: true }, req => stationFirstAdminService.issueFirstAdminInvitation(req));
-exports.redeemInvitation = onCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).redeemInvitation(req));
+exports.redeemInvitation = preApprovalOnCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).redeemInvitation(req));
 exports.resumeOnboarding = onCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).resumeOnboarding(req));
+
+// One endpoint for status and re-consent. This never approves a request or
+// alters its identity fields; older pending invitations remain intact.
+const registrationTermsConsent = require('./registration-terms-consent-service')
+  .createRegistrationTermsConsentService({ db, auth: admin.auth(), HttpsError,
+    serverTimestamp: () => FV.serverTimestamp(),
+    randomId: () => crypto.randomBytes(16).toString('hex') });
+exports.registrationTermsConsent = firebaseOnCall({ enforceAppCheck: true }, registrationTermsConsent);
 
 const identityCoordinator = identityCoordinatorModule.createIdentityCoordinator({
   onboardingAuthority,
@@ -509,7 +534,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.35',
+  monthAuthorityReleaseId: '42H.36',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -650,8 +675,8 @@ exports.listJoinCampaigns = onCall({ enforceAppCheck: true }, req => joinCampaig
 exports.getJoinCampaignRegistrants = onCall({ enforceAppCheck: true, memory: '512MiB' }, req => joinCampaignService.getJoinCampaignRegistrants(req));
 exports.reviewJoinRegistrant = onCall({ enforceAppCheck: true }, req => joinCampaignService.reviewJoinRegistrant(req));
 exports.inspectJoinCampaign = onCall({ enforceAppCheck: true }, req => joinCampaignService.inspectJoinCampaign(req));
-exports.redeemJoinCampaign = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.redeemJoinCampaign(req));
-exports.getMyJoinStatus = onCall({ enforceAppCheck: true }, req => joinCampaignService.getMyJoinStatus(req));
+exports.redeemJoinCampaign = preApprovalOnCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.redeemJoinCampaign(req));
+exports.getMyJoinStatus = preApprovalOnCall({ enforceAppCheck: true }, req => joinCampaignService.getMyJoinStatus(req));
 exports.verifyQualificationDeclaration = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.verifyQualificationDeclaration(req));
 exports.sendReadinessTestPush = onCall({ enforceAppCheck: true, timeoutSeconds: 30 }, req => deviceReadinessService.sendReadinessTestPush(req));
 exports.ackReadinessTestPush = onCall({ enforceAppCheck: true }, req => deviceReadinessService.ackReadinessTestPush(req));
@@ -1622,7 +1647,7 @@ async function resolveUser(data) {
 //  1. אתחול מנהל-על — פעם אחת
 // ---------------------------------------------------------------------
 
-exports.bootstrapSuperAdmin = onCall({ timeoutSeconds: 120 }, async (req) => {
+exports.bootstrapSuperAdmin = preApprovalOnCall({ timeoutSeconds: 120 }, async (req) => {
   const auth = requireAuth(req);
   const email = String(auth.token.email || '').toLowerCase();
 
@@ -2373,7 +2398,7 @@ async function noteFailedLogin(ref, lockIgnored, emp, email) {
 //  היה אפשר — סיסמה במייל נשארת בתיבה ובגיבויים לנצח.
 // ---------------------------------------------------------------------
 
-exports.requestPasswordReset = onCall(async (req) => {
+exports.requestPasswordReset = firebaseOnCall(async (req) => {
   const id = String((req.data || {}).id || '').trim();
   if (!id) throw new HttpsError('invalid-argument', 'נא להזין מספר עובד או מייל.');
 
@@ -3385,7 +3410,7 @@ exports.listUsersWithClaims = onCall(async (req) => {
 //  7. מי אני — לאבחון
 // ---------------------------------------------------------------------
 
-exports.whoAmI = onCall(async (req) => {
+exports.whoAmI = firebaseOnCall(async (req) => {
   if (!req.auth) return { signedIn: false };
 
   const user = await admin.auth().getUser(req.auth.uid);
@@ -6843,7 +6868,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.35', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.36', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

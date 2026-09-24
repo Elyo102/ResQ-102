@@ -78,7 +78,7 @@ function adapterFixture({completed=false,linked=false}={}){
  if(linked){const reservation={schema_version:1,station_id:sid,person_id:personId,revision:1,status:'bound'};store.set(localPath,{...reservation});store.set(globalPath,{...reservation});}
  const state={initial:0,phase:0,gate:0,writes:0,phaseHook:null};
  const req={auth:{uid:actor.uid,token:{super:true,email:actor.email,email_verified:true}}};
- const ctx={Object,exports:{},onCall:(_opts,fn)=>fn,HttpsError,db:{doc:p=>({path:p}),runTransaction:async fn=>fn({get:async ref=>({exists:store.has(ref.path),data:()=>store.get(ref.path)}),set:()=>{state.writes++;throw Error('read-only adapter wrote');}})},
+ const ctx={Object,exports:{},onCall:(_opts,fn)=>fn,preApprovalOnCall:(_opts,fn)=>fn,firebaseOnCall:(_opts,fn)=>fn,HttpsError,db:{doc:p=>({path:p}),runTransaction:async fn=>fn({get:async ref=>({exists:store.has(ref.path),data:()=>store.get(ref.path)}),set:()=>{state.writes++;throw Error('read-only adapter wrote');}})},
   requireAuth:r=>{if(!r.auth)throw new HttpsError('unauthenticated','missing');return r.auth;},requireSuperAdmin:r=>{if(r.auth?.token?.super!==true)throw new HttpsError('permission-denied','signed');return r.auth;},
   admin:{auth:()=>({getUser:async id=>id===actor.uid?actor:target})},validEmp:v=>/^[1-9][0-9]{0,5}$/.test(v),
   schedulePersonContract:personContract,scheduleIdentityStoreContract:storeContract,invitationEngine:{},onboardingContract:{},FV:{serverTimestamp:()=>0},

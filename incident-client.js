@@ -13,7 +13,7 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html',
   'device-readiness.html', 'saas-admin.html', 'metrics.html', 'cost-usage.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20', '42H.21', '42H.22', '42H.23', '42H.24', '42H.25', '42H.26', '42H.27', '42H.28', '42H.29', '42H.30', '42H.31', '42H.32', '42H.33', '42H.34', '42H.35']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20', '42H.21', '42H.22', '42H.23', '42H.24', '42H.25', '42H.26', '42H.27', '42H.28', '42H.29', '42H.30', '42H.31', '42H.32', '42H.33', '42H.34', '42H.35', '42H.36']);
 const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '42H.33.1', server: '42H.31' });
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
@@ -27,7 +27,7 @@ export const TELEMETRY_CODES = Object.freeze([
 export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
-  'redeemInvitation', 'resumeOnboarding',
+  'redeemInvitation', 'resumeOnboarding', 'registrationTermsConsent',
   'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
   'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',
   'verifyQualificationDeclaration', 'sendReadinessTestPush', 'ackReadinessTestPush', 'getMyReadiness',

@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /*
  * invitation-onboarding-service.js
  *
@@ -50,6 +52,7 @@ function createInvitationOnboardingService(deps) {
 
   const inviteRef = (inviteId) => db.doc('invitations/' + inviteId);
   const registrationRef = (uid) => db.doc('registration_requests/' + uid);
+  const consentRef = (uid, rid) => db.doc('registration_consents/' + uid + '/events/' + rid);
   const assignmentRegistryRef = (uid) => db.doc('onboarding_assignment_links/' + uid);
   const operationRef = (sid, requestId) =>
     db.doc('stations/' + sid + '/onboarding_operations/' + requestId);
@@ -58,6 +61,12 @@ function createInvitationOnboardingService(deps) {
   const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
   const safeId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v);
   const safeRequest = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{16,100}$/.test(v);
+  const activeAck = (ack) => plain(ack) && Object.keys(ack).length === 3
+    && ack.terms_version === '1.3' && ack.privacy_version === '2026-09-24'
+    && typeof ack.marketing_opt_in === 'boolean';
+  const ackHash = (ack) => crypto.createHash('sha256').update(JSON.stringify([
+    ack.terms_version, ack.privacy_version, ack.marketing_opt_in
+  ])).digest('hex');
   const sameLink = (a, b) => plain(a) && plain(b) && Object.keys(a).length === Object.keys(b).length
     && Object.keys(b).every(key => a[key] === b[key]);
   async function recheck(req, original, guard) {
@@ -133,8 +142,8 @@ function createInvitationOnboardingService(deps) {
     const auth = await requireAuth(req);
     const input = plain(req && req.data) ? req.data : {};
     const requestId = typeof input.request_id === 'string' ? input.request_id.trim() : '';
-    if (Object.keys(input).length !== 3 || Object.keys(input).some(k => !['request_id', 'invite_id', 'secret'].includes(k))) {
-      fail('invalid-argument', 'מתקבלים מזהי פעולה והזמנה וסוד בלבד.', 'client-supplied-plan');
+    if (Object.keys(input).some(k => !['request_id', 'invite_id', 'secret', 'ack'].includes(k))) {
+      fail('invalid-argument', 'הבקשה כוללת שדה שאינו מותר.', 'client-supplied-plan');
     }
     if (!safeRequest(input.request_id) || requestId !== input.request_id || !auth || !safeId(auth.uid)) {
       fail('invalid-argument', 'מזהה פעולה או חשבון אינו תקין.', 'request-id');
@@ -178,6 +187,15 @@ function createInvitationOnboardingService(deps) {
           fail('failed-precondition',
             'אותו מזהה פעולה כבר שימש לכוונה אחרת.', 'onboarding-intent-changed');
         }
+        if (operation.ack_fingerprint) {
+          if (!activeAck(input.ack) || operation.ack_fingerprint !== ackHash(input.ack)) {
+            fail('failed-precondition', 'אותו מזהה פעולה כבר שימש להסכמה אחרת.', 'onboarding-intent-changed');
+          }
+        } else if (Object.prototype.hasOwnProperty.call(input, 'ack')) {
+          // Only the exact old three-field invocation may replay a committed
+          // pre-cutover operation. Approval still requires fresh consent.
+          fail('failed-precondition', 'ניסיון חוזר ישן חייב להיות זהה לבקשה שנקלטה.', 'onboarding-intent-changed');
+        }
         await recheck(req, auth, requireAuth);
         return Object.freeze({
           ok: true, replayed: true, stage: operation.stage,
@@ -189,6 +207,9 @@ function createInvitationOnboardingService(deps) {
       // to match. Only a committed operation may authenticate a replay.
       if (registrySnap.exists) {
         fail('failed-precondition', 'קיים קישור קליטה לחשבון ואין לדרוס אותו.', 'onboarding-registry-exists');
+      }
+      if (Object.keys(input).length !== 4 || !activeAck(input.ack)) {
+        fail('failed-precondition', 'לפני מימוש הזמנה יש לאשר את תקנון 1.3 ולבחור אם לקבל הצעות.', 'terms-consent-required');
       }
 
       /* The invitation must not already be spent by someone else. A spent
@@ -221,6 +242,12 @@ function createInvitationOnboardingService(deps) {
 
       tx.set(registrationRef(split.uid),
         Object.assign({}, split.registration_request, { created_at: serverTimestamp() }));
+      tx.create(consentRef(split.uid, requestId), {
+        uid: split.uid, request_id: requestId, terms_version: input.ack.terms_version,
+        privacy_version: input.ack.privacy_version,
+        marketing_opt_in: input.ack.marketing_opt_in,
+        accepted_at: serverTimestamp(), source: 'personal_invitation'
+      });
 
       tx.set(operationRef(sid, requestId), {
         schema_version: OPERATION_SCHEMA,
@@ -231,7 +258,8 @@ function createInvitationOnboardingService(deps) {
         assignment_ref: split.assignment_ref,
         operation_fingerprint: split.operation_fingerprint,
         stage: STAGE_REQUEST_CREATED,
-        created_at: serverTimestamp()
+        created_at: serverTimestamp(),
+        ack_fingerprint: ackHash(input.ack)
       });
       tx.set(assignmentRegistryRef(split.uid), expectedRegistry);
 

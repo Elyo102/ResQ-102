@@ -35,8 +35,23 @@ service cloud.firestore {
     // בכלל יכול להגיש בקשה — חיכוך בלי תמורה ביטחונית.
     //
     // המייל עדיין נדרש, ועדיין משמש לשחזור סיסמה.
-    function signedIn() {
+    function signedInRaw() {
       return request.auth != null && request.auth.token.email != null;
+    }
+
+    // The active marker is written only by trusted server code after an
+    // immutable Terms 1.3 receipt. An old ID token must not bypass cutover.
+    function currentTermsAccepted() {
+      let marker = get(/databases/$(database)/documents/registration_terms_active/$(request.auth.uid)).data;
+      return marker.get('uid', '') == request.auth.uid
+             && marker.get('terms_version', '') == '1.3'
+             && marker.get('privacy_version', '') == '2026-09-24'
+             && marker.get('receipt_path', '') is string
+             && marker.get('receipt_path', '').matches('registration_consents/' + request.auth.uid + '/events/.+');
+    }
+
+    function signedIn() {
+      return signedInRaw() && currentTermsAccepted();
     }
 
     // קריאת claim בבטחה. משתמש חדש שעוד לא קיבל תפקיד פשוט
@@ -65,8 +80,8 @@ service cloud.firestore {
     }
 
     function mayRequestRegistration(uid) {
-      return signedIn()
-             && !isSuper()
+      return signedInRaw()
+             && claim('super') != true
              && claim('emp') == ''
              && claim('role') == ''
              && claim('stationId') == ''
@@ -80,6 +95,7 @@ service cloud.firestore {
     // ה-claim; היא אינה הרשאה בפני עצמה בכללי Firestore.
     function isSuper() {
       return request.auth != null
+             && currentTermsAccepted()
              && request.auth.token.get('super', false) == true;
     }
 
@@ -385,20 +401,38 @@ service cloud.firestore {
                     && request.auth.uid == uid
                     && request.resource.data.email == request.auth.token.email.lower()
                     && request.resource.data.status == 'pending'
-                    && (!request.resource.data.keys().hasAny(['request_id'])
-                        || (request.resource.data.request_id is string
-                            && request.resource.data.request_id.size() >= 16
-                            && request.resource.data.request_id.size() <= 100))
+                    && request.resource.data.request_id is string
+                    && request.resource.data.request_id.size() >= 16
+                    && request.resource.data.request_id.size() <= 100
                     && request.resource.data.keys().hasAll([
                       'full_name', 'email', 'phone', 'districtId',
-                      'stationId', 'shift', 'status', 'created_at'
+                      'stationId', 'shift', 'status', 'created_at', 'legal_consent'
                     ])
                     && request.resource.data.keys().hasOnly([
                       'request_id', 'full_name', 'email', 'phone', 'districtId',
-                      'stationId', 'shift', 'status', 'created_at'
-                    ]);
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow delete: if signedIn() && request.auth.uid == uid
+                      'stationId', 'shift', 'status', 'created_at', 'legal_consent'
+                    ])
+                    && request.resource.data.legal_consent is map
+                    && request.resource.data.legal_consent.keys().hasAll([
+                      'terms_version', 'privacy_version', 'marketing_opt_in'
+                    ])
+                    && request.resource.data.legal_consent.keys().hasOnly([
+                      'terms_version', 'privacy_version', 'marketing_opt_in'
+                    ])
+                    && request.resource.data.legal_consent.terms_version == '1.3'
+                    && request.resource.data.legal_consent.privacy_version == '2026-09-24'
+                    && request.resource.data.legal_consent.marketing_opt_in is bool
+                    && request.resource.data.created_at == request.time
+                    && request.resource.data.request_id is string
+                    && !exists(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id))
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.uid == uid
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.request_id == request.resource.data.request_id
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.terms_version == request.resource.data.legal_consent.terms_version
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.privacy_version == request.resource.data.legal_consent.privacy_version
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.marketing_opt_in == request.resource.data.legal_consent.marketing_opt_in
+                    && getAfter(/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)).data.accepted_at == request.time;
+      allow read: if signedInRaw() && request.auth.uid == uid;
+      allow delete: if signedInRaw() && request.auth.uid == uid
                     && resource.data.status == 'pending';
       allow read: if isSuper();
     }
@@ -563,6 +597,35 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /cost_usage_daily/{id} {
+      allow read, write: if false;
+    }
+
+    // קבלת הסכמה נכתבת באותה אצווה עם בקשת ההרשמה. לקוח אינו רשאי
+    // לקרוא, לשנות או למחוק אותה לאחר מכן; השרת יכול לגשת דרך Admin SDK.
+    match /registration_consents/{uid}/events/{requestId} {
+      allow create: if mayRequestRegistration(uid)
+                    && request.auth.uid == uid
+                    && !exists(/databases/$(database)/documents/registration_requests/$(uid))
+                    && request.resource.data.keys().hasAll([
+                      'uid', 'request_id', 'terms_version', 'privacy_version', 'marketing_opt_in', 'accepted_at'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'uid', 'request_id', 'terms_version', 'privacy_version', 'marketing_opt_in', 'accepted_at'
+                    ])
+                    && request.resource.data.uid == uid
+                    && request.resource.data.request_id == requestId
+                    && request.resource.data.terms_version == '1.3'
+                    && request.resource.data.privacy_version == '2026-09-24'
+                    && request.resource.data.marketing_opt_in is bool
+                    && request.resource.data.accepted_at == request.time
+                    && getAfter(/databases/$(database)/documents/registration_requests/$(uid)).data.request_id == requestId
+                    && getAfter(/databases/$(database)/documents/registration_requests/$(uid)).data.legal_consent.terms_version == request.resource.data.terms_version
+                    && getAfter(/databases/$(database)/documents/registration_requests/$(uid)).data.legal_consent.privacy_version == request.resource.data.privacy_version
+                    && getAfter(/databases/$(database)/documents/registration_requests/$(uid)).data.legal_consent.marketing_opt_in == request.resource.data.marketing_opt_in
+                    && getAfter(/databases/$(database)/documents/registration_requests/$(uid)).data.created_at == request.time;
+      allow read, update, delete: if false;
+    }
+    match /registration_terms_active/{uid} {
       allow read, write: if false;
     }
     match /cost_usage_station_daily/{id} {
@@ -1110,7 +1173,7 @@ service cloud.firestore {
       // בחתימה שאפשר לצרף אחריה טקסט אחר.
 
       match /submissions/{subId} {
-        allow read: if resource.data.get('by_uid', '') == request.auth.uid
+        allow read: if (signedIn() && resource.data.get('by_uid', '') == request.auth.uid)
                     || (resource.data.get('is_private', false) == false
                         && staff(sid)
                         && seesCrewData(sid, resource.data.get('crew', '')))

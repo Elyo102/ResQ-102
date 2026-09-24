@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', 'login.html'), 'utf8');
+const rules = fs.readFileSync(path.join(here, '..', 'firestore.rules'), 'utf8');
+const identity = fs.readFileSync(path.join(here, '..', 'functions', 'identity-coordinator.js'), 'utf8');
 
 let passed = 0;
 function ok(name, value) {
@@ -13,11 +15,11 @@ function ok(name, value) {
 }
 
 const flowMatch = html.match(
-  /\$\('btnFirst'\)\.onclick = async \(\) => \{([\s\S]*?)\/\/ ---------- ניתוב ----------/
+  /async function submitFirst\(marketingOptIn\) \{([\s\S]*?)\/\/ ---------- ניתוב ----------/
 );
 ok('registration handler is present', !!flowMatch);
 const flow = flowMatch ? flowMatch[1] : '';
-const writePos = flow.indexOf('await setDoc(requestRef');
+const writePos = flow.indexOf('await batch.commit()');
 
 ok('re-submit control exists', /id="btnResubmit"/.test(html));
 ok('re-submit has an explicit recovery control', /id="btnResubmitCancel"/.test(html));
@@ -49,6 +51,25 @@ ok('uncertain write result preserves the Auth account',
    /else if \(!absenceConfirmed\)[\s\S]*?showRegistrationRecovery\(applicant\)/.test(flow));
 ok('double-click protection disables the submit button',
    flow.indexOf('btn.disabled = true') < writePos);
+ok('registration offers an explicit no-marketing path',
+   /id="btnFirst"[^>]*>שלח בקשה ללא הצעות/.test(html) &&
+   /\$\('btnFirst'\)\.onclick = \(\) => submitFirst\(false\)/.test(flow));
+ok('marketing is separately chosen and recorded',
+   /id="btnFirstMarketing"[^>]*>שלח בקשה וקבל הצעות/.test(html) &&
+   /\$\('btnFirstMarketing'\)\.onclick = \(\) => submitFirst\(true\)/.test(flow) &&
+   /marketing_opt_in: marketingOptIn === true/.test(flow));
+ok('operator contact and full terms are available before submission',
+   /אלדד יונה/.test(html) && /fire102\.shits@gmail\.com/.test(html) &&
+   /href="\.\/terms\.html"/.test(html));
+ok('rules require the same versioned legal choice on a new request',
+   /legal_consent\.terms_version == '1\.3'/.test(rules) &&
+   /legal_consent\.privacy_version == '2026-09-24'/.test(rules) &&
+   /legal_consent\.marketing_opt_in is bool/.test(rules));
+ok('registration receipt is atomically committed and approval retains consent metadata',
+   /batch\.set\(doc\(db, 'registration_consents'/.test(flow) &&
+   /await batch\.commit\(\)/.test(flow) &&
+   /registration_consent: consentReceipt \?/.test(identity) &&
+   /registration_terms_active\/' \+ params\.uid/.test(identity));
 ok('existing-email guidance returns the user to normal login',
    /email-already-in-use[\s\S]*?היכנס עם המייל והסיסמה/.test(flow));
 ok('station-code entry is absent while server join is disabled',

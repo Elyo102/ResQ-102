@@ -17,8 +17,8 @@ const withoutComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, ' ').rep
 // generic block-comment regex here: a regex/string containing slash-star
 // is not a comment and must not swallow subsequent real export lines.
 const exportDeclarations = (source) => [...source.replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, ' ')
-  .matchAll(/^exports\.([A-Za-z0-9_]+)\s*=\s*(on\w+)\(/gm)]
-  .map((match) => [match[1], match[2]]);
+  .matchAll(/^exports\.([A-Za-z0-9_]+)\s*=\s*(on\w+|firebaseOnCall|preApprovalOnCall)\(/gm)]
+  .map((match) => [match[1], ['firebaseOnCall', 'preApprovalOnCall'].includes(match[2]) ? 'onCall' : match[2]]);
 const loadClient = (name) => import('data:text/javascript;base64,' + Buffer.from(read(name)).toString('base64'));
 const contract = require('../functions/ops-telemetry-contract.js');
 const { createFakeFirestore } = require('../functions/fixtures/fake-firestore.js');

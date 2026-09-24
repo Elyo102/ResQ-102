@@ -48,7 +48,7 @@ check(transitionShell.includes("location.replace('./login.html?next=schedule-man
 // its Firebase bootstrap to its adjacent module, so include that module in
 // the screen source rather than losing the App Check assertion during the
 // split. The remaining 20 are the actual Firebase consumers.
-const firebaseScreens = html.filter(file => !['index.html', 'schedule.html'].includes(file));
+const firebaseScreens = html.filter(file => !['index.html', 'schedule.html', 'terms.html', 'privacy.html'].includes(file));
 const imports = firebaseScreens.flatMap(file => {
   let body = fs.readFileSync(path.join(root, file), 'utf8');
   if (file === 'schedule-management.html') {

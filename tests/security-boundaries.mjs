@@ -66,7 +66,7 @@ const indexSrc = read('functions/index.js');
  *  שנחתך בפסיק הראשון, כי `{ region, enforceAppCheck: true, … }` מכיל פסיקים. */
 function callableOptions(src) {
   const out = [];
-  const re = /^exports\.(\w+)\s*=\s*onCall\(/gm;
+  const re = /^exports\.(\w+)\s*=\s*(?:onCall|preApprovalOnCall|firebaseOnCall)\(/gm;
   let m;
   while ((m = re.exec(src)) !== null) {
     let i = re.lastIndex, depth = 0, start = i;

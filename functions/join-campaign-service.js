@@ -30,11 +30,24 @@ function createJoinCampaignService(deps) {
 
   const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
   const dataOf = (snap) => (snap && snap.exists ? (snap.data() || null) : null);
+  // Fingerprint of every client-controlled field, including the actual consent
+  // version/choice. A request_id must never silently replay with new intent.
+  const redemptionIntent = (input) => hash(JSON.stringify([
+    'join-redemption-intent-v1', input && input.token, input && input.full_name,
+    input && input.phone, input && input.shift, input && input.qualifications,
+    input && input.note, input && input.ack
+  ]));
+  const historicalDeclarationsMatch = (incoming, stored) => Array.isArray(incoming) &&
+    Array.isArray(stored) && incoming.length === stored.length && incoming.every((item, i) =>
+      plain(item) && stored[i] && item.key === stored[i].key &&
+      (item.valid_until_ms == null ? null : item.valid_until_ms) === stored[i].valid_until_ms &&
+      String(item.reference || '').trim() === String(stored[i].reference || ''));
   const campaignRef = (cid) => db.doc('join_campaigns/' + cid);
   const registrantRef = (cid, uid) => db.doc('join_campaigns/' + cid + '/registrants/' + uid);
   const registrantIndexRef = (uid) => db.doc('join_registrant_index/' + uid);
   const inviteRef = (id) => db.doc('invitations/' + id);
   const registrationRef = (uid) => db.doc('registration_requests/' + uid);
+  const consentRef = (uid, rid) => db.doc('registration_consents/' + uid + '/events/' + rid);
   const registryRef = (uid) => db.doc('onboarding_assignment_links/' + uid);
   const operationRef = (sid, rid) => db.doc('stations/' + sid + '/onboarding_operations/' + rid);
   const liveUserRef = (sid, uid) => db.doc('stations/' + sid + '/users/' + uid);
@@ -309,6 +322,29 @@ function createJoinCampaignService(deps) {
         const ok = contract.replayMatches({ operation, registry, invite, uid, request_id: requestId, campaign,
           stages: onboardingContract.ONBOARDING_STAGES, verifyStoredFingerprint: invitations.verifyStoredFingerprint });
         if (!ok) fail('failed-precondition', 'אותו מזהה פעולה כבר שימש לכוונה אחרת.', 'onboarding-intent-changed');
+        if (operation.redemption_intent_fingerprint) {
+          if (operation.redemption_intent_fingerprint !== redemptionIntent(input)) {
+            fail('failed-precondition', 'אותו מזהה פעולה כבר שימש לפרטים או להסכמה אחרים.', 'onboarding-intent-changed');
+          }
+        } else {
+          // Existing operations predate fingerprints; at least prevent a new
+          // marketing choice from being reported as a successful replay.
+          const stored = dataOf(await tx.get(registrantRef(campaign.campaign_id, uid)));
+          const incomingAck = input && input.ack;
+          if (!stored || !plain(stored.ack) || !plain(incomingAck)
+              || stored.ack.correctness !== incomingAck.correctness
+              || stored.ack.terms_version !== incomingAck.terms_version
+              || stored.ack.privacy_version !== incomingAck.privacy_version
+              || Object.prototype.hasOwnProperty.call(stored.ack, 'marketing_opt_in') !==
+                 Object.prototype.hasOwnProperty.call(incomingAck, 'marketing_opt_in')
+              || stored.ack.marketing_opt_in !== incomingAck.marketing_opt_in
+              || (invite && (invite.full_name !== String(input.full_name || '').trim() ||
+                  invite.phone !== String(input.phone || '').trim()))
+              || stored.shift !== input.shift || stored.note !== String(input.note || '').trim()
+              || !historicalDeclarationsMatch(input.qualifications, stored.declarations)) {
+            fail('failed-precondition', 'אותו מזהה פעולה כבר שימש להסכמה אחרת.', 'onboarding-intent-changed');
+          }
+        }
         await requireIdentity(req);
         return Object.freeze({ ok: true, replayed: true, stage: operation.stage, approved: false, permissions_granted: false,
           station_id: sid, uid, request_id: requestId });
@@ -355,10 +391,17 @@ function createJoinCampaignService(deps) {
       tx.create(inviteRef(candidate.invite_id), Object.assign({}, candidate.doc,
         { redeemed_by: uid, redeemed_at: serverTimestamp(), redeemed_request_id: requestId }));
       tx.set(registrationRef(uid), Object.assign({}, split.registration_request, { created_at: serverTimestamp() }));
+      tx.create(consentRef(uid, requestId), {
+        uid, request_id: requestId, terms_version: normalized.ack.terms_version,
+        privacy_version: normalized.ack.privacy_version,
+        marketing_opt_in: normalized.ack.marketing_opt_in,
+        accepted_at: serverTimestamp(), source: 'join_campaign'
+      });
       tx.set(operationRef(sid, requestId), {
         schema_version: OPERATION_SCHEMA, station_id: sid, request_id: requestId, uid, invite_id: candidate.invite_id,
         assignment_ref: split.assignment_ref, operation_fingerprint: split.operation_fingerprint,
         stage: STAGE_REQUEST_CREATED, created_at: serverTimestamp(),
+        redemption_intent_fingerprint: redemptionIntent(input),
         provenance: { kind: 'join_campaign', campaign_id: campaign.campaign_id, campaign_revision: campaign.revision }
       });
       tx.set(registryRef(uid), expectedRegistry);

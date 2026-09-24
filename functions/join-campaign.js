@@ -243,8 +243,8 @@ const REDEEM_KEYS = Object.freeze(['request_id', 'token', 'full_name', 'phone', 
 const REDEEM_OPTIONAL = Object.freeze(['note']);
 const REDEEM_FORBIDDEN = Object.freeze(['role', 'station_id', 'stationId', 'district_id', 'districtId', 'invite_id',
   'secret', 'source', 'uid', 'email', 'plan', 'invite', 'assignment_ref', 'campaign_id']);
-const ACTIVE_TERMS_VERSION = '2026-09';
-const ACTIVE_PRIVACY_VERSION = '2026-09';
+const ACTIVE_TERMS_VERSION = '1.3';
+const ACTIVE_PRIVACY_VERSION = '2026-09-24';
 // A fresh redemption must accept the active documents exactly. Historical v1
 // operations still replay before normalization in the service, but cannot be
 // selected by a new client request.
@@ -274,14 +274,23 @@ function normalizeDeclarations(raw, catalog, nowMs) {
 }
 
 function normalizeAck(raw) {
-  if (!exactKeys(raw, ['correctness', 'terms_version', 'privacy_version'])) fail('ack', 'חסר אישור נכונות הפרטים ותנאי השימוש.', 'invalid-argument');
+  if (!plain(raw)) fail('ack', 'חסר אישור נכונות הפרטים ותנאי השימוש.', 'invalid-argument');
+  if (raw.terms_version !== ACTIVE_TERMS_VERSION) {
+    fail('ack-version', 'מסמכי ההצטרפות עודכנו. יש לרענן את המסך ולעיין בגרסה הנוכחית.', 'failed-precondition');
+  }
+  if (!exactKeys(raw, ['correctness', 'terms_version', 'privacy_version', 'marketing_opt_in'])) fail('ack', 'חסר אישור נכונות הפרטים ותנאי השימוש.', 'invalid-argument');
   if (raw.correctness !== true) fail('ack', 'יש לאשר את נכונות הפרטים.', 'invalid-argument');
+  if (typeof raw.marketing_opt_in !== 'boolean') fail('ack', 'יש לבחור אם לקבל הצעות שיווקיות.', 'invalid-argument');
   const terms = String(raw.terms_version || ''), privacy = String(raw.privacy_version || '');
   if (!VERSION_RE.test(terms) || !VERSION_RE.test(privacy)) fail('ack', 'גרסת תנאי השימוש חסרה.', 'invalid-argument');
   if (!ACCEPTED_TERMS_VERSIONS.has(terms) || !ACCEPTED_PRIVACY_VERSIONS.has(privacy)) {
     fail('ack-version', 'מסמכי ההצטרפות עודכנו. יש לרענן את המסך ולעיין בגרסה הנוכחית.', 'failed-precondition');
   }
-  return Object.freeze({ correctness: true, terms_version: terms, privacy_version: privacy });
+  if (terms !== ACTIVE_TERMS_VERSION || privacy !== ACTIVE_PRIVACY_VERSION) {
+    fail('ack-version', 'מסמכי ההצטרפות עודכנו. יש לרענן את המסך ולעיין בגרסה הנוכחית.', 'failed-precondition');
+  }
+  return Object.freeze({ correctness: true, terms_version: terms, privacy_version: privacy,
+    marketing_opt_in: raw.marketing_opt_in });
 }
 
 /** קלט המימוש. מפתחות מדויקים; כל שדה שיוך נדחה בשמו. */
@@ -323,7 +332,8 @@ function buildRegistrant(params) {
     uid: p.uid, campaign_id: p.campaign_id, campaign_revision: Number.isInteger(p.campaign_revision) ? p.campaign_revision : 0,
     station_id: p.station_id, request_id: p.request_id, invite_id: p.invite_id, shift: p.shift,
     note: String(p.note || ''),
-    ack: { correctness: true, terms_version: p.ack.terms_version, privacy_version: p.ack.privacy_version, at_ms: p.now_ms },
+    ack: { correctness: true, terms_version: p.ack.terms_version, privacy_version: p.ack.privacy_version,
+      marketing_opt_in: p.ack.marketing_opt_in === true, at_ms: p.now_ms },
     declarations: p.declarations.map((d) => Object.assign({}, d)),
     review_state: 'none', review_note: '', review_at_ms: null,
     revision: 1, created_at_ms: p.now_ms, updated_at_ms: p.now_ms
@@ -561,7 +571,7 @@ module.exports = Object.freeze({
   REDEEM_KEYS, REDEEM_OPTIONAL, REDEEM_FORBIDDEN, CAMPAIGN_ID_RE, TOKEN_RE,
   ACTIVE_TERMS_VERSION, ACTIVE_PRIVACY_VERSION,
   newCampaignToken, parseToken, tokenMatches, normalizeCreateInput, buildCampaignDoc, deriveState, publicView,
-  applyStatusAction, adminView, normalizeRedemptionInput, normalizeDeclarations, buildRegistrant, replayMatches,
+  applyStatusAction, adminView, normalizeAck, normalizeRedemptionInput, normalizeDeclarations, buildRegistrant, replayMatches,
   normalizeReviewAction, applyReviewAction, normalizeVerifyInput, effectiveDeclarationStatus, planDeclarationUpdate,
   promoteDeclarations, summarizeDeclarations, computeReadiness, readinessSendGate, readinessSendDecision, readinessAckGate,
   holdingsAfterVerification, verificationIntentFingerprint, whatsappMessage,

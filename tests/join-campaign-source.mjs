@@ -40,8 +40,8 @@ for (const name of NEW_CALLABLES) check('telemetry vocabulary lists ' + name + '
 const sw = read('firebase-messaging-sw.js');
 check('service worker SHELL carries join-ui.js for the login page', /'\.\/join-ui\.js'/.test(sw));
 const login = read('login.html'), admin = read('admin.html'), readinessPage = read('device-readiness.html');
-check('login.html imports join-ui with the release query', login.includes("from './join-ui.js?v=42h35'"));
-check('admin.html imports join-admin-ui with the release query', admin.includes("from './join-admin-ui.js?v=42h35'"));
+check('login.html imports join-ui with the release query', login.includes("from './join-ui.js?v=42h36'"));
+check('admin.html imports join-admin-ui with the release query', admin.includes("from './join-admin-ui.js?v=42h36'"));
 check('device-readiness.html initializes App Check once and is RTL Hebrew', (readinessPage.match(/await initAppCheck\(app\);/g) || []).length === 1 && /<html lang="he" dir="rtl">/.test(readinessPage));
 for (const file of ['join-ui.js', 'join-admin-ui.js']) {
   const src = read(file);
@@ -57,12 +57,14 @@ check('join draft has a bounded 30-minute TTL and is removed on expiry/success',
   /draftKeys\(\)\.forEach\(key => session\.remove\(key\)\)/.test(joinUi));
 const service = read('functions/join-campaign-service.js'), contract = read('functions/join-campaign.js');
 check('server pins the finite legal document versions instead of trusting browser labels',
-  /ACTIVE_TERMS_VERSION = '2026-09'/.test(contract) && /ACTIVE_PRIVACY_VERSION = '2026-09'/.test(contract) &&
-  /new Set\(\[ACTIVE_TERMS_VERSION\]\)/.test(contract) && /new Set\(\[ACTIVE_PRIVACY_VERSION\]\)/.test(contract) &&
+  /ACTIVE_TERMS_VERSION = '1.3'/.test(contract) && /ACTIVE_PRIVACY_VERSION = '2026-09-24'/.test(contract) &&
+  /new Set\(\[ACTIVE_TERMS_VERSION\]\)/.test(contract) &&
+  /new Set\(\[ACTIVE_PRIVACY_VERSION\]\)/.test(contract) &&
   /ACCEPTED_TERMS_VERSIONS\.has\(terms\)/.test(contract) && /ACCEPTED_PRIVACY_VERSIONS\.has\(privacy\)/.test(contract));
 check('join screen presents the versioned terms and privacy text before acknowledgement',
   /תנאי שימוש · גרסה/.test(joinUi) && /מדיניות פרטיות · גרסה/.test(joinUi) &&
-  /אין מכירת מידע, פרסום ממוקד או שימוש במידע רפואי ו-HR לשיווק/.test(joinUi) &&
+  /מידע רפואי, מסמכי HR ונתוני נוכחות אינם משמשים להצעות מסחריות/.test(joinUi) &&
+  /marketing_opt_in/.test(joinUi) && /terms\.html/.test(joinUi) &&
   /קראתי את תנאי השימוש ומדיניות הפרטיות/.test(joinUi));
 check('campaign document stores token_hash only (no raw secret field written)', /token_hash/.test(contract) && !/\bsecret:\s*token\.secret|secret:\s*secret\b/.test(service));
 check('redeem writes the invitation exactly as issued plus redemption fields', /tx\.create\(inviteRef\(candidate\.invite_id\), Object\.assign\(\{\}, candidate\.doc,\s*\{ redeemed_by: uid, redeemed_at: serverTimestamp\(\), redeemed_request_id: requestId \}\)\)/.test(service));

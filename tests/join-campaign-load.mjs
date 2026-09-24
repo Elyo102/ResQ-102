@@ -26,7 +26,7 @@ const ms = (t0) => Number((process.hrtime.bigint() - t0) / 1000000n);
   check('100 redemptions succeed, none replayed', results.every((r) => r.ok === true && r.replayed === false));
   check('campaign counter reaches exactly 100 and turns full', db._get('join_campaigns/' + created.campaign_id).accepted_count === 100 && db._get('join_campaigns/' + created.campaign_id).status === 'full');
   check('100 distinct single-use invitations, 100 registries, 100 requests', ['invitations/', 'onboarding_assignment_links/', 'registration_requests/'].every((p) => Array.from(db._store.keys()).filter((k) => k.startsWith(p)).length === 100));
-  check('writes per redemption are constant (7 docs)', stats.writes === 700);
+  check('writes per redemption are constant (8 docs, including consent receipt)', stats.writes === 800);
   check('reads per redemption are bounded (<= 12, no per-registrant fan-out)', stats.reads / 100 <= 12);
   console.log('  100 redemptions: ' + elapsed + 'ms total, ' + (elapsed / 100).toFixed(2) + 'ms each, reads/redemption=' + (stats.reads / 100).toFixed(1) + ', retries=' + stats.retries);
   const r101 = await service.redeemJoinCampaign(req('load_w0', redeemInput(created.token))).catch((e) => e);

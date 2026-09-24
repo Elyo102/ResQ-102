@@ -32,7 +32,8 @@ function fakeDb() {
       const staged = [];
       const tx = {
         async get(ref) { const v = store.get(ref.path); return { exists: v !== undefined, data: () => v }; },
-        set(ref, value, options) { staged.push([ref.path, value, options]); }
+        set(ref, value, options) { staged.push([ref.path, value, options]); },
+        create(ref, value) { if (store.has(ref.path)) throw new Error('already exists'); staged.push([ref.path, value, null]); }
       };
       const out = await fn(tx);
       for (const [path, value, options] of staged) {
@@ -124,7 +125,8 @@ const NEW_USER = Object.freeze({ uid: 'uid-new-1', email_verified: true, email: 
 const REQ_ID = 'onb_20260915_000001';
 const redeemReq = (over, auth) => ({
   auth: auth || NEW_USER,
-  data: Object.assign({ invite_id: INVITE_ID, secret: SECRET, request_id: REQ_ID }, over || {})
+  data: Object.assign({ invite_id: INVITE_ID, secret: SECRET, request_id: REQ_ID,
+    ack: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false } }, over || {})
 });
 
 async function rejectsWith(fn, status, code) {
@@ -148,7 +150,8 @@ const suite = (async () => {
     assert.ok(db._store.has('registration_requests/uid-new-1'));
     assert.ok(db._store.has('stations/shahmon/onboarding_operations/' + REQ_ID));
     assert.ok(db._store.has('onboarding_assignment_links/uid-new-1'));
-    assert.equal(db._writes.length, 4);
+    assert.ok(db._store.has('registration_consents/uid-new-1/events/' + REQ_ID));
+    assert.equal(db._writes.length, 5);
   });
 
   await test('S2 · מימוש אינו אישור ואינו מעניק הרשאות', async () => {
@@ -253,6 +256,35 @@ const suite = (async () => {
     const again = await service.redeemInvitation(redeemReq());
     assert.equal(again.replayed, true);
     assert.equal(db._writes.length, after, 'הניסיון החוזר כתב שוב');
+  });
+  await test('new redemption rejects missing, old or malformed legal consent', async () => {
+    const { service } = build();
+    await rejectsWith(() => service.redeemInvitation(redeemReq({ ack: undefined })),
+      'failed-precondition', 'terms-consent-required');
+    await rejectsWith(() => service.redeemInvitation(redeemReq({ ack: {
+      terms_version: '1.2', privacy_version: '2026-09-24', marketing_opt_in: false
+    } })), 'failed-precondition', 'terms-consent-required');
+    await rejectsWith(() => service.redeemInvitation(redeemReq({ ack: {
+      terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: 'yes'
+    } })), 'failed-precondition', 'terms-consent-required');
+  });
+  await test('new redemption replay cannot change the marketing choice', async () => {
+    const { service } = build();
+    await service.redeemInvitation(redeemReq());
+    await rejectsWith(() => service.redeemInvitation(redeemReq({ ack: {
+      terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: true
+    } })), 'failed-precondition', 'onboarding-intent-changed');
+  });
+  await test('historical committed operation replays only the old three-field invocation', async () => {
+    const { db, service } = build();
+    await service.redeemInvitation(redeemReq());
+    const path = 'stations/shahmon/onboarding_operations/' + REQ_ID;
+    const old = { ...db._store.get(path) }; delete old.ack_fingerprint;
+    db._put(path, old);
+    const oldInput = { auth: NEW_USER, data: { invite_id: INVITE_ID, secret: SECRET, request_id: REQ_ID } };
+    assert.equal((await service.redeemInvitation(oldInput)).replayed, true);
+    await rejectsWith(() => service.redeemInvitation(redeemReq()),
+      'failed-precondition', 'onboarding-intent-changed');
   });
 
   await test('S11 · אותו מזהה פעולה עם כוונה אחרת נדחה', async () => {

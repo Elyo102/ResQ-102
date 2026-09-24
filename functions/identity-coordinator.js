@@ -179,6 +179,28 @@ function createIdentityCoordinator(deps) {
     return db.doc('registration_requests/' + uid);
   }
 
+  async function requireRegistrationConsent(tx, uid, requestId, request) {
+    if (!request || !requestId || String(request.request_id || '') !== String(requestId)) {
+      throw httpsError('failed-precondition', 'בקשת ההרשמה אינה תואמת לקבלת ההסכמה. רענן ובקש אישור מחדש.');
+    }
+    const snap = await tx.get(db.doc('registration_consents/' + uid + '/events/' + requestId));
+    const receipt = snap.exists ? snap.data() || {} : {};
+    if (receipt.uid !== uid || receipt.request_id !== requestId ||
+        receipt.terms_version !== '1.3' || receipt.privacy_version !== '2026-09-24' ||
+        typeof receipt.marketing_opt_in !== 'boolean' || !receipt.accepted_at) {
+      throw httpsError('failed-precondition', 'נדרשת הסכמה מתועדת לתקנון 1.3 לפני אישור הבקשה.', {
+        registration_consent_required: true
+      });
+    }
+    if (request.legal_consent && request.legal_consent.terms_version === '1.3' &&
+        (request.legal_consent.terms_version !== receipt.terms_version ||
+         request.legal_consent.privacy_version !== receipt.privacy_version ||
+         request.legal_consent.marketing_opt_in !== receipt.marketing_opt_in)) {
+      throw httpsError('failed-precondition', 'הסכמת ההרשמה אינה תואמת לבקשה. הבקשה נשמרה לבדיקה.');
+    }
+    return receipt;
+  }
+
   const ownsAuthority = op => !!op && Object.prototype.hasOwnProperty.call(op, 'onboarding_authority');
   function protectedError(error) {
     const wrapped = recoveryError('Protected onboarding authority validation failed.');
@@ -224,6 +246,10 @@ function createIdentityCoordinator(deps) {
       const operation = snap.data();
       const request = operation.request_id ? await tx.get(requestRef(uid)) : null;
       await validateAuthority(tx, operation, request && request.exists ? request.data() : null, phase, actor, uid);
+      if (operation.kind === 'approve' && operation.status !== 'completed') {
+        await requireRegistrationConsent(tx, uid, operation.request_id,
+          request && request.exists ? request.data() : null);
+      }
       if (operation.op_id !== opId) throw recoveryError('פעולת הזהות אינה פעילה עוד.');
       return operation;
     });
@@ -324,6 +350,9 @@ function createIdentityCoordinator(deps) {
       }
 
       if (existing) {
+        if (params.kind === 'approve' && existing.status !== 'completed') {
+          await requireRegistrationConsent(tx, params.uid, existing.request_id, initialRequest);
+        }
         if (existing.status === 'completed' && existing.op_id === params.opId) {
           if (sameIntent(existing, params)) return { type: 'completed', operation: existing };
           throw httpsError('aborted',
@@ -351,6 +380,7 @@ function createIdentityCoordinator(deps) {
       let exactRequestId = '';
       let exactGeneration = '';
       let exactRequestFingerprint = '';
+      let consentReceipt = null;
 
       if (params.requireRequest || params.attachPendingRequest) {
         reqSnap = initialRequestSnap;
@@ -382,6 +412,7 @@ function createIdentityCoordinator(deps) {
             requestGeneration: exactGeneration
           };
         }
+        consentReceipt = await requireRegistrationConsent(tx, params.uid, exactRequestId, reqData);
         if (String(reqData.request_fingerprint || '') !== exactRequestFingerprint) {
           throw httpsError('failed-precondition',
             'תוכן בקשת ההרשמה השתנה לאחר שנחתם בשרת. הבקשה נשמרה לבדיקה.', {
@@ -545,6 +576,14 @@ function createIdentityCoordinator(deps) {
         request_id: exactRequestId,
         request_generation: exactGeneration,
         request_fingerprint: exactRequestFingerprint,
+        // The request is deleted after approval; retain the registration choice
+        // in the server-owned operation receipt for later consent audits.
+        registration_consent: consentReceipt ? {
+          terms_version: consentReceipt.terms_version,
+          privacy_version: consentReceipt.privacy_version,
+          marketing_opt_in: consentReceipt.marketing_opt_in,
+          at: timestampIdentity(consentReceipt.accepted_at)
+        } : null,
         intent_fingerprint: params.intentFingerprint,
         plan_fingerprint: planFingerprint,
         fingerprint_version: 1,
@@ -570,6 +609,17 @@ function createIdentityCoordinator(deps) {
       }
 
       tx.set(opRef, op);
+      if (params.kind === 'approve' && consentReceipt) {
+        // Approval and the active Terms marker share one Firestore commit.
+        // The marker is usable only with a later approved identity claim.
+        tx.set(db.doc('registration_terms_active/' + params.uid), {
+          uid: params.uid,
+          terms_version: '1.3',
+          privacy_version: '2026-09-24',
+          receipt_path: 'registration_consents/' + params.uid + '/events/' + exactRequestId,
+          activated_at: FV.serverTimestamp()
+        });
+      }
       tx.set(auditRef, auditDocument(params, params.auditAction,
         Object.assign({}, params.auditDetails || {}, {
           operation_id: params.opId,

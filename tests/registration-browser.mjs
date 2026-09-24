@@ -63,6 +63,37 @@ function identityPlan(claims) {
 
 const browser = await chromium.launch();
 try {
+  {
+    const { context, page } = await open(browser, { __SMOKE_ROLE:'super',
+      __CALLABLE_PLAN:{ registrationTermsConsent:[
+        { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:true, replayed:false } },
+        { data:{ ok:true, accepted:true, status:'approved' } }
+      ] } });
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    check(await page.locator('#homeView').isHidden(),
+      'already approved super cannot enter home before current terms');
+    await page.locator('#pendingTermsNoMarketing').click();
+    await page.locator('#homeView').waitFor({ state:'visible' });
+    const calls = await page.evaluate(() => window.__CALLABLE_CALLS || []);
+    check(calls.some(x => x.name === 'registrationTermsConsent' &&
+      x.payload?.action === 'accept' && x.payload?.marketing_opt_in === false),
+      'approved user explicitly accepts without marketing');
+    await context.close();
+  }
+  {
+    const { context, page } = await open(browser, { __SMOKE_ROLE:'super',
+      __CALLABLE_PLAN:{ registrationTermsConsent:[
+        { reject:true, code:'functions/unavailable' },
+        { data:{ ok:true, accepted:true, status:'approved' } }
+      ] } });
+    await page.locator('#btnRetryTerms').waitFor({ state:'visible' });
+    check(await page.locator('#homeView').isHidden(),
+      'terms status network failure is fail-closed');
+    await page.locator('#btnRetryTerms').click();
+    await page.locator('#homeView').waitFor({ state:'visible' });
+    await context.close();
+  }
   // חשבון שנדחה נשאר קיים ב-Auth, אבל מסמך הבקשה נמחק.
   {
     const { context, page } = await open(browser, {
@@ -102,6 +133,27 @@ try {
           're-submit checks live server claims exactly once');
     check(!result.calls.some(x => x.name === 'joinWithCode'),
           're-submit never calls the non-atomic station-code path');
+    await context.close();
+  }
+
+  // בקשה ישנה ללא קבלת 1.3 אינה נשלחת מחדש: המשתמש מסכים בחשבון הקיים.
+  {
+    const { context, page } = await open(browser, {
+      __SMOKE_ROLE:'pending', __REGISTRATION_REQUEST_EXISTS:true,
+      __CALLABLE_PLAN:{ registrationTermsConsent:[
+        { data:{ ok:true, accepted:false, status:'pending' } },
+        { data:{ ok:true, accepted:true, replayed:false } }
+      ] }
+    });
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    check(await page.locator('#pendingTermsPanel a[href="terms.html"]').isVisible(),
+      'old pending request sees current terms before re-consent');
+    await page.locator('#pendingTermsNoMarketing').click();
+    await page.locator('#pendingTermsPanel').waitFor({ state:'hidden' });
+    const calls = await page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(x => x.name === 'registrationTermsConsent'));
+    check(calls.length === 2 && calls[0].payload.action === 'status' &&
+      calls[1].payload.action === 'accept' && calls[1].payload.marketing_opt_in === false,
+      'old pending account records an explicit no-marketing choice without creating another request');
     await context.close();
   }
 

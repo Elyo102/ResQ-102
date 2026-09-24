@@ -110,6 +110,10 @@ await test('redeem: one transaction writes invitation, request, operation, regis
   const request = db._get('registration_requests/w1');
   assert.deepEqual(Object.keys(request).sort(), ['created_at', 'districtId', 'email', 'full_name', 'phone', 'request_id', 'shift', 'stationId', 'status']);
   assert.equal(request.status, 'pending'); assert.equal(request.stationId, 'eilat'); assert.equal(request.shift, 'A');
+  const consent = db._get('registration_consents/w1/events/' + input.request_id);
+  assert.equal(consent.uid, 'w1'); assert.equal(consent.terms_version, '1.3');
+  assert.equal(consent.privacy_version, '2026-09-24');
+  assert.equal(consent.marketing_opt_in, input.ack.marketing_opt_in);
   const op = db._get('stations/eilat/onboarding_operations/' + input.request_id);
   assert.equal(op.stage, 'request_created'); assert.deepEqual(op.provenance, { kind: 'join_campaign', campaign_id: created.campaign_id, campaign_revision: 1 });
   const reg = db._get('join_campaigns/' + created.campaign_id + '/registrants/w1');
@@ -133,6 +137,10 @@ await test('redeem: replay of the same request returns replayed without a second
   const before = Array.from(db._store.keys()).filter((k) => k.startsWith('invitations/')).length;
   const again = await service.redeemJoinCampaign(req('w1', input));
   assert.equal(again.replayed, true);
+  await rejects(service.redeemJoinCampaign(req('w1', Object.assign({}, input,
+    { ack: Object.assign({}, input.ack, { marketing_opt_in: !input.ack.marketing_opt_in }) }))), 'onboarding-intent-changed');
+  await rejects(service.redeemJoinCampaign(req('w1', Object.assign({}, input,
+    { full_name: 'Changed applicant name' }))), 'onboarding-intent-changed');
   assert.equal(Array.from(db._store.keys()).filter((k) => k.startsWith('invitations/')).length, before);
   assert.equal(db._get('join_campaigns/' + created.campaign_id).accepted_count, 1);
   // replay by a different uid with the same request id is refused
@@ -143,6 +151,26 @@ await test('redeem: replay of the same request returns replayed without a second
   // replay with tampered operation provenance is refused
   const op = db._get('stations/eilat/onboarding_operations/' + input.request_id);
   db._put('stations/eilat/onboarding_operations/' + input.request_id, Object.assign({}, op, { provenance: { kind: 'join_campaign', campaign_id: 'BBBBBBBBBBBBBBBB' } }));
+  await rejects(service.redeemJoinCampaign(req('w1', input)), 'onboarding-intent-changed');
+});
+
+await test('historical committed campaign intent replays only with matching old legal choice', async () => {
+  const { db, service, input, created } = await redeemHappy();
+  const opPath = 'stations/eilat/onboarding_operations/' + input.request_id;
+  const operation = { ...db._get(opPath) }; delete operation.redemption_intent_fingerprint;
+  db._put(opPath, operation);
+  const registrantPath = 'join_campaigns/' + created.campaign_id + '/registrants/w1';
+  const registrant = db._get(registrantPath);
+  db._put(registrantPath, { ...registrant, ack: { ...registrant.ack,
+    terms_version: '2026-09', privacy_version: '2026-09' } });
+  const oldInput = { ...input, ack: { ...input.ack,
+    terms_version: '2026-09', privacy_version: '2026-09' } };
+  assert.equal((await service.redeemJoinCampaign(req('w1', oldInput))).replayed, true);
+  await rejects(service.redeemJoinCampaign(req('w1', { ...oldInput,
+    ack: { ...oldInput.ack, correctness: false } })), 'onboarding-intent-changed');
+  await rejects(service.redeemJoinCampaign(req('w1', { ...oldInput,
+    qualifications: [{ key: 'hazmat', valid_until_ms: NOW + 86400000 * 30 }] })),
+  'onboarding-intent-changed');
   await rejects(service.redeemJoinCampaign(req('w1', input)), 'onboarding-intent-changed');
 });
 

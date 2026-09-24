@@ -16,7 +16,8 @@ const engine = createInvitations({ clock: () => time, randomBytes: crypto.random
 const uid = 'member_1';
 const rid = 'request_20260915_001';
 const request = () => ({ auth: { uid, email: 'member@example.test', email_verified: true },
-  data: { invite_id: 'invite_1', secret, request_id: rid } });
+  data: { invite_id: 'invite_1', secret, request_id: rid,
+    ack: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false } } });
 function setup(authMode) {
   const store = new Map([['invitations/invite_1', { invite_id: 'invite_1', secret_hash: hash(secret),
     station_id: 'station_1', district_id: 'south', role: 'firefighter', shift: 'A',
@@ -29,8 +30,9 @@ function setup(authMode) {
     async runTransaction(fn) {
       const pending = [];
       const out = await fn({ async get(ref) { return snap(ref.path); },
-        set(ref, value, opts) { pending.push([ref.path, value, opts]); } });
-      if (abortCommit) { assert.equal(pending.length, 4); throw new Error('simulated-commit-abort'); }
+        set(ref, value, opts) { pending.push([ref.path, value, opts]); },
+        create(ref, value) { pending.push([ref.path, value, null]); } });
+      if (abortCommit) { assert.equal(pending.length, 5); throw new Error('simulated-commit-abort'); }
       for (const [path, value, opts] of pending) {
         store.set(path, opts?.merge ? { ...store.get(path), ...value } : value); writes++;
       }
@@ -67,12 +69,12 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
   await test('real engine and SDK Timestamp: first redeem then exact replay has no writes', async () => {
     const s = setup();
     const first = await s.service.redeemInvitation(request());
-    assert.equal(first.replayed, false); assert.equal(s.writes(), 4);
+    assert.equal(first.replayed, false); assert.equal(s.writes(), 5);
     assert(s.store.get('invitations/invite_1').redeemed_at instanceof Timestamp);
     assert.equal(s.store.get('stations/station_1/onboarding_operations/' + rid).assignment_ref.person_id, 'sp_person_0001');
     assert.equal(s.store.get('registration_requests/' + uid).person_id, undefined);
     const next = await s.service.redeemInvitation(request());
-    assert.equal(next.replayed, true); assert.equal(next.permissions_granted, false); assert.equal(s.writes(), 4);
+    assert.equal(next.replayed, true); assert.equal(next.permissions_granted, false); assert.equal(s.writes(), 5);
     assert.throws(() => engine.redeem(s.store.get('invitations/invite_1'), secret, request().auth), /invalid/);
   });
   for (const field of ['full_name', 'phone', 'person_id', 'role', 'station_id', 'expires_at']) {
@@ -80,7 +82,7 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
       const s = setup(); await s.service.redeemInvitation(request());
       const invite = s.store.get('invitations/invite_1');
       invite[field] = field === 'expires_at' ? Timestamp.fromMillis(time - 1) : field === 'role' ? 'commander' : 'changed_value';
-      await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 4);
+      await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 5);
     });
   }
   for (const change of [r => r.data.secret = 'wrong', r => r.auth.uid = 'other_uid',
@@ -88,13 +90,13 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     r => r.data.invite_id = '../escape', r => r.data.request_id = 'a/b']) {
     await test('untrusted changed caller input denied without writes', async () => {
       const s = setup(); await s.service.redeemInvitation(request()); const r = request(); change(r);
-      await assert.rejects(() => s.service.redeemInvitation(r)); assert.equal(s.writes(), 4);
+      await assert.rejects(() => s.service.redeemInvitation(r)); assert.equal(s.writes(), 5);
     });
   }
   await test('revoked invitation replay denied', async () => {
     const s = setup(); await s.service.redeemInvitation(request());
     s.store.get('invitations/invite_1').revoked_at = Timestamp.fromMillis(time);
-    await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 4);
+    await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 5);
   });
   await test('async fresh auth revoked before transaction writes prevents all writes', async () => {
     const s = setup(true); await assert.rejects(() => s.service.redeemInvitation(request()), /revoked-mid/);
@@ -102,13 +104,13 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
   });
   await test('async fresh auth revoked before replay return denies replay without writes', async () => {
     const s = setup(); await s.service.redeemInvitation(request()); s.revokeFresh();
-    await assert.rejects(() => s.service.redeemInvitation(request()), /revoked-mid/); assert.equal(s.writes(), 4);
+    await assert.rejects(() => s.service.redeemInvitation(request()), /revoked-mid/); assert.equal(s.writes(), 5);
   });
   await test('stored assignment link tampering cannot hide behind original operation hash', async () => {
     const s = setup(); await s.service.redeemInvitation(request());
     const op = s.store.get('stations/station_1/onboarding_operations/' + rid);
     op.assignment_ref = { ...op.assignment_ref, person_id: 'other_person' };
-    await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 4);
+    await assert.rejects(() => s.service.redeemInvitation(request())); assert.equal(s.writes(), 5);
   });
   await test('same request ID with altered registration cannot be overwritten', async () => {
     const s = setup(); await s.service.redeemInvitation(request());
@@ -133,7 +135,7 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
       const s = setup(); await s.service.redeemInvitation(request()); change(s);
       const before = s.store.get('onboarding_assignment_links/' + uid);
       await assert.rejects(() => s.service.redeemInvitation(request()), e => e.code === 'onboarding-registry-mismatch');
-      assert.equal(s.writes(), 4); assert.equal(s.store.get('onboarding_assignment_links/' + uid), before);
+      assert.equal(s.writes(), 5); assert.equal(s.store.get('onboarding_assignment_links/' + uid), before);
     });
   }
   await test('initial matching orphan registry is preserved, not adopted', async () => {
@@ -150,10 +152,10 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     s.store.set('invitations/invite_2', other);
     const r = request(); r.data.invite_id = 'invite_2'; r.data.request_id = 'request_20260915_002';
     await assert.rejects(() => s.service.redeemInvitation(r), e => e.code === 'onboarding-registry-exists');
-    assert.equal(s.writes(), 4); assert.equal(s.store.get('onboarding_assignment_links/' + uid), original);
+    assert.equal(s.writes(), 5); assert.equal(s.store.get('onboarding_assignment_links/' + uid), original);
     assert.equal(s.store.get('invitations/invite_2').redeemed_by, undefined);
   });
-  await test('simulated abort after all four writes queued leaves no partial redemption', async () => {
+  await test('simulated abort after all five writes queued leaves no partial redemption', async () => {
     const s = setup(); s.abortNextCommit();
     await assert.rejects(() => s.service.redeemInvitation(request()), /simulated-commit-abort/);
     assert.equal(s.writes(), 0); assert.equal(s.store.size, 1);

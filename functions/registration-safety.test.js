@@ -236,7 +236,9 @@ async function rejectsWith(label, promise, code) {
   const loginSource = fs.readFileSync(path.join(__dirname, '..', 'login.html'), 'utf8');
   assert.equal(loginSource.includes('id="fCode"'), false);
   assert.equal(loginSource.includes("httpsCallable(fns, 'joinWithCode')"), false);
-  assert.ok(loginSource.includes('request_id: newRequestId()'));
+  assert.ok(loginSource.includes('const requestId = newRequestId()'));
+  assert.ok(loginSource.includes("batch.set(doc(db, 'registration_consents', applicant.uid, 'events', requestId)"));
+  assert.ok(loginSource.includes('await batch.commit()'));
   assert.ok(loginSource.includes("status === 'processing'"));
   const adminSource = fs.readFileSync(path.join(__dirname, '..', 'admin.html'), 'utf8');
   assert.ok(adminSource.includes("httpsCallable(fns, 'rejectRegistration')"));

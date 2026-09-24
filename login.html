@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h35">
-<link rel="stylesheet" href="./bulletin.css?v=42h35">
+<link rel="stylesheet" href="./theme.css?v=42h36">
+<link rel="stylesheet" href="./bulletin.css?v=42h36">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -312,7 +312,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div id="invitationVerified" class="hide">
       <p id="invitationWho"></p>
       <button type="button" id="invitationVerify">שלח מייל אימות</button>
-      <button type="button" id="invitationRedeem">אימתתי את המייל — ממש הזמנה</button>
+      <p>לפני מימוש ההזמנה, קרא/י את <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>. בחירה באחד הכפתורים מאשרת את שניהם ומתועדת.</p>
+      <button type="button" id="invitationRedeem">אני מסכים/ה — ללא הצעות שיווקיות</button>
+      <button type="button" id="invitationRedeemMarketing">אני מסכים/ה — לקבל גם הצעות שיווקיות</button>
     </div>
     <button type="button" id="invitationReset">נקה פרטי הזמנה</button>
     <p id="invitationStatus" class="msg" role="status" aria-live="polite"></p>
@@ -391,7 +393,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <input type="password" id="fPass2" autocomplete="new-password">
       </div>
 
-      <button id="btnFirst">שלח בקשה</button>
+      <div class="note" id="registrationLegalNotice">
+        מפעיל השירות ובעל השליטה במידע: אלדד יונה ·
+        <a href="mailto:fire102.shits@gmail.com">fire102.shits@gmail.com</a>.<br>
+        <a href="./terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a> ·
+        <a href="./privacy.html" target="_blank" rel="noopener">הודעת פרטיות · גרסה 2026-09-24</a>.
+        שליחת הבקשה מאשרת את תנאי השימוש; קבלת הצעות שיווקיות היא בחירה נפרדת.
+      </div>
+      <button id="btnFirst">שלח בקשה ללא הצעות</button>
+      <button id="btnFirstMarketing" type="button" class="back">שלח בקשה וקבל הצעות</button>
       <button type="button" class="back hide" id="btnResubmitCancel">חזרה למסך החשבון</button>
       <div class="note">
         מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
@@ -419,10 +429,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
       <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
       <div id="joinStatusBox" class="hide"></div>
+      <div id="pendingTermsPanel" class="hide" role="group" aria-label="אישור תקנון מעודכן">
+        <p>כדי שמנהל המערכת יוכל לאשר את בקשתך, יש לקרוא ולאשר את
+          <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת
+          <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.</p>
+        <button type="button" id="pendingTermsNoMarketing">אני מסכים/ה — ללא הצעות</button>
+        <button type="button" id="pendingTermsMarketing">אני מסכים/ה — לקבל גם הצעות</button>
+        <div id="pendingTermsStatus" class="msg" role="status" aria-live="polite"></div>
+      </div>
     </div>
     <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
     <button id="btnResubmit" class="hide">מלא ושלח בקשה מחדש</button>
+    <button type="button" id="btnRetryTerms" class="hide">בדוק שוב את ההסכמה</button>
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
@@ -633,40 +652,40 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h35';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h36';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h35';
+         subStationsForStation } from './stations.js?v=42h36';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h35';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h35';
+  from './nav.js?v=42h36';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h36';
 import {
   initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h35';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h35';
-import { watchCallouts } from './callout.js?v=42h35';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h35';
-import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h35';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h35';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h35';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h35';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h35';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h35';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h35';
+} from './pwa.js?v=42h36';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h36';
+import { watchCallouts } from './callout.js?v=42h36';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h36';
+import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h36';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h36';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h36';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h36';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h36';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h36';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h36';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
          EmailAuthProvider, setPersistence, browserLocalPersistence, sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
+import { getFirestore, doc, getDoc, getDocFromServer, setDoc, writeBatch, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h35';
+  from './monitored-functions.js?v=42h36';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h35';
+import { initAppCheck } from './appcheck.js?v=42h36';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -722,6 +741,7 @@ const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
 const callWho   = httpsCallable(fns, 'whoAmI');
 const callRedeemInvitation = httpsCallable(fns, 'redeemInvitation');
+const callRegistrationTerms = httpsCallable(fns, 'registrationTermsConsent');
 // קליטה בקישור קבוצתי (42H.21)
 const callInspectJoin = httpsCallable(fns, 'inspectJoinCampaign');
 const callRedeemJoin = httpsCallable(fns, 'redeemJoinCampaign');
@@ -851,13 +871,17 @@ function clearInvitation(){
   invitationControls();
 }
 function invitationControls(){
-  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationRedeemMarketing','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  if(invitationIntent){
+    $('invitationRedeem').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in===true;
+    $('invitationRedeemMarketing').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in!==true;
+  }
   ['invitationId','invitationSecret'].forEach(id=>$(id).disabled=invitationBusy||!!invitationIntent);
   $('invitationAccount').classList.toggle('hide',!!auth.currentUser);
   $('invitationVerified').classList.toggle('hide',!auth.currentUser);
   $('invitationWho').textContent=auth.currentUser?'מחובר: '+(auth.currentUser.email||''):'';
 }
-async function invitationAction(action){
+async function invitationAction(action, marketingOptIn){
   if(invitationBusy)return;
   const epoch=invitationEpoch, initialUid=auth.currentUser?.uid||'';
   let expectedUid=initialUid;
@@ -891,7 +915,11 @@ async function invitationAction(action){
         if(!invitationIntent){
           const invite_id=$('invitationId').value.trim(),secret=$('invitationSecret').value.trim();
           if(!invite_id||!secret)throw new Error('יש להזין מזהה הזמנה וסוד הזמנה.');
-          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret});
+          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret,ack:{
+            terms_version:'1.3',privacy_version:'2026-09-24',marketing_opt_in:marketingOptIn===true
+          }});
+        }else if(invitationIntent.ack.marketing_opt_in!==(marketingOptIn===true)){
+          throw new Error('ניסיון המימוש הקודם נשמר עם בחירת שיווק אחרת. לניסיון חוזר בחר/י באותה אפשרות, או נקה/י פרטי הזמנה והתחל/י מחדש.');
         }
         const result=(await callRedeemInvitation(invitationIntent)).data;
         if(!current())return;
@@ -910,7 +938,8 @@ async function invitationAction(action){
 $('invitationSignIn').onclick=()=>invitationAction('signin');
 $('invitationCreate').onclick=()=>invitationAction('create');
 $('invitationVerify').onclick=()=>invitationAction('verify');
-$('invitationRedeem').onclick=()=>invitationAction('redeem');
+$('invitationRedeem').onclick=()=>invitationAction('redeem',false);
+$('invitationRedeemMarketing').onclick=()=>invitationAction('redeem',true);
 $('invitationReset').onclick=()=>{if(!invitationBusy)clearInvitation();};
 window.addEventListener('pagehide',clearInvitation);
 
@@ -1111,8 +1140,12 @@ $('btnForgot').onclick = async () => {
 
 // ---------- הרשמה ----------
 
-$('btnFirst').onclick = async () => {
+const REGISTRATION_TERMS_VERSION = '1.3';
+const REGISTRATION_PRIVACY_VERSION = '2026-09-24';
+async function submitFirst(marketingOptIn) {
+  if (onboarding) return;
   const btn = $('btnFirst');
+  const marketingBtn = $('btnFirstMarketing');
   clearMsg();
 
   const name     = $('fName').value.trim();
@@ -1138,7 +1171,7 @@ $('btnFirst').onclick = async () => {
     return;
   }
 
-  btn.disabled = true;
+  btn.disabled = true; marketingBtn.disabled = true;
   onboarding = true;
 
   let applicant = null;
@@ -1158,7 +1191,7 @@ $('btnFirst').onclick = async () => {
       }
       const serverClaims = live.claims_on_server || {};
       if (hasServerAssignment(serverClaims)) {
-        onboarding = false; btn.disabled = false;
+        onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
         if (hasCompleteServerAssignment(serverClaims)) {
           await applicant.getIdToken(true);
           resetRegistrationMode();
@@ -1173,12 +1206,12 @@ $('btnFirst').onclick = async () => {
       // שכבר קיימת. המשתמש פשוט חוזר למסך ההמתנה.
       const pending = await getDoc(doc(db, 'registration_requests', applicant.uid));
       if (pending.exists()) {
-        onboarding = false; btn.disabled = false;
+        onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
         showWaiting(applicant, pending.data() || {});
         return;
       }
     } catch (e) {
-      onboarding = false; btn.disabled = false;
+      onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
       show('לא ניתן לאמת כרגע את מצב החשבון, ולכן לא נשלחה בקשה. ' +
            'בדוק חיבור ונסה שוב.', 'err');
       return;
@@ -1189,7 +1222,7 @@ $('btnFirst').onclick = async () => {
       applicant = cred.user;
       createdNow = true;
     } catch (e) {
-      onboarding = false; btn.disabled = false;
+      onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
       if (e.code === 'auth/email-already-in-use') {
         show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה", ' +
              'היכנס עם המייל והסיסמה, ומשם תוכל להגיש בקשה מחדש.', 'err');
@@ -1204,8 +1237,15 @@ $('btnFirst').onclick = async () => {
 
   const requestRef = doc(db, 'registration_requests', applicant.uid);
   try {
-    await setDoc(requestRef, {
-      request_id: newRequestId(),
+    const requestId = newRequestId();
+    const consent = {
+      terms_version: REGISTRATION_TERMS_VERSION,
+      privacy_version: REGISTRATION_PRIVACY_VERSION,
+      marketing_opt_in: marketingOptIn === true
+    };
+    const batch = writeBatch(db);
+    batch.set(requestRef, {
+      request_id: requestId,
       full_name:  name,
       email:      email,
       phone:      phone,
@@ -1215,10 +1255,19 @@ $('btnFirst').onclick = async () => {
       // הכללים והשרת מטפלים בו כמי שאינו נעול לאף משמרת,
       // ולא כמשמרת בשם "none".
       shift:      shift === 'none' ? '' : shift,
+      legal_consent: consent,
       status:     'pending',
       created_at: serverTimestamp()
     });
-    onboarding = false; btn.disabled = false;
+    batch.set(doc(db, 'registration_consents', applicant.uid, 'events', requestId), {
+      uid: applicant.uid, request_id: requestId,
+      terms_version: consent.terms_version,
+      privacy_version: consent.privacy_version,
+      marketing_opt_in: consent.marketing_opt_in,
+      accepted_at: serverTimestamp()
+    });
+    await batch.commit();
+    onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
     showWaiting();
   } catch (e) {
     // כשל רשת יכול להגיע אחרי שהשרת כבר שמר את הבקשה. קודם
@@ -1232,7 +1281,7 @@ $('btnFirst').onclick = async () => {
       absenceConfirmed = !requestSaved;
     } catch (ignore) {}
 
-    onboarding = false; btn.disabled = false;
+    onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
 
     if (requestSaved) {
       showWaiting(applicant);
@@ -1255,7 +1304,9 @@ $('btnFirst').onclick = async () => {
 
     show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
   }
-};
+}
+$('btnFirst').onclick = () => submitFirst(false);
+$('btnFirstMarketing').onclick = () => submitFirst(true);
 
 // ---------- ניתוב ----------
 
@@ -1344,6 +1395,23 @@ async function route(user, epoch){
     claims = t.claims || {};
   } catch (ignore) {}
   if (!routeIsCurrent(user, epoch)) return;
+
+  if (claims.super === true || hasCompleteServerAssignment(claims)) {
+    // The server-owned marker is checked before native-back recovery, profile
+    // reads or any member screen. Offline/error is deliberately fail-closed.
+    try {
+      const response = await callRegistrationTerms({action:'status'});
+      if (!routeIsCurrent(user, epoch)) return;
+      if (!response.data?.ok || !response.data.accepted) {
+        showApprovedTerms(user, false);
+        return;
+      }
+    } catch (error) {
+      if (!routeIsCurrent(user, epoch)) return;
+      showApprovedTerms(user, true);
+      return;
+    }
+  }
 
   if ((claims.super === true || hasCompleteServerAssignment(claims)) &&
       returnFromNativeBack(claims)) return;
@@ -1543,6 +1611,7 @@ function showNotLinked(user){
 }
 
 function showWaiting(user, request){
+  approvedTermsUserUid = '';
   loginTransitionPending = false;
   if (request) joinRegistered = true;
   const status = String((request || {}).status || 'pending');
@@ -1568,7 +1637,60 @@ function showWaiting(user, request){
   $('btnResubmit').classList.add('hide');
   showView('wait');
   void refreshJoinStatus(user);
+  $('pendingTermsPanel').classList.add('hide');
+  if (status === 'pending' || status === 'processing' || status === 'needs_recovery') {
+    const pendingUid = user && user.uid;
+    void callRegistrationTerms({action:'status'}).then(({data})=>{
+      if (auth.currentUser?.uid === pendingUid && data && data.ok && !data.accepted) {
+        $('pendingTermsPanel').classList.remove('hide');
+      }
+    }).catch(()=>{});
+  }
 }
+
+let approvedTermsUserUid = '';
+function showApprovedTerms(user, failed){
+  loginTransitionPending = false;
+  approvedTermsUserUid = user.uid;
+  clearNav();
+  document.body.classList.remove('with-nav');
+  $('waitIcon').textContent = failed ? '⚠️' : '📜';
+  $('waitTtl').textContent = failed ? 'לא ניתן לבדוק את ההסכמה' : 'נדרש אישור תקנון 1.3';
+  $('waitTxt').textContent = failed
+    ? 'לא ניתן לאמת כרגע את התקנון מול השרת. בדוק חיבור ונסה שוב; הגישה למערכת חסומה עד לאימות.'
+    : 'התקנון המעודכן חל על כל המשתמשים. בחר/י אם לאשר אותו ללא הצעות שיווקיות או גם עם הצעות.';
+  showWho(user);
+  $('btnBootstrap').classList.add('hide');
+  $('btnResubmit').classList.add('hide');
+  $('btnRetryTerms').classList.toggle('hide', !failed);
+  $('pendingTermsPanel').classList.toggle('hide', !!failed);
+  $('pendingTermsPanel').querySelector('p').innerHTML = 'לפני המשך השימוש יש לקרוא ולאשר את ' +
+    '<a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת ' +
+    '<a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.';
+  $('pendingTermsStatus').textContent = '';
+  showView('wait');
+}
+$('btnRetryTerms').onclick=()=>{ if(auth.currentUser) startRoute(auth.currentUser); };
+
+async function acceptPendingTerms(marketingOptIn){
+  const panel=$('pendingTermsPanel'), status=$('pendingTermsStatus');
+  panel.querySelectorAll('button').forEach(button=>button.disabled=true);
+  status.textContent='שומר הסכמה…';
+  try{
+    const response=await callRegistrationTerms({action:'accept',marketing_opt_in:marketingOptIn});
+    if(!response.data?.accepted)throw new Error('לא התקבל אישור מהשרת.');
+    status.textContent='ההסכמה נשמרה. הבקשה יכולה לעבור לאישור מנהל המערכת.';
+    panel.classList.add('hide');
+    if (approvedTermsUserUid && auth.currentUser?.uid === approvedTermsUserUid) {
+      approvedTermsUserUid = '';
+      startRoute(auth.currentUser);
+    }
+  }catch(error){
+    status.textContent='לא ניתן לשמור את ההסכמה: '+(error.message||'נסה שוב.');
+  }finally{panel.querySelectorAll('button').forEach(button=>button.disabled=false);}
+}
+$('pendingTermsNoMarketing').onclick=()=>acceptPendingTerms(false);
+$('pendingTermsMarketing').onclick=()=>acceptPendingTerms(true);
 
 function showRegistrationRecovery(user){
   showWaiting(user);

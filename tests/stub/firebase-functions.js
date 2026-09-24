@@ -141,6 +141,7 @@ function stubWorkdays(payload){
 }
 
 function defaultCallableStep(name, payload){
+  if (name === 'registrationTermsConsent') return { data:{ ok:true, accepted:true } };
   if (name === 'getAlertsFeed') return { data:{ __async:stubAlertsFeed } };
   if (name === 'listCalloutRecipients') return { data:{ __async:() => stubCalloutRecipients(payload) } };
   if (name === 'getPersonalLiveLabStatus') return { data:{ active:false, expires_at_ms:0 } };

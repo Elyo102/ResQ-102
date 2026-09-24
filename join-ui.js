@@ -7,8 +7,8 @@
 // כללי מסך: אין innerHTML עם תוכן משתמש — כל טקסט נכנס דרך textContent;
 // כל כפתור ושדה בגובה 44px לפחות (theme.css); כל מצב שרת מקבל מסך משלו.
 
-export const TERMS_VERSION = '2026-09';
-export const PRIVACY_VERSION = '2026-09';
+export const TERMS_VERSION = '1.3';
+export const PRIVACY_VERSION = '2026-09-24';
 export const SHIFT_HE = Object.freeze({ A: 'א׳', B: 'ב׳', C: 'ג׳' });
 const STATE_TEXT = Object.freeze({
   loading: ['⏳', 'בודק את הקישור…', 'רגע אחד.'],
@@ -63,10 +63,26 @@ const session = {
 };
 const requestStore = {
   key: (token) => 'resq_join_request_' + token.slice(0, 16),
-  get(token) { return session.get(this.key(token)); },
-  set(token, id) { session.set(this.key(token), id); },
+  get(token) {
+    try {
+      const value = JSON.parse(session.get(this.key(token)) || 'null');
+      return value && typeof value.id === 'string' && typeof value.intent === 'string' ? value : null;
+    } catch (ignore) { return null; }
+  },
+  set(token, value) { session.set(this.key(token), JSON.stringify(value)); },
   clear(token) { session.remove(this.key(token)); }
 };
+// This is only a local accidental-change guard. The server enforces a SHA-256
+// fingerprint independently; no name, phone or note is persisted in storage.
+function localIntent(payload) {
+  const content = JSON.stringify(payload);
+  let h = 2166136261;
+  for (let i = 0; i < content.length; i += 1) {
+    h ^= content.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return String(h >>> 0);
+}
 
 /** בונה את הפאנל בתוך `root`. deps — ראו login.html. */
 export function createJoinPanel(root, deps) {
@@ -76,7 +92,7 @@ export function createJoinPanel(root, deps) {
     if (typeof d[name] !== 'function') throw new TypeError('join panel dependency is required: ' + name);
   }
   const token = String(d.token || '');
-  const state = { view: null, busy: false, requestId: requestStore.get(token) || '', epoch: 0 };
+  const state = { view: null, busy: false, request: requestStore.get(token), epoch: 0 };
 
   const head = el('div', { class: 'join-head' });
   const icon = el('div', { class: 'join-icon', 'aria-hidden': 'true' });
@@ -131,6 +147,7 @@ export function createJoinPanel(root, deps) {
     acct.appendChild(el('h3', { id: 'joinStep1' }, '1 · חשבון'));
     if (!user) {
       acct.appendChild(el('p', {}, 'הזן/י מייל וסיסמה. אם כבר יש לך חשבון — היכנס/י איתו.'));
+      acct.appendChild(el('p', { class: 'join-hint' }, 'מפעיל השירות ובעל השליטה במידע: אלדד יונה · fire102.shits@gmail.com. תנאי השימוש זמינים בהמשך הטופס ולפני שליחת הבקשה.'));
       acct.appendChild(labeled('joinEmail', 'מייל', el('input', { type: 'email', dir: 'ltr', autocomplete: 'username', inputmode: 'email' })));
       acct.appendChild(labeled('joinPassword', 'סיסמה', el('input', { type: 'password', autocomplete: 'new-password' })));
       acct.appendChild(el('p', { class: 'join-hint' }, 'לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.'));
@@ -186,17 +203,19 @@ export function createJoinPanel(root, deps) {
     const terms = el('details', { class: 'join-legal-doc' });
     terms.append(
       el('summary', {}, 'תנאי שימוש · גרסה ' + TERMS_VERSION),
-      el('p', {}, 'ResQ היא מערכת תפעולית לתחנה. יש למסור פרטים נכונים, לשמור על סודיות החשבון ולהשתמש במערכת רק לצורכי התפקיד.'),
-      el('p', {}, 'דיווחי שעות ודוחות חודשיים שהוגשו נשמרים בשרת ללא מחיקה אוטומטית לצורכי ביקורת. ביטול טיוטה נשמר בקבלת ביקורת שרתית.'),
-      el('p', {}, 'אין מערכת חסינה לחלוטין. יש לנעול את המכשיר, לא למסור סיסמה ולדווח לתחנה על אובדן מכשיר או חשד לשימוש לא מורשה.')
+      el('p', {}, 'מפעיל השירות ובעל השליטה במידע: אלדד יונה · fire102.shits@gmail.com.'),
+      el('p', {}, 'ResQ היא כלי עזר תפעולי. יש לאמת מידע על משמרות, שעות והתראות ואין להסתמך עליה כערוץ יחיד להודעות חירום.'),
+      el('p', {}, 'תוכן המשתמש נשאר בבעלותו; השימוש בו כפוף לתנאים ולדין. אין בהסכמה לתנאים הסכמה אוטומטית לשיווק או להעברת פרטים לשותפים.'),
+      el('a', { href: './terms.html', target: '_blank', rel: 'noopener' }, 'פתח/י את התקנון המלא, גרסה 1.3')
     );
     const privacy = el('details', { class: 'join-legal-doc' });
     privacy.append(
       el('summary', {}, 'מדיניות פרטיות · גרסה ' + PRIVACY_VERSION),
       el('p', {}, 'המערכת מעבדת פרטי זהות, תחנה, תפקיד, משמרות, שעות, מסמכי HR, מידע רפואי שנמסר ביוזמת המשתמש, הרשאות מכשיר וטוקן פוש לצורך הפעלת השירות.'),
       el('p', {}, 'השרת הוא מקור האמת. האפליקציה אינה יוצרת עותק קבוע בדפדפן של שעות, מידע רפואי, הסכמות, נימוקי דחייה או טוקני פוש; Firebase והדפדפן מנהלים פרטי התחברות ופוש הנחוצים לשירות.'),
-      el('p', {}, 'Firebase משמש כספק תשתית מטעם מפעיל המערכת. אין מכירת מידע, פרסום ממוקד או שימוש במידע רפואי ו-HR לשיווק. הסכמה שיווקית עתידית, אם תוצע, תהיה נפרדת, אופציונלית וניתנת לביטול.'),
-      el('p', {}, 'ייצוא מקומי מיועד למחשב ארגוני מנוהל ומוצפן בלבד. קובץ שיוצא מהמערכת אינו ניתן למחיקה מרחוק, והאחריות התפעולית לשמירתו היא של התחנה.')
+      el('p', {}, 'Firebase משמש כספק תשתית מטעם מפעיל המערכת. מידע רפואי, מסמכי HR ונתוני נוכחות אינם משמשים להצעות מסחריות. קבלת הצעות שיווקיות היא בחירה נפרדת, אופציונלית וניתנת לביטול בפנייה למפעיל.'),
+      el('p', {}, 'ייצוא מקומי מיועד למחשב ארגוני מנוהל ומוצפן בלבד. קובץ שיוצא מהמערכת אינו ניתן למחיקה מרחוק, והאחריות התפעולית לשמירתו היא של התחנה.'),
+      el('a', { href: './privacy.html', target: '_blank', rel: 'noopener' }, 'פתח/י את הודעת הפרטיות המלאה')
     );
     legal.append(terms, privacy);
     form.appendChild(legal);
@@ -204,16 +223,19 @@ export function createJoinPanel(root, deps) {
     const ack = el('input', { type: 'checkbox', id: 'joinAck' }); fields.joinAck = ack;
     ackLab.append(ack, el('span', {}, 'קראתי את תנאי השימוש ומדיניות הפרטיות, הפרטים נכונים ואני מאשר/ת את גרסה ' + TERMS_VERSION + '.'));
     form.appendChild(ackLab);
-    const submit = el('button', { type: 'submit', id: 'joinSubmit' }, 'שלח/י בקשת הצטרפות');
+    const submit = el('button', { type: 'submit', id: 'joinSubmit' }, 'שלח/י בקשה ללא הצעות');
     submit.disabled = !(user && user.emailVerified);
     form.appendChild(submit);
+    const marketingSubmit = el('button', { type: 'submit', id: 'joinSubmitMarketing', class: 'ghost' }, 'שלח/י בקשה וקבל/י הצעות');
+    marketingSubmit.disabled = submit.disabled;
+    form.appendChild(marketingSubmit);
     if (!(user && user.emailVerified)) form.appendChild(el('p', { class: 'join-hint' }, 'הכפתור ייפתח אחרי אימות המייל.'));
-    form.onsubmit = (event) => { event.preventDefault(); submitJoin(); };
+    form.onsubmit = (event) => { event.preventDefault(); submitJoin(event.submitter && event.submitter.id === 'joinSubmitMarketing'); };
     body.appendChild(form);
     restoreDraft();
     controls();
   }
-  function controls() { root.querySelectorAll('button, input, select, textarea').forEach((n) => { n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified)); }); }
+  function controls() { root.querySelectorAll('button, input, select, textarea').forEach((n) => { n.disabled = state.busy || ((n.id === 'joinSubmit' || n.id === 'joinSubmitMarketing') && !(d.currentUser() && d.currentUser().emailVerified)); }); }
   const DRAFT_TTL_MS = 30 * 60 * 1000;
   function draftKey(uid) {
     return 'resq_join_draft_v2:' + token.slice(0, 16) + ':' + (uid || 'guest');
@@ -280,7 +302,7 @@ export function createJoinPanel(root, deps) {
     catch (error) { message('הבדיקה נכשלה. ' + friendly(error), true); }
     finally { state.busy = false; controls(); }
   }
-  function collect() {
+  function collect(marketingOptIn) {
     const name = String(fields.joinName.value || '').trim(), phone = String(fields.joinPhone.value || '').trim();
     if (name.length < 2) throw new Error('יש להזין שם מלא.');
     if (!/^[+0-9][0-9 -]{6,}$/.test(phone)) throw new Error('יש להזין מספר טלפון תקין.');
@@ -300,15 +322,16 @@ export function createJoinPanel(root, deps) {
     if (!fields.joinAck.checked) throw new Error('יש לאשר את נכונות הפרטים ותנאי השימוש.');
     const note = String(fields.joinNote.value || '').trim();
     const payload = { request_id: '', token, full_name: name, phone, shift: shiftInput.value, qualifications,
-      ack: { correctness: true, terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION } };
+      ack: { correctness: true, terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION,
+        marketing_opt_in: marketingOptIn === true } };
     if (note) payload.note = note;
     return payload;
   }
-  async function submitJoin() {
+  async function submitJoin(marketingOptIn) {
     if (state.busy) return;
     saveDraft();
     let payload;
-    try { payload = collect(); } catch (error) { message(error.message, true); return; }
+    try { payload = collect(marketingOptIn); } catch (error) { message(error.message, true); return; }
     state.busy = true; controls(); message('שולח…');
     try {
       await d.refreshUser();
@@ -316,18 +339,30 @@ export function createJoinPanel(root, deps) {
       if (!u) throw new Error('נדרשת כניסה לחשבון.');
       if (!u.emailVerified) throw new Error('כתובת המייל עדיין לא אומתה.');
       if (d.hasAssignment(await d.claims())) throw new Error('החשבון כבר משויך למערכת. אין לשלוח בקשה נוספת.');
-      if (!state.requestId) { state.requestId = newRequestId(); requestStore.set(token, state.requestId); }
-      payload.request_id = state.requestId;
+      const intent = localIntent(payload);
+      if (state.request && state.request.intent !== intent) {
+        throw new Error('בקשה קודמת עדיין עשויה להיקלט. יש לנסות שוב עם אותם פרטים ואותה בחירת הצעות; אין לשנות אותם באותו ניסיון.');
+      }
+      if (!state.request) {
+        state.request = { id: newRequestId(), intent };
+        requestStore.set(token, state.request);
+      }
+      payload.request_id = state.request.id;
       const result = await d.redeem(payload);
       if (!result || result.ok !== true) throw new Error('לא התקבל אישור מהשרת.');
-      requestStore.clear(token); draftKeys().forEach(key => session.remove(key));
+      requestStore.clear(token); state.request = null; draftKeys().forEach(key => session.remove(key));
       session.remove(draftKey(''));
       stripJoinFromUrl(window);
       message(result.replayed ? 'הבקשה כבר נקלטה קודם. היא ממתינה לאישור התחנה; עדיין לא הוענקו הרשאות.' : 'הבקשה נשלחה וממתינה לאישור התחנה. עדיין לא הוענקו הרשאות.');
       await d.onRedeemed(result);
     } catch (error) {
       const reason = error && error.details && error.details.reason;
-      if (reason && /^campaign-(paused|revoked|expired|full|missing)$/.test(reason)) { renderTerminal(reason.replace('campaign-', '').replace('missing', 'not_found')); return; }
+      if (reason && /^campaign-(paused|revoked|expired|full|missing)$/.test(reason)) {
+        // These are definitive pre-write rejections, not an uncertain network
+        // result. A later active campaign may start a fresh operation.
+        requestStore.clear(token); state.request = null;
+        renderTerminal(reason.replace('campaign-', '').replace('missing', 'not_found')); return;
+      }
       message('הבקשה לא נשלחה. ' + friendly(error), true);
     } finally { state.busy = false; controls(); }
   }

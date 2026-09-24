@@ -226,7 +226,7 @@ head('נקודות כניסה');
 // ------------------------------------------------------------------
 {
   const exps = [...code.matchAll(/exports\.(\w+)\s*=\s*(\w+)/g)];
-  const VALID = ['onCall', 'onSchedule', 'onRequest', 'onDocumentWritten',
+  const VALID = ['onCall', 'preApprovalOnCall', 'firebaseOnCall', 'onSchedule', 'onRequest', 'onDocumentWritten',
                  'onDocumentCreated', 'onDocumentUpdated', 'onDocumentDeleted'];
   const wrong = exps.filter(m => VALID.indexOf(m[2]) === -1);
   if (wrong.length) {

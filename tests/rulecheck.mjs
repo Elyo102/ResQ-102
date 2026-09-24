@@ -125,12 +125,25 @@ head('אילוץ ארכיטקטוני');
   const historicalReportReads =
     CODE.split('exists(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1 +
     CODE.split('get(/databases/$(database)/documents/stations/$(sid)/monthly_reports/$(reportId))').length - 1;
-  if (gets.length === 13 &&
+  // Two reciprocal consent-batch checks: each side verifies the other post-
+  // commit, and both must be absent before creation. Repeated getAfter calls
+  // point only at those two exact documents; no general directory read.
+  const consentReceiptPath = '/databases/$(database)/documents/registration_consents/$(uid)/events/$(request.resource.data.request_id)';
+  const consentRequestPath = '/databases/$(database)/documents/registration_requests/$(uid)';
+  const consentReads =
+    CODE.split('getAfter(' + consentReceiptPath + ')').length - 1 +
+    CODE.split('getAfter(' + consentRequestPath + ')').length - 1 +
+    CODE.split('exists(' + consentReceiptPath + ')').length - 1 +
+    CODE.split('exists(' + consentRequestPath + ')').length - 1;
+  const currentTermsReads = CODE.split(
+    'get(/databases/$(database)/documents/registration_terms_active/$(request.auth.uid))'
+  ).length - 1;
+  if (gets.length === 27 && consentReads === 13 && currentTermsReads === 1 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
       liveUserReads.length === 2 && identityOperationReads.length === 3 &&
       approvedLeaveReads.length === 1 && calloutParentReads.length === 1 && historicalUserReads === 2 &&
       historicalReportReads === 2) {
-    ok('קריאות מוגבלות: תגובה, תשובת קריאת פתע, Shadow, חברות חיה, פעולת זהות, חופשה וייבוא היסטורי');
+    ok('קריאות מוגבלות: תגובה, קריאת פתע, Shadow, חברות, זהות, חופשה, היסטוריה וקבלת הסכמה אטומית; סמן תקנון נוכחי');
   } else if (gets.length) {
     fail(gets.length + ' קריאות get()/exists() — רק הנתיבים והכמויות המאושרים מותרים',
       'כל קריאה אחרת מגדילה עלות ועלולה לעקוף את מודל ה-claims');

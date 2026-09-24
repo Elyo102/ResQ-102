@@ -7,7 +7,7 @@ const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringi
 class HttpsError extends Error { constructor(code, message, details) { super(message); this.code = code; this.details = details; } }
 const FV = { serverTimestamp: () => Date.now(), delete: () => ({ __delete: true }) };
 const Timestamp = { fromMillis: value => value };
-function setup({ protectedRequest = true, adapterMissing = false, unstamped = false } = {}) {
+function setup({ protectedRequest = true, adapterMissing = false, unstamped = false, withoutConsent = false } = {}) {
   const uid = 'member_1', requestId = 'request_20260915_001', opId = 'approve_test_1';
   const registryPath = 'onboarding_assignment_links/' + uid;
   const operationPath = 'identity_operations/' + uid;
@@ -42,6 +42,10 @@ function setup({ protectedRequest = true, adapterMissing = false, unstamped = fa
     districtId: 'south', stationId: 'station_1', shift: 'A', status: 'pending', created_at: 12345 };
   if (!unstamped) Object.assign(request, { server_generation: 'generation_1', request_fingerprint: registrationFingerprint(uid, request) });
   store.set(requestPath, request);
+  if (!withoutConsent) store.set('registration_consents/' + uid + '/events/' + requestId, {
+    uid, request_id: requestId, terms_version: '1.3', privacy_version: '2026-09-24',
+    marketing_opt_in: false, accepted_at: 12345
+  });
   if (protectedRequest) store.set(registryPath, { valid: true, stage: 'request_created' });
   const authority = { assignment: { role: 'firefighter', stationId: 'station_1', districtId: 'south', shift: 'A' },
     source: { uid, request_id: requestId, invite_id: 'invite_1' }, fingerprint: stableHash('protected-test-source') };
@@ -99,6 +103,21 @@ let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name); }
 const denied = fn => assert.rejects(fn, error => error.onboardingAuthority === true);
 (async () => {
+  await test('approval without current receipt is blocked before any identity write', async () => {
+    const f = setup({ withoutConsent: true });
+    await assert.rejects(f.acquire, error => error.details?.registration_consent_required === true);
+    assert.equal(f.writes.length, 0); assert.equal(f.auth.setCalls, 0);
+  });
+  await test('in-flight pre-cutover operation cannot grant claims until current receipt exists', async () => {
+    const f = setup(); await f.acquire();
+    const receiptPath = 'registration_consents/' + f.uid + '/events/' + f.params.requestId;
+    const receipt = f.store.get(receiptPath); f.store.delete(receiptPath);
+    await assert.rejects(f.run, error => error.details?.registration_consent_required === true);
+    assert.equal(f.auth.setCalls, 0);
+    f.store.set(receiptPath, receipt);
+    assert.deepEqual(await f.run(), { ok: true });
+    assert.equal(f.auth.setCalls, 1);
+  });
   await test('prepared decision and identity operation commit together then complete existing engine phases', async () => {
     const f = setup(); const first = await f.acquire();
     assert.equal(first.type, 'acquired'); assert.deepEqual(first.operation.onboarding_authority, f.authority);

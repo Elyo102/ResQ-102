@@ -33,12 +33,12 @@
 // עובד Service Worker אינו מייבא מודולים ולכן אינו יכול לקרוא JSON בעוד הרישום
 // (הערה המקורית שכבר מופיעה למעלה לגבי firebase-config.js). הערך נשמר כאן בכוונה,
 // ו-`tests/version-release.mjs` נופל אם הערך צופה מ-`release-manifest.json`.
-const CACHE = 'resq-v42h35-release1';
+const CACHE = 'resq-v42h36-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
-  './login.html', './schedule.html', './schedule-management.html',
+  './login.html', './terms.html', './privacy.html', './schedule.html', './schedule-management.html',
   './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',

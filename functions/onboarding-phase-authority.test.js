@@ -25,7 +25,9 @@ function setup() {
   const opPath='stations/station_1/onboarding_operations/'+requestId;
   const onboarding={...registry,assignment_ref:split.assignment_ref,stage:'request_created'};
   const request={...split.registration_request,created_at:Timestamp.fromMillis(now)};
-  const store=new Map([['invitations/invite_1',invite],['onboarding_assignment_links/'+uid,registry],[opPath,onboarding],['registration_requests/'+uid,request]]);
+  const store=new Map([['invitations/invite_1',invite],['onboarding_assignment_links/'+uid,registry],[opPath,onboarding],['registration_requests/'+uid,request],
+    ['registration_consents/'+uid+'/events/'+requestId,{uid,request_id:requestId,terms_version:'1.3',
+      privacy_version:'2026-09-24',marketing_opt_in:false,accepted_at:Timestamp.fromMillis(now)}]]);
   const control={gateCalls:0,authWrites:0};
   let ids=0;
   const db={doc(p){sdk.doc(p);return{path:p,async get(){return{exists:store.has(p),data:()=>store.get(p)};}};},collection(p){return{doc:n=>db.doc(p+'/'+(n||'generated_'+ ++ids))};},async runTransaction(fn){const writes=[];const tx={async get(ref){assert.equal(writes.length,0,'no reads after writes');return{exists:store.has(ref.path),data:()=>store.get(ref.path)};},set(ref,data,opts){writes.push([ref.path,data,opts]);},delete(ref){writes.push([ref.path,null]);}};const out=await fn(tx);if(control.abort)throw Error('abort');for(const[p,d,o]of writes){if(d===null)store.delete(p);else{const next=o?.merge?{...store.get(p),...d}:{...d};for(const k of Object.keys(next))if(next[k]?.__delete)delete next[k];store.set(p,next);}}return out;}};
