@@ -173,7 +173,8 @@ try {
     await page.locator('#nTitle').fill('Must not be written');
     await select(page,'Retired test vehicle');
     await tap(page.locator('#nSave'));
-    await page.waitForFunction(()=>document.getElementById('nMsg').textContent.includes('אינו פעיל'));
+    await page.waitForFunction(()=>document.getElementById('nMsg').textContent.includes('לא התקבל אישור'));
+    assert.equal(await page.locator('#nSave').isEnabled(), true);
     await noNewWrites(page);
   });
   await scenario('image upload rechecks original target after image processing','vehicle.html?v=live',async page=>{
