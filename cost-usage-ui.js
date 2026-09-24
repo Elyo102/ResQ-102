@@ -45,10 +45,9 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
   let days = 7;
   let pageToken = null;
   let nextPageToken = null;
-  let stationDay = new Date().toISOString().slice(0, 10);
+  let stationDay = null;
   let stationPageToken = null;
   let nextStationPageToken = null;
-  if (elements.stationDay) elements.stationDay.value = stationDay;
 
   function sameIdentity(before) {
     const now = currentIdentity();
@@ -287,7 +286,12 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
     }
     renderActual(d.panes && d.panes.actual_cost);
     renderLoad(d.panes && d.panes.load_attribution);
-    renderStationCalls(d.panes && d.panes.station_calls);
+    const stationPane = d.panes && d.panes.station_calls;
+    if (stationPane && /^\d{4}-\d{2}-\d{2}$/.test(stationPane.selected_day || '')) {
+      stationDay = stationPane.selected_day;
+      if (elements.stationDay) elements.stationDay.value = stationDay;
+    }
+    renderStationCalls(stationPane);
     renderUsers(d.panes && d.panes.users);
     if (elements.selfCost) {
       const note = d.self_cost_note_he || '';
@@ -302,7 +306,8 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
     const mine = ++generation;
     setBusy(true);
     try {
-      const payload = { days, stationDay };
+      const payload = { days };
+      if (stationDay) payload.stationDay = stationDay;
       if (pageToken) payload.pageToken = pageToken;
       if (stationPageToken) payload.stationPageToken = stationPageToken;
       const result = await call('getCostUsageDashboard', payload);

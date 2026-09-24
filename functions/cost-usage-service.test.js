@@ -484,6 +484,39 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     assert.equal(afterRemoval.days[0].stations.some(s => s.station_id === 'newtown_102'), false);
   });
 
+  await check('station totals use Israel midnight in summer and winter without changing UTC user ledgers', async () => {
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    for (const [before, after, expectedDay] of [
+      ['2026-09-24T20:59:00.000Z', '2026-09-24T21:01:00.000Z', '2026-09-25'],
+      ['2026-12-10T21:59:00.000Z', '2026-12-10T22:01:00.000Z', '2026-12-11'],
+      ['2026-03-27T20:59:00.000Z', '2026-03-27T21:01:00.000Z', '2026-03-28'],
+      ['2026-10-25T21:59:00.000Z', '2026-10-25T22:01:00.000Z', '2026-10-26']
+    ]) {
+      h.setClock(Date.parse(before));
+      const { service, db } = build();
+      db._put('stations/eilat_102', { active: true });
+      await service.setCostUsageMeasurementStart(req('super1', {}));
+      h.setClock(Date.parse(after));
+      const event = createServerCompletionEvent({ callable: 'getMyAttendanceMonth',
+        actor: { uid: 'w1', stationId: 'eilat_102', verification: 'live' },
+        invocationId: 'israel_day_' + expectedDay, occurredAt: after, outcome: 'ok', hasher });
+      await service.recordServerCompletionEventsBatch([event]);
+      const pane = (await service.getCostUsageDashboard(req('super1', {}))).panes.station_calls;
+      assert.equal(pane.selected_day, expectedDay);
+      assert.equal(pane.days[0].total, 1);
+      assert.equal(pane.days[0].stations[0].calls, 1);
+      assert.equal((await service.getCostUsageDashboard(req('super1', { stationDay: expectedDay })))
+        .panes.station_calls.days[0].total, 1);
+      assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_station_daily/'))[0]
+        .startsWith('cost_usage_station_daily/' + expectedDay + '__'), true);
+      assert.equal([...db._store.values()].find(row => row.schema === 'cost-usage-batch-ledger-v1').day,
+        after.slice(0, 10));
+      const replay = await service.recordServerCompletionEventsBatch([event]);
+      assert.equal(replay.skipped_duplicates, 1);
+    }
+    h.setClock(NOW);
+  });
+
   await check('hyphen and leading-digit station IDs pass ingest and dashboard pagination', async () => {
     const { service, db } = build();
     db._put('stations/station-102', { active: true });
@@ -511,7 +544,7 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     await service.setCostUsageMeasurementStart(req('super1', {}));
     assert.equal(db._get('cost_usage_config/settings').station_aggregate_start_at, START);
     assert.equal(db._get('cost_usage_config/settings').global_aggregate_start_at,
-      new Date(Date.parse('2026-09-19T00:00:00.000Z')).toISOString());
+      '2026-09-18T21:00:00.000Z');
     const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
     const old = createServerCompletionEvent({ callable: 'getStationScheduleRange',
       actor: { uid: 'w1', stationId: 'eilat_102', verification: 'live' },

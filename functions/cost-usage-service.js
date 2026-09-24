@@ -61,6 +61,25 @@ const FEATURE_LABELS = Object.freeze({
 
 const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+const israelDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+function israelDayOf(ms) {
+  const parts = Object.fromEntries(israelDayFormatter.formatToParts(new Date(ms))
+    .filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+const shiftCalendarDay = (day, amount) => dayOf(Date.parse(day + 'T00:00:00.000Z') + amount * DAY_MS);
+function israelDayStart(day) {
+  let low = Date.parse(day + 'T00:00:00.000Z') - DAY_MS;
+  let high = low + 2 * DAY_MS;
+  while (high - low > 1) {
+    const mid = low + Math.floor((high - low) / 2);
+    if (israelDayOf(mid) < day) low = mid;
+    else high = mid;
+  }
+  return high;
+}
 
 function toIsoTimestamp(value) {
   if (value == null || value === '') return null;
@@ -530,8 +549,8 @@ function createCostUsageService(deps) {
         const stationStart = toIsoTimestamp(current.station_aggregate_start_at);
         const globalStart = toIsoTimestamp(current.global_aggregate_start_at);
         const activateAt = stationStart || new Date(now()).toISOString();
-        // Old ledgers cannot be replayed into a new total. Begin at the next UTC day.
-        const globalAt = globalStart || new Date(Date.parse(dayOf(now())) + DAY_MS).toISOString();
+        // Old ledgers cannot be replayed into a new total. Begin at the next Israel day.
+        const globalAt = globalStart || new Date(israelDayStart(shiftCalendarDay(israelDayOf(now()), 1))).toISOString();
         if (!stationStart || !globalStart) tx.set(configRef, {
           station_aggregate_start_at: activateAt, global_aggregate_start_at: globalAt
         }, { merge: true });
@@ -560,12 +579,13 @@ function createCostUsageService(deps) {
   async function paneStationCalls(requestedDay, pageToken, measurement, feeder) {
     const start = measurement.station_aggregate_start_at;
     const globalStart = measurement.global_aggregate_start_at;
-    const day = requestedDay === undefined ? dayOf(now()) : requestedDay;
+    const today = israelDayOf(now());
+    const day = requestedDay === undefined ? today : requestedDay;
     if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
         !Number.isFinite(Date.parse(day + 'T00:00:00.000Z')) ||
         dayOf(Date.parse(day + 'T00:00:00.000Z')) !== day ||
-        day > dayOf(now()) || day < dayOf(now() - (MAX_DASHBOARD_DAYS - 1) * DAY_MS)) {
-      fail('invalid-argument', 'תאריך התחנה חייב להיות יום UTC ב-30 הימים האחרונים.', 'station-day');
+        day > today || day < shiftCalendarDay(today, -(MAX_DASHBOARD_DAYS - 1))) {
+      fail('invalid-argument', 'תאריך התחנה חייב להיות יום בישראל ב-30 הימים האחרונים.', 'station-day');
     }
     if (pageToken !== undefined &&
         (typeof pageToken !== 'string' || !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(pageToken))) {
@@ -574,6 +594,7 @@ function createCostUsageService(deps) {
     const base = {
       id: 'station_calls', title_he: 'קריאות שרת לפי תחנה ויום',
       source: STATION_DAILY_COLLECTION, coverage: 'partial',
+      selected_day: day,
       measured_callables: Object.keys(CALLABLE_FEATURES),
       station_aggregate_start_at: start, global_aggregate_start_at: globalStart,
       last_ingested_at: feeder.last_ingested_at || null,
@@ -589,7 +610,9 @@ function createCostUsageService(deps) {
       return Object.freeze({ ...base, status: 'invalid_data', days: Object.freeze([]) });
     }
     const refs = [];
-    const globalEligible = globalStart && Date.parse(globalStart) <= Date.parse(day + 'T23:59:59.999Z');
+    const localStart = israelDayStart(day);
+    const localEnd = israelDayStart(shiftCalendarDay(day, 1));
+    const globalEligible = globalStart && Date.parse(globalStart) < localEnd;
     if (globalEligible) for (let shard = 0; shard < STATION_SHARDS; shard++) {
       refs.push(db.doc(GLOBAL_DAILY_COLLECTION + '/' + day + '__' + shard));
     }
@@ -633,9 +656,9 @@ function createCostUsageService(deps) {
       }
       stations.push(Object.freeze({ station_id: station.id, calls }));
     }
-    const globalDay = globalStart ? dayOf(Date.parse(globalStart)) : null;
+    const globalDay = globalStart ? israelDayOf(Date.parse(globalStart)) : null;
     const coverage = !globalDay || day < globalDay ? 'before_start'
-      : Date.parse(globalStart) > Date.parse(day + 'T00:00:00.000Z') ? 'partial_start_day' : 'partial_measured';
+      : Date.parse(globalStart) > localStart ? 'partial_start_day' : 'partial_measured';
     return Object.freeze({ ...base, status: 'partial', selected_day: day,
       next_station_page_token: pageDocs.length > STATION_PAGE_SIZE ? visibleDocs.at(-1).id : null,
       days: Object.freeze([Object.freeze({ day, total: coverage === 'before_start' ? null : total,
@@ -740,7 +763,9 @@ function createCostUsageService(deps) {
     for (const entry of entries) {
       const { source, occurredMs, feature, calls, subjectHash, eventHash } = entry;
       const day = dayOf(occurredMs);
+      const stationDay = israelDayOf(occurredMs);
       const expires = planDailyExpiry(day);
+      const stationExpires = new Date(israelDayStart(shiftCalendarDay(stationDay, RETENTION_DAYS)));
       const ledgerExpires = planLedgerExpiry(day);
       const ledgerRef = db.doc(LEDGER_COLLECTION + '/' + eventHash);
       const dailyId = day + '__' + feature + '__' + subjectHash;
@@ -749,11 +774,11 @@ function createCostUsageService(deps) {
       const stationShard = entry.stationId && stationStart && occurredMs >= Date.parse(stationStart)
         ? parseInt(eventHash.slice(0, 8), 16) % STATION_SHARDS : null;
       const stationRef = stationShard === null ? null
-        : db.doc(STATION_DAILY_COLLECTION + '/' + day + '__' + entry.stationId + '__' + stationShard);
+        : db.doc(STATION_DAILY_COLLECTION + '/' + stationDay + '__' + entry.stationId + '__' + stationShard);
       const globalShard = source === 'server_completion_v1' && stationRef && globalStart &&
         occurredMs >= Date.parse(globalStart) ? parseInt(eventHash.slice(0, 8), 16) % STATION_SHARDS : null;
       const globalRef = globalShard === null ? null
-        : db.doc(GLOBAL_DAILY_COLLECTION + '/' + day + '__' + globalShard);
+        : db.doc(GLOBAL_DAILY_COLLECTION + '/' + stationDay + '__' + globalShard);
       const fingerprint = hasher.hashEvent(JSON.stringify([eventHash, subjectHash, feature, calls, day, source,
         entry.stationId || '', entry.outcome || '']));
 
@@ -824,12 +849,12 @@ function createCostUsageService(deps) {
           keyed: true
         }, { merge: true });
         if (stationRef) tx.set(stationRef, {
-          day, station_id: entry.stationId, shard: stationShard,
-          calls: stationCalls + calls, expires_at: expires,
+          day: stationDay, station_id: entry.stationId, shard: stationShard,
+          calls: stationCalls + calls, expires_at: stationExpires,
           schema: 'cost-usage-station-daily-v1', source: 'server_completion_v1'
         }, { merge: true });
         if (globalRef) tx.set(globalRef, {
-          day, shard: globalShard, calls: globalCalls + calls, expires_at: expires,
+          day: stationDay, shard: globalShard, calls: globalCalls + calls, expires_at: stationExpires,
           schema: 'cost-usage-global-daily-v1', source: 'server_completion_v1'
         }, { merge: true });
         if (markConfig) tx.set(configRef, { aggregates_present: true, schema: 'cost-usage-config-v1' }, { merge: true });
