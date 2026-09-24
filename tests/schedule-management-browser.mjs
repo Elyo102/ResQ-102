@@ -3549,11 +3549,14 @@ try {
           board.scrollLeft = -extent * fraction;
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           const frame = board.getBoundingClientRect();
+          const railBox = rail.getBoundingClientRect();
+          const railColor = getComputedStyle(rail).backgroundColor;
           const rows = Array.from(board.querySelectorAll('.stub[data-station]'));
           const labels = Array.from(rail.querySelectorAll('.stub[data-station]'));
           return {
             extent, moved:board.scrollLeft,
             frame:{ left:frame.left, right:frame.right },
+            rail:{ left:railBox.left, right:railBox.right, color:railColor },
             rows:labels.map((label, index) => {
               const box = label.getBoundingClientRect();
               const row = rows[index].getBoundingClientRect();
@@ -3563,6 +3566,10 @@ try {
           };
         }, fraction);
         assert.ok(state.extent > 300, 'the fixture must overflow at ' + width + 'px');
+        assert.ok(state.rail.right >= state.frame.right - 1 &&
+          !/rgba?\([^)]*,\s*0(?:\.0+)?\s*\)$/.test(state.rail.color) &&
+          state.rail.color !== 'transparent',
+        'the fixed rail must opaquely cover the right gutter at ' + width + 'px/' + fraction + ': ' + JSON.stringify(state.rail));
         assert.equal(state.rows.length, 4);
         assert.ok(state.rows.every(row => row.text && row.opacity === '1' &&
           row.left >= state.frame.left - 1 && row.right <= state.frame.right - 4 &&
