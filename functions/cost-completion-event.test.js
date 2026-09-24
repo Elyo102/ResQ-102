@@ -50,3 +50,10 @@ test('a different invocation produces a different replay id, never a client requ
   assert.notEqual(first.event_id, second.event_id);
   assert.match(first.event_id, /^[a-f0-9]{64}$/);
 });
+
+test('provisioned station IDs with hyphens or leading digits remain measurable', () => {
+  for (const stationId of ['station-102', '1_station']) {
+    const event = createServerCompletionEvent({ ...input, actor: { ...input.actor, stationId } });
+    assert.equal(event.station_id_at_event, stationId);
+  }
+});

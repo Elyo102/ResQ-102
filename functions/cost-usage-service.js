@@ -13,6 +13,7 @@
  */
 const crypto = require('node:crypto');
 const catalog = require('./metrics-catalog');
+const { CALLABLE_FEATURES } = require('./cost-completion-event');
 
 const RETENTION_DAYS = 90;
 const LEDGER_RETENTION_DAYS = 90;
@@ -25,7 +26,12 @@ const CONFIG_PATH = 'cost_usage_config/settings';
 const DAILY_COLLECTION = 'cost_usage_daily';
 const LIFETIME_COLLECTION = 'cost_usage_lifetime';
 const LEDGER_COLLECTION = 'cost_usage_batch_ledger';
+const STATION_DAILY_COLLECTION = 'cost_usage_station_daily';
+const GLOBAL_DAILY_COLLECTION = 'cost_usage_global_daily';
+const STATION_SHARDS = 16;
+const STATION_PAGE_SIZE = 25;
 const BATCH_CURSOR_PATH = 'cost_usage_config/batch_cursor';
+const FEEDER_STATE_PATH = 'cost_usage_config/feeder';
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 const PRUNE_BATCH = 200;
@@ -47,6 +53,9 @@ const FEATURE_LABELS = Object.freeze({
   schedule_publish_completed: 'פרסום סידור',
   callout_started: 'קריאת פתע',
   callout_closed: 'סגירת קריאה',
+  schedule_range_read: 'קריאת סידור תחנה',
+  attendance_month_read: 'קריאת דוח שעות',
+  hr_inbox_read: 'קריאת תיבת משאבי אנוש',
   client_error: 'שגיאת לקוח'
 });
 
@@ -151,11 +160,15 @@ function createCostUsageService(deps) {
       } catch (ignore) { /* ignore */ }
     }
     const aggregatesPresent = !!(row && row.aggregates_present === true);
+    const stationStart = toIsoTimestamp(row && row.station_aggregate_start_at);
+    const globalStart = toIsoTimestamp(row && row.global_aggregate_start_at);
     if (startMs === null) {
       return Object.freeze({
         measurement_start_at: null,
         status: 'not_started',
         aggregates_present: aggregatesPresent,
+        station_aggregate_start_at: stationStart,
+        global_aggregate_start_at: globalStart,
         locked: false,
         coverage: Object.freeze({ state: 'not_started', from: null, to: null, note_he: 'מדידה לא הופעלה עדיין — אין היסטוריה מומצאת.' })
       });
@@ -165,6 +178,8 @@ function createCostUsageService(deps) {
       measurement_start_at: startIso,
       status: 'active',
       aggregates_present: aggregatesPresent,
+      station_aggregate_start_at: stationStart,
+      global_aggregate_start_at: globalStart,
       locked: true,
       coverage: Object.freeze({
         state: 'since_measurement_start',
@@ -199,7 +214,31 @@ function createCostUsageService(deps) {
     });
   }
 
-  function feederStatus() {
+  async function feederStatus() {
+    const snap = await db.doc(FEEDER_STATE_PATH).get();
+    const row = dataOf(snap) || {};
+    const checkedAt = toIsoTimestamp(row.checked_at);
+    if (row.schema === 'cost-usage-feeder-v1' && checkedAt
+        && Array.isArray(row.measured_callables)
+        && row.measured_callables.length === Object.keys(CALLABLE_FEATURES).length
+        && row.measured_callables.every((name) => Object.hasOwn(CALLABLE_FEATURES, name))) {
+      const lagMs = now() - Date.parse(checkedAt);
+      const fresh = lagMs >= 0 && lagMs <= 15 * 60 * 1000;
+      const observedAt = toIsoTimestamp(row.last_ingested_at);
+      const observedLagMs = observedAt ? now() - Date.parse(observedAt) : Infinity;
+      const recentlyObserved = observedLagMs >= 0 && observedLagMs <= 60 * 60 * 1000;
+      const status = !fresh ? 'delayed' : row.blocked === true ? 'blocked'
+        : row.backlog === true ? 'backlog' : recentlyObserved ? 'active_partial' : 'awaiting_sample';
+      return Object.freeze({
+        status,
+        note_he: status === 'active_partial'
+          ? 'נצפתה קליטה לאחרונה לפחות באחת משלוש הקריאות המוגדרות. אין הוכחת כיסוי לכל הקריאות.'
+          : 'אין הוכחה למדידה עדכנית ושלמה; יש לבדוק את המזין ואת התור.',
+        ingest: 'durable_outbox_batch', live_counts: status === 'active_partial',
+        measured_callables: Object.freeze([...row.measured_callables]),
+        checked_at: checkedAt, last_ingested_at: observedAt
+      });
+    }
     return Object.freeze({
       status: 'not_wired',
       note_he: 'אין מזין חי: אין scheduled job / logging sink שקורא ל-recordAttributedCallsBatch עם event_ids. בלי מזין מפורש — אין ספירות קריאות חיות (לא אפסים מזויפים).',
@@ -321,9 +360,7 @@ function createCostUsageService(deps) {
     const coverageState = measurement.status === 'active' ? measurement.coverage.state : 'not_started';
     const pageSize = paging.pageSize;
     const pageToken = paging.pageToken;
-    const feederNote = feeder.status === 'not_wired'
-      ? ' מזין לא מחובר (feeder_status: not_wired) — אין ספירות קריאות חיות.'
-      : '';
+    const feederNote = ' ' + feeder.note_he;
     if (!listAuthUsers) {
       return Object.freeze({
         id: 'users',
@@ -432,9 +469,9 @@ function createCostUsageService(deps) {
   async function getCostUsageDashboard(req) {
     await superActor(req);
     const input = plain(req && req.data) ? req.data : {};
-    const allowed = new Set(['days', 'pageSize', 'pageToken']);
+    const allowed = new Set(['days', 'pageSize', 'pageToken', 'stationDay', 'stationPageToken']);
     if (Object.keys(input).some((k) => !allowed.has(k))) {
-      fail('invalid-argument', 'מתקבלים days / pageSize / pageToken בלבד.', 'input');
+      fail('invalid-argument', 'שדות הבקשה אינם תקינים.', 'input');
     }
     let days = DEFAULT_DASHBOARD_DAYS;
     if (input.days !== undefined) {
@@ -445,9 +482,10 @@ function createCostUsageService(deps) {
     }
     const paging = parsePaging(input);
     const measurement = await readMeasurementConfig();
-    const feeder = feederStatus();
+    const feeder = await feederStatus();
     const actual = await paneActualCost(days);
     const load = await paneLoadAttribution(days);
+    const stationCalls = await paneStationCalls(input.stationDay, input.stationPageToken, measurement, feeder);
     const users = await paneUsers(measurement, paging, feeder);
     return Object.freeze({
       ok: true,
@@ -465,9 +503,10 @@ function createCostUsageService(deps) {
       panes: Object.freeze({
         actual_cost: actual,
         load_attribution: load,
+        station_calls: stationCalls,
         users
       }),
-      self_cost_note_he: 'קריאת הלוח: Auth listUsers בעמוד (pageSize) + metrics_daily חלקי לטווח + config + lifetime/profiles רק למשתמשי העמוד (O(pageSize)). אין כתיבות מד מדד בנתיב callout. feeder_status: not_wired — בלי מזין מפורש אין ספירות קריאות חיות.',
+      self_cost_note_he: 'קריאת הלוח: Auth listUsers בעמוד + metrics_daily + עד 16 רשומות סך יומי ו-400 רשומות תחנות לעמוד + נתוני משתמשי העמוד. כיסוי הקריאות חלקי; שיוך למשתמשים אינו חשבונית.',
       retention: Object.freeze({
         daily_days: RETENTION_DAYS,
         ledger_days: LEDGER_RETENTION_DAYS,
@@ -488,7 +527,17 @@ function createCostUsageService(deps) {
       const current = dataOf(await tx.get(configRef)) || {};
       const existing = toIsoTimestamp(current.measurement_start_at);
       if (existing) {
-        return Object.freeze({ ok: true, measurement_start_at: existing, status: 'active', locked: true, created: false });
+        const stationStart = toIsoTimestamp(current.station_aggregate_start_at);
+        const globalStart = toIsoTimestamp(current.global_aggregate_start_at);
+        const activateAt = stationStart || new Date(now()).toISOString();
+        // Old ledgers cannot be replayed into a new total. Begin at the next UTC day.
+        const globalAt = globalStart || new Date(Date.parse(dayOf(now())) + DAY_MS).toISOString();
+        if (!stationStart || !globalStart) tx.set(configRef, {
+          station_aggregate_start_at: activateAt, global_aggregate_start_at: globalAt
+        }, { merge: true });
+        return Object.freeze({ ok: true, measurement_start_at: existing,
+          station_aggregate_start_at: activateAt, global_aggregate_start_at: globalAt,
+          status: 'active', locked: true, created: false });
       }
       if (current.aggregates_present === true) {
         fail('failed-precondition', 'נמצאו מונים בלי תאריך תחילת מדידה; נדרשת בדיקת מפעיל.', 'orphan-aggregates');
@@ -496,12 +545,101 @@ function createCostUsageService(deps) {
       const start = new Date(now()).toISOString();
       tx.set(configRef, {
         measurement_start_at: start,
+        station_aggregate_start_at: start,
+        global_aggregate_start_at: start,
         aggregates_present: false,
         updated_at: serverTimestamp(),
         schema: 'cost-usage-config-v1'
       }, { merge: true });
-      return Object.freeze({ ok: true, measurement_start_at: start, status: 'active', locked: true, created: true });
+      return Object.freeze({ ok: true, measurement_start_at: start, station_aggregate_start_at: start,
+        global_aggregate_start_at: start,
+        status: 'active', locked: true, created: true });
     });
+  }
+
+  async function paneStationCalls(requestedDay, pageToken, measurement, feeder) {
+    const start = measurement.station_aggregate_start_at;
+    const globalStart = measurement.global_aggregate_start_at;
+    const day = requestedDay === undefined ? dayOf(now()) : requestedDay;
+    if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+        !Number.isFinite(Date.parse(day + 'T00:00:00.000Z')) ||
+        dayOf(Date.parse(day + 'T00:00:00.000Z')) !== day ||
+        day > dayOf(now()) || day < dayOf(now() - (MAX_DASHBOARD_DAYS - 1) * DAY_MS)) {
+      fail('invalid-argument', 'תאריך התחנה חייב להיות יום UTC ב-30 הימים האחרונים.', 'station-day');
+    }
+    if (pageToken !== undefined &&
+        (typeof pageToken !== 'string' || !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(pageToken))) {
+      fail('invalid-argument', 'סמן עמוד התחנות אינו תקין.', 'station-page-token');
+    }
+    const base = {
+      id: 'station_calls', title_he: 'קריאות שרת לפי תחנה ויום',
+      source: STATION_DAILY_COLLECTION, coverage: 'partial',
+      measured_callables: Object.keys(CALLABLE_FEATURES),
+      station_aggregate_start_at: start, global_aggregate_start_at: globalStart,
+      last_ingested_at: feeder.last_ingested_at || null,
+      note_he: 'רק שלוש קריאות שרת מוגדרות נספרות. הסך היומי כולל גם תחנות היסטוריות; הרשימה מציגה עמוד של תחנות רשומות בלבד. אינו חשבונית.'
+    };
+    if (!start || !hasher.ready) return Object.freeze({ ...base, status: 'not_started', days: Object.freeze([]) });
+    const stationQuery = db.collection('stations').orderBy('__name__');
+    const pageQuery = pageToken ? stationQuery.startAfter(pageToken) : stationQuery;
+    const stationSnap = await pageQuery.limit(STATION_PAGE_SIZE + 1).get();
+    const pageDocs = stationSnap && Array.isArray(stationSnap.docs) ? stationSnap.docs : [];
+    const visibleDocs = pageDocs.slice(0, STATION_PAGE_SIZE);
+    if (visibleDocs.some(doc => !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(doc.id))) {
+      return Object.freeze({ ...base, status: 'invalid_data', days: Object.freeze([]) });
+    }
+    const refs = [];
+    const globalEligible = globalStart && Date.parse(globalStart) <= Date.parse(day + 'T23:59:59.999Z');
+    if (globalEligible) for (let shard = 0; shard < STATION_SHARDS; shard++) {
+      refs.push(db.doc(GLOBAL_DAILY_COLLECTION + '/' + day + '__' + shard));
+    }
+    for (const station of visibleDocs) for (let shard = 0; shard < STATION_SHARDS; shard++) {
+      refs.push(db.doc(STATION_DAILY_COLLECTION + '/' + day + '__' + station.id + '__' + shard));
+    }
+    const snapshots = refs.length ? (typeof db.getAll === 'function'
+      ? await db.getAll(...refs) : await Promise.all(refs.map(ref => ref.get()))) : [];
+    if (!Array.isArray(snapshots) || snapshots.length !== refs.length) {
+      return Object.freeze({ ...base, status: 'invalid_data', days: Object.freeze([]) });
+    }
+    let offset = 0;
+    let total = null;
+    if (globalEligible) {
+      for (let shard = 0; shard < STATION_SHARDS; shard++) {
+        const snap = snapshots[offset++];
+        if (!snap.exists) continue;
+        const row = snap.data() || {};
+        if (row.schema !== 'cost-usage-global-daily-v1' || row.day !== day || row.shard !== shard ||
+            !Number.isSafeInteger(row.calls) || row.calls < 0 ||
+            !Number.isSafeInteger((total || 0) + row.calls)) {
+          return Object.freeze({ ...base, status: 'invalid_data', days: Object.freeze([]) });
+        }
+        total = (total || 0) + row.calls;
+      }
+    }
+    const stations = [];
+    for (const station of visibleDocs) {
+      let calls = null;
+      for (let shard = 0; shard < STATION_SHARDS; shard++) {
+        const snap = snapshots[offset++];
+        if (!snap.exists) continue;
+        const row = snap.data() || {};
+        if (row.schema !== 'cost-usage-station-daily-v1' || row.day !== day ||
+            row.station_id !== station.id || row.shard !== shard ||
+            !Number.isSafeInteger(row.calls) || row.calls < 0 ||
+            !Number.isSafeInteger((calls || 0) + row.calls)) {
+          return Object.freeze({ ...base, status: 'invalid_data', days: Object.freeze([]) });
+        }
+        calls = (calls || 0) + row.calls;
+      }
+      stations.push(Object.freeze({ station_id: station.id, calls }));
+    }
+    const globalDay = globalStart ? dayOf(Date.parse(globalStart)) : null;
+    const coverage = !globalDay || day < globalDay ? 'before_start'
+      : Date.parse(globalStart) > Date.parse(day + 'T00:00:00.000Z') ? 'partial_start_day' : 'partial_measured';
+    return Object.freeze({ ...base, status: 'partial', selected_day: day,
+      next_station_page_token: pageDocs.length > STATION_PAGE_SIZE ? visibleDocs.at(-1).id : null,
+      days: Object.freeze([Object.freeze({ day, total: coverage === 'before_start' ? null : total,
+        stations: Object.freeze(stations), coverage })]) });
   }
 
   function planDailyExpiry(day) {
@@ -538,59 +676,127 @@ function createCostUsageService(deps) {
     return { source, occurredMs };
   }
 
+  function canonicalEntry(entry, nowMs) {
+    if (!plain(entry) || entry.schema !== 'resq_server_completion_v1' || entry.key_version !== 'v1'
+        || !/^[a-f0-9]{64}$/.test(entry.event_id || '')
+        || !/^[a-f0-9]{64}$/.test(entry.uid_hash || '')
+        || !Object.hasOwn(CALLABLE_FEATURES, entry.callable)
+        || CALLABLE_FEATURES[entry.callable] !== entry.feature
+        || (entry.outcome !== 'ok' && entry.outcome !== 'failed')
+        || !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(entry.station_id_at_event || '')
+        || Object.keys(entry).sort().join('|') !==
+          'callable|event_id|feature|key_version|occurred_at|outcome|schema|station_id_at_event|uid_hash') {
+      fail('invalid-argument', 'אירוע השלמה אינו עומד בחוזה השרת.', 'completion-schema');
+    }
+    const iso = toIsoTimestamp(entry.occurred_at);
+    if (!iso) fail('invalid-argument', 'נדרש occurred_at תקין לכל אירוע.', 'occurred-at');
+    const occurredMs = Date.parse(iso);
+    if (occurredMs > nowMs || occurredMs < nowMs - MAX_EVENT_AGE_DAYS * DAY_MS) {
+      fail('failed-precondition', 'האירוע מחוץ לחלון הקליטה של 30 יום.', 'event-age');
+    }
+    return {
+      eventHash: entry.event_id,
+      subjectHash: entry.uid_hash,
+      feature: entry.feature,
+      calls: 1,
+      source: 'server_completion_v1',
+      occurredMs,
+      stationId: entry.station_id_at_event,
+      outcome: entry.outcome
+    };
+  }
+
   /**
    * Idempotent batch from callable_completion (or similar ingest).
    * Each accepted event applies ledger + daily + lifetime in ONE Firestore transaction.
    * Crash mid-event rolls back; re-run is exactly-once. Parallel overlapping event_ids: exactly-once.
    * Not on the live request path.
    */
-  async function recordAttributedCallsBatch(entries) {
+  async function recordCanonicalBatch(entries) {
     assertCanHashForWrite();
     if (!Array.isArray(entries) || !entries.length) {
       fail('invalid-argument', 'נדרשת רשימת צבירות.', 'input');
     }
     const nowMs = now();
+    const configRef = db.doc(CONFIG_PATH);
+    const config = dataOf(await configRef.get()) || {};
+    const start = toIsoTimestamp(config.measurement_start_at);
+    const stationStart = toIsoTimestamp(config.station_aggregate_start_at);
+    const globalStart = toIsoTimestamp(config.global_aggregate_start_at);
+    if (!start) fail('failed-precondition', 'תחילת המדידה טרם נקבעה.', 'measurement-not-started');
+    for (const entry of entries) {
+      if (entry.occurredMs < Date.parse(start)) {
+        fail('failed-precondition', 'האירוע קודם לתחילת המדידה.', 'before-measurement-start');
+      }
+    }
+    // The first accepted event marks configuration in its own atomic commit.
+    // Subsequent events do not contend on the shared configuration document.
+    let markerCommitted = config.aggregates_present === true;
     let written = 0;
     let skipped = 0;
     let maxOccurredMs = null;
     let lastEventHash = null;
 
     for (const entry of entries) {
-      const { source, occurredMs } = validateBatchEntry(entry, nowMs);
+      const { source, occurredMs, feature, calls, subjectHash, eventHash } = entry;
       const day = dayOf(occurredMs);
       const expires = planDailyExpiry(day);
       const ledgerExpires = planLedgerExpiry(day);
-      const subjectHash = hasher.hashScope(entry.subject_id);
-      const eventHash = hasher.hashEvent(entry.event_id);
       const ledgerRef = db.doc(LEDGER_COLLECTION + '/' + eventHash);
-      const dailyId = day + '__' + entry.feature + '__' + subjectHash;
+      const dailyId = day + '__' + feature + '__' + subjectHash;
       const dailyRef = db.doc(DAILY_COLLECTION + '/' + dailyId);
       const lifeRef = db.doc(LIFETIME_COLLECTION + '/' + subjectHash);
-      const configRef = db.doc(CONFIG_PATH);
+      const stationShard = entry.stationId && stationStart && occurredMs >= Date.parse(stationStart)
+        ? parseInt(eventHash.slice(0, 8), 16) % STATION_SHARDS : null;
+      const stationRef = stationShard === null ? null
+        : db.doc(STATION_DAILY_COLLECTION + '/' + day + '__' + entry.stationId + '__' + stationShard);
+      const globalShard = source === 'server_completion_v1' && stationRef && globalStart &&
+        occurredMs >= Date.parse(globalStart) ? parseInt(eventHash.slice(0, 8), 16) % STATION_SHARDS : null;
+      const globalRef = globalShard === null ? null
+        : db.doc(GLOBAL_DAILY_COLLECTION + '/' + day + '__' + globalShard);
+      const fingerprint = hasher.hashEvent(JSON.stringify([eventHash, subjectHash, feature, calls, day, source,
+        entry.stationId || '', entry.outcome || '']));
 
       const outcome = await db.runTransaction(async (tx) => {
-        const config = dataOf(await tx.get(configRef)) || {};
-        const start = toIsoTimestamp(config.measurement_start_at);
-        if (!start) fail('failed-precondition', 'תחילת המדידה טרם נקבעה.', 'measurement-not-started');
-        if (occurredMs < Date.parse(start)) {
-          fail('failed-precondition', 'האירוע קודם לתחילת המדידה.', 'before-measurement-start');
+        const liveConfig = dataOf(await tx.get(configRef)) || {};
+        if (toIsoTimestamp(liveConfig.measurement_start_at) !== start ||
+            toIsoTimestamp(liveConfig.station_aggregate_start_at) !== stationStart ||
+            toIsoTimestamp(liveConfig.global_aggregate_start_at) !== globalStart) {
+          fail('failed-precondition', 'תאריך תחילת המדידה השתנה.', 'measurement-changed');
         }
+        const markConfig = !markerCommitted && liveConfig.aggregates_present !== true;
         const existingSnap = await tx.get(ledgerRef);
         if (existingSnap && existingSnap.exists) {
+          const existing = dataOf(existingSnap) || {};
+          if (existing.fingerprint !== fingerprint) {
+            fail('failed-precondition', 'מזהה אירוע חוזר עם תוכן שונה.', 'event-collision');
+          }
           return { skipped: true };
         }
         const dailySnap = await tx.get(dailyRef);
         const lifeSnap = await tx.get(lifeRef);
+        const stationSnap = stationRef ? await tx.get(stationRef) : null;
+        const globalSnap = globalRef ? await tx.get(globalRef) : null;
         const prevDaily = dataOf(dailySnap) || {};
         const prevDailyCalls = Number.isSafeInteger(prevDaily.calls) ? prevDaily.calls : 0;
         const prevLife = dataOf(lifeSnap) || {};
         const prevCalls = Number.isSafeInteger(prevLife.calls) ? prevLife.calls : 0;
+        const stationRow = dataOf(stationSnap) || {};
+        const stationCalls = Number.isSafeInteger(stationRow.calls) ? stationRow.calls : 0;
+        const globalRow = dataOf(globalSnap) || {};
+        const globalCalls = Number.isSafeInteger(globalRow.calls) ? globalRow.calls : 0;
+        if (!Number.isSafeInteger(prevDailyCalls + calls) || !Number.isSafeInteger(prevCalls + calls) ||
+            (stationRef && !Number.isSafeInteger(stationCalls + calls)) ||
+            (globalRef && !Number.isSafeInteger(globalCalls + calls))) {
+          fail('failed-precondition', 'מונה הקריאות הגיע למגבלת מספר בטוח.', 'count-overflow');
+        }
 
         tx.set(ledgerRef, {
           event_hash: eventHash,
-          feature: entry.feature,
+          fingerprint,
+          feature,
           subject_hash: subjectHash,
-          calls: entry.calls,
+          calls,
           day,
           source,
           processed_at: serverTimestamp(),
@@ -600,9 +806,9 @@ function createCostUsageService(deps) {
         });
         tx.set(dailyRef, {
           day,
-          feature: entry.feature,
+          feature,
           subject_hash: subjectHash,
-          calls: prevDailyCalls + entry.calls,
+          calls: prevDailyCalls + calls,
           expires_at: expires,
           schema: 'cost-usage-daily-v1',
           source,
@@ -610,23 +816,30 @@ function createCostUsageService(deps) {
         }, { merge: true });
         tx.set(lifeRef, {
           subject_hash: subjectHash,
-          calls: prevCalls + entry.calls,
+          calls: prevCalls + calls,
           since_measurement: true,
           updated_at: serverTimestamp(),
           schema: 'cost-usage-lifetime-v1',
           source,
           keyed: true
         }, { merge: true });
-        tx.set(configRef, {
-          aggregates_present: true,
-          schema: 'cost-usage-config-v1'
+        if (stationRef) tx.set(stationRef, {
+          day, station_id: entry.stationId, shard: stationShard,
+          calls: stationCalls + calls, expires_at: expires,
+          schema: 'cost-usage-station-daily-v1', source: 'server_completion_v1'
         }, { merge: true });
+        if (globalRef) tx.set(globalRef, {
+          day, shard: globalShard, calls: globalCalls + calls, expires_at: expires,
+          schema: 'cost-usage-global-daily-v1', source: 'server_completion_v1'
+        }, { merge: true });
+        if (markConfig) tx.set(configRef, { aggregates_present: true, schema: 'cost-usage-config-v1' }, { merge: true });
         return { skipped: false };
       });
 
       if (outcome.skipped) {
         skipped += 1;
       } else {
+        markerCommitted = true;
         written += 1;
         if (maxOccurredMs === null || occurredMs > maxOccurredMs) maxOccurredMs = occurredMs;
         lastEventHash = eventHash;
@@ -634,6 +847,7 @@ function createCostUsageService(deps) {
     }
 
     await db.doc(BATCH_CURSOR_PATH).set({
+      cursor_kind: 'diagnostic_only_not_source_resume',
       last_occurred_at: maxOccurredMs !== null ? new Date(maxOccurredMs).toISOString() : null,
       last_event_hash: lastEventHash,
       last_batch_written: written,
@@ -649,10 +863,31 @@ function createCostUsageService(deps) {
       retention_days: RETENTION_DAYS,
       ledger_retention_days: LEDGER_RETENTION_DAYS,
       max_event_age_days: MAX_EVENT_AGE_DAYS,
-      source: 'callable_completion',
+      source: entries.every((entry) => entry.source === entries[0].source) ? entries[0].source : 'mixed',
       idempotent: true,
       atomic: true
     });
+  }
+
+  async function recordAttributedCallsBatch(entries) {
+    assertCanHashForWrite();
+    if (!Array.isArray(entries) || !entries.length) fail('invalid-argument', 'נדרשת רשימת צבירות.', 'input');
+    const nowMs = now();
+    const canonical = entries.map((entry) => {
+      const { source, occurredMs } = validateBatchEntry(entry, nowMs);
+      return {
+        eventHash: hasher.hashEvent(entry.event_id),
+        subjectHash: hasher.hashScope(entry.subject_id),
+        feature: entry.feature, calls: entry.calls, source, occurredMs
+      };
+    });
+    return recordCanonicalBatch(canonical);
+  }
+
+  async function recordServerCompletionEventsBatch(events) {
+    assertCanHashForWrite();
+    if (!Array.isArray(events) || !events.length) fail('invalid-argument', 'נדרשת רשימת אירועים.', 'input');
+    return recordCanonicalBatch(events.map((event) => canonicalEntry(event, now())));
   }
 
   /**
@@ -668,7 +903,7 @@ function createCostUsageService(deps) {
     if (listExpiredHook) {
       keys = await listExpiredHook(nowMs, limit);
     } else if (typeof db.collection === 'function') {
-      for (const col of [DAILY_COLLECTION, LEDGER_COLLECTION]) {
+      for (const col of [DAILY_COLLECTION, LEDGER_COLLECTION, STATION_DAILY_COLLECTION, GLOBAL_DAILY_COLLECTION]) {
         if (keys.length >= limit) break;
         const snap = await db.collection(col).where('expires_at', '<=', new Date(nowMs)).limit(limit - keys.length).get();
         const docs = snap && snap.docs ? snap.docs : [];
@@ -691,7 +926,7 @@ function createCostUsageService(deps) {
       removed,
       limit,
       more: keys.length >= limit,
-      collections: Object.freeze([DAILY_COLLECTION, LEDGER_COLLECTION]),
+      collections: Object.freeze([DAILY_COLLECTION, LEDGER_COLLECTION, STATION_DAILY_COLLECTION, GLOBAL_DAILY_COLLECTION]),
       lifetime_policy: 'keep_while_account_active_explicit_delete',
       scheduled: false
     });
@@ -710,6 +945,7 @@ function createCostUsageService(deps) {
     getCostUsageDashboard,
     setCostUsageMeasurementStart,
     recordAttributedCallsBatch,
+    recordServerCompletionEventsBatch,
     pruneExpiredCostUsage,
     isPruneEligible,
     feederStatus,
@@ -723,7 +959,11 @@ function createCostUsageService(deps) {
     PRUNE_BATCH,
     CONFIG_PATH,
     BATCH_CURSOR_PATH,
+    FEEDER_STATE_PATH,
     DAILY_COLLECTION,
+    STATION_DAILY_COLLECTION,
+    GLOBAL_DAILY_COLLECTION,
+    STATION_SHARDS,
     LIFETIME_COLLECTION,
     LEDGER_COLLECTION,
     DEFAULT_PAGE_SIZE,
@@ -744,7 +984,11 @@ module.exports = Object.freeze({
   MAX_PAGE_SIZE,
   CONFIG_PATH: 'cost_usage_config/settings',
   BATCH_CURSOR_PATH: 'cost_usage_config/batch_cursor',
+  FEEDER_STATE_PATH: 'cost_usage_config/feeder',
   DAILY_COLLECTION: 'cost_usage_daily',
+  STATION_DAILY_COLLECTION: 'cost_usage_station_daily',
+  GLOBAL_DAILY_COLLECTION: 'cost_usage_global_daily',
+  STATION_SHARDS,
   LIFETIME_COLLECTION: 'cost_usage_lifetime',
   LEDGER_COLLECTION: 'cost_usage_batch_ledger',
   FEATURE_LABELS,

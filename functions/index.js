@@ -15,6 +15,7 @@
 // =====================================================================
 
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 // Use the narrow options entry point. firebase-functions v7 removed the
 // legacy config API that the broad v2 barrel used to re-export.
 const { setGlobalOptions } = require('firebase-functions/v2/options');
@@ -79,6 +80,9 @@ const metricsSinkModule = require('./metrics-sink');
 const metricsServiceModule = require('./metrics-service');
 const costUsageServiceModule = require('./cost-usage-service');
 const costBillingReaderModule = require('./cost-billing-reader');
+const costCompletionOutboxModule = require('./cost-completion-outbox');
+const { defineSecret: defineCostUsageSecret } = require('firebase-functions/params');
+const RESQ_COST_USAGE_HASH_KEY = defineCostUsageSecret('RESQ_COST_USAGE_HASH_KEY');
 const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
@@ -295,14 +299,16 @@ function getAttendanceSelfService() {
 }
 exports.mutateMyAttendanceDay = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceSelfService().mutateDay(req));
-exports.getMyAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
-  async req => getAttendanceSelfService().readMonth(req));
+exports.getMyAttendanceMonth = onCall(
+  { ...ATTENDANCE_CORRECTION_OPTIONS, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  async req => measuredCostUsageRead('getMyAttendanceMonth', req, () => getAttendanceSelfService().readMonth(req)));
 exports.mutateMyAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceSelfService().mutateMonth(req));
 const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
 exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
 exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));
-exports.listHrRequestsInbox = onCall({ enforceAppCheck: true }, async (req) => hrRequests.listInbox(req));
+exports.listHrRequestsInbox = onCall({ enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  async (req) => measuredCostUsageRead('listHrRequestsInbox', req, () => hrRequests.listInbox(req)));
 exports.getHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.get(req));
 exports.replyHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.reply(req));
 exports.setHrRequestStatus = onCall({ enforceAppCheck: true }, async (req) => hrRequests.setStatus(req));
@@ -698,17 +704,20 @@ exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsSe
 
 // ---------- עלות ושימוש (מנהל-על בלבד) ----------
 // Billing remains disabled unless an owner configures one exact export table,
-// a read-only service identity, location and an explicit enable flag.
+// a project-filtered authorized view, location and an explicit enable flag.
 // No export/IAM/secret is activated by deploying this code alone.
-const { defineSecret: defineCostUsageSecret } = require('firebase-functions/params');
-const RESQ_COST_USAGE_HASH_KEY = defineCostUsageSecret('RESQ_COST_USAGE_HASH_KEY');
+const COST_USAGE_DASHBOARD_SERVICE_ACCOUNT = 'resq-cost-billing-reader@station-102.iam.gserviceaccount.com';
 let billingApi = null;
+let liveBillingReader = null;
 
 function createLiveBillingReader() {
+  // A callable constructs its service per request. Keep the reader (and its
+  // 15-minute single-flight cache) for the lifetime of this one instance.
+  if (liveBillingReader) return liveBillingReader;
   const rawLimit = process.env.RESQ_BILLING_MAX_BYTES_BILLED;
   const maxBytesBilled = rawLimit === undefined ? undefined
     : (/^[1-9][0-9]*$/.test(rawLimit) ? Number(rawLimit) : NaN);
-  return costBillingReaderModule.createCostBillingReader({
+  liveBillingReader = costBillingReaderModule.createCostBillingReader({
     enabled: process.env.RESQ_BILLING_READER_ENABLED === 'true',
     table: process.env.RESQ_BILLING_EXPORT_TABLE,
     jobProject: process.env.RESQ_BILLING_JOB_PROJECT,
@@ -758,6 +767,7 @@ function createLiveBillingReader() {
       };
     }
   });
+  return liveBillingReader;
 }
 
 function createLiveCostUsageService() {
@@ -809,18 +819,71 @@ function createLiveCostUsageService() {
   });
 }
 
+function costUsageOutboxEnabled() {
+  return process.env.RESQ_COST_USAGE_OUTBOX_ENABLED === 'true';
+}
+
+function createLiveCostCompletionOutbox() {
+  return costCompletionOutboxModule.createCostCompletionOutbox({
+    db,
+    getAuthUser: uid => admin.auth().getUser(uid),
+    hashKey: RESQ_COST_USAGE_HASH_KEY.value() || '',
+    hasherFactory: costUsageServiceModule.createAttributionHasher,
+    now: Date.now
+  });
+}
+
+async function measuredCostUsageRead(callable, req, operation) {
+  const result = await operation();
+  if (costUsageOutboxEnabled()) {
+    const outbox = createLiveCostCompletionOutbox();
+    await outbox.recordCompleted(callable, req);
+  }
+  return result;
+}
+
 exports.getCostUsageDashboard = onCall(
-  { enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  { enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY],
+    serviceAccount: COST_USAGE_DASHBOARD_SERVICE_ACCOUNT, maxInstances: 1 },
   req => createLiveCostUsageService().getCostUsageDashboard(req)
 );
 exports.setCostUsageMeasurementStart = onCall(
   { enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
   req => createLiveCostUsageService().setCostUsageMeasurementStart(req)
 );
-// recordAttributedCallsBatch intentionally NOT exported as a public callable in this PR —
-// batch path only; no per-request callout metering.
-// pruneExpiredCostUsage / feeder: stubs exist on the service; NOT scheduled and NOT exported for prod deploy.
-// Without an explicit feeder (scheduled job / logging sink calling the internal batch), feeder_status stays not_wired.
+// Server-only scheduled drain. Disabled by default; no public callable ingest.
+exports.drainCostUsageOutbox = onSchedule({
+  schedule: 'every 5 minutes', region: 'europe-west1', maxInstances: 1,
+  timeoutSeconds: 300,
+  secrets: [RESQ_COST_USAGE_HASH_KEY]
+}, async () => {
+  if (!costUsageOutboxEnabled()) return { status: 'disabled' };
+  const settings = await db.doc(costUsageServiceModule.CONFIG_PATH).get();
+  const measurementStart = settings.exists ? (settings.data() || {}).measurement_start_at : null;
+  if (typeof measurementStart !== 'string' || !Number.isFinite(Date.parse(measurementStart))) {
+    return { status: 'awaiting_measurement_start' };
+  }
+  const outbox = createLiveCostCompletionOutbox();
+  const result = await outbox.drain(createLiveCostUsageService());
+  const feederRef = db.doc(costUsageServiceModule.FEEDER_STATE_PATH);
+  const previous = await feederRef.get();
+  const prior = previous.exists ? previous.data() || {} : {};
+  await feederRef.set({
+    schema: 'cost-usage-feeder-v1',
+    checked_at: new Date().toISOString(),
+    last_ingested_at: result.processed > 0 ? new Date().toISOString() : prior.last_ingested_at || null,
+    measured_callables: ['getStationScheduleRange', 'getMyAttendanceMonth', 'listHrRequestsInbox'],
+    backlog: result.more === true,
+    blocked: result.has_blocked === true
+  });
+  if (result.has_blocked === true) {
+    throw new Error('cost-usage-outbox-blocked');
+  }
+  if (result.more === true) {
+    throw new Error('cost-usage-outbox-backlog');
+  }
+  return result;
+});
 
 
 
@@ -3399,7 +3462,6 @@ exports.reindexDirectory = onCall(async (req) => {
 //  שהמערכת הישנה סבלה ממנו.
 // =====================================================================
 
-const { onSchedule } = require('firebase-functions/v2/scheduler');
 
 const hrHoursDispatch = hrHoursDispatchModule.createHrHoursDispatch({
   db, auth: admin.auth(), messaging: admin.messaging(), HttpsError,
@@ -7003,8 +7065,9 @@ exports.getStationScheduleV2 = onCall({ enforceAppCheck: true }, async (req) =>
 
 // רצועת חודש בקריאה אחת. הטווח מוגבל בשרת ל-31 ימים; התחנה,
 // כרגיל, נגזרת מהזהות ואינה מתקבלת מהלקוח.
-exports.getStationScheduleRange = onCall({ enforceAppCheck: true }, async (req) =>
-  invokeSchedule('getStationRange', req));
+exports.getStationScheduleRange = onCall({ enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  async (req) => measuredCostUsageRead('getStationScheduleRange', req,
+    () => invokeSchedule('getStationRange', req)));
 
 // Temporary server-only bridge for operational screens that still evaluate
 // the legacy rotation cycle while runtime.mode is off or shadow.  The callable

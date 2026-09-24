@@ -6,14 +6,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DAYS = 30;
 const DEFAULT_MAX_BYTES_BILLED = 100 * 1024 * 1024;
 const MAX_CONFIGURED_BYTES = 1024 * 1024 * 1024;
+const SUCCESS_CACHE_MS = 15 * 60 * 1000;
+const FAILURE_CACHE_MS = 60 * 1000;
 
 function validTable(value) {
   if (typeof value !== 'string') return false;
   const parts = value.split('.');
   return parts.length === 3
     && /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(parts[0])
-    && /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/.test(parts[1])
-    && /^gcp_billing_export_(?:resource_)?v1_[A-Za-z0-9_-]{3,128}$/.test(parts[2]);
+    // The runtime identity may read only this project-filtered authorized view,
+    // never the account-wide raw Billing Export table.
+    && parts[1] === 'resq_billing_views'
+    && parts[2] === 'resq_station102_usage_cost';
 }
 
 function unavailable(reason, note) {
@@ -52,6 +56,7 @@ function createCostBillingReader(options) {
   const location = o.location;
   const maxBytesBilled = o.maxBytesBilled === undefined
     ? DEFAULT_MAX_BYTES_BILLED : o.maxBytesBilled;
+  const cache = new Map();
   const valid = configured && validTable(table)
     && projectId === 'station-102'
     && typeof jobProject === 'string' && /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(jobProject)
@@ -60,7 +65,7 @@ function createCostBillingReader(options) {
     && maxBytesBilled > 0 && maxBytesBilled <= MAX_CONFIGURED_BYTES
     && typeof o.query === 'function' && typeof o.now === 'function';
 
-  async function read(days) {
+  async function fetch(days) {
     if (!configured) return unavailable('billing_not_connected');
     if (!valid) return unavailable('billing_configuration_invalid');
     if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
@@ -136,6 +141,27 @@ function createCostBillingReader(options) {
     } catch (_) {
       return unavailable('billing_query_unavailable');
     }
+  }
+
+  function read(days) {
+    if (!configured || !valid || !Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
+      return fetch(days);
+    }
+    const nowMs = o.now();
+    if (!Number.isFinite(nowMs)) return fetch(days);
+    const existing = cache.get(days);
+    if (existing && (existing.pending || nowMs < existing.expiresAt)) return existing.promise;
+    const entry = { pending: true, expiresAt: 0, promise: null };
+    entry.promise = fetch(days).then((result) => {
+      entry.pending = false;
+      entry.expiresAt = o.now() + (result.available ? SUCCESS_CACHE_MS : FAILURE_CACHE_MS);
+      return result;
+    }, (error) => {
+      if (cache.get(days) === entry) cache.delete(days);
+      throw error;
+    });
+    cache.set(days, entry);
+    return entry.promise;
   }
 
   return Object.freeze({ read, configured, valid });

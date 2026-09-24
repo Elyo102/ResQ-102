@@ -41,7 +41,7 @@ for (const name of Object.keys(mapping)) {
 const db = Object.freeze({ synthetic: 'db' });
 const auth = Object.freeze({ synthetic: 'auth' });
 class HttpsError extends Error {}
-const exports = {}, registered = [], calls = [], dependencies = [], required = [];
+const exports = {}, registered = [], calls = [], dependencies = [], required = [], measured = [];
 let authCalls = 0, failure = null;
 const result = Object.freeze({ synthetic: 'original-service-result' });
 const service = Object.fromEntries(Object.values(mapping).map(method => [method, request => {
@@ -50,7 +50,11 @@ const service = Object.fromEntries(Object.values(mapping).map(method => [method,
 }]));
 const moduleStub = { createHrRequests(deps) { dependencies.push(deps); return service; } };
 vm.runInNewContext(imports[0][0] + '\n' + registrations[0][0], {
-  db, HttpsError, exports,
+  db, HttpsError, exports, RESQ_COST_USAGE_HASH_KEY: 'synthetic-secret-binding',
+  measuredCostUsageRead(name, request, operation) {
+    measured.push({ name, request });
+    return operation();
+  },
   require(name) { required.push(name); assert.equal(name, './hr-requests'); return moduleStub; },
   admin: { auth() { ++authCalls; return auth; } },
   onCall(options, handler) { registered.push({ options, handler }); return handler; }
@@ -67,9 +71,10 @@ await check('exactly the seven approved exports are registered with enforced App
   assert.deepEqual(Object.keys(exports).sort(), Object.keys(mapping).sort());
   assert.equal(registered.length, 7);
   for (const { options, handler } of registered) {
-    assert.deepEqual(Object.keys(options), ['enforceAppCheck']);
+    assert.deepEqual(Object.keys(options).sort(), options.secrets ? ['enforceAppCheck', 'secrets'] : ['enforceAppCheck']);
     assert.equal(options.enforceAppCheck, true); assert.equal(typeof handler, 'function');
   }
+  assert.equal(registered.filter(({ options }) => options.secrets).length, 1);
 });
 
 for (const [name, method] of Object.entries(mapping)) {

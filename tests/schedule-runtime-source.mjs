@@ -567,7 +567,9 @@ check('a schedule change notice names the date and the sub-station', () => {
 check('the month strip reads the whole verified snapshot and is bounded', () => {
   assert.ok(runtime.includes('async function getStationRange(req)'));
   assert.ok(runtime.includes('const MAX_STATION_RANGE_DAYS = 31'));
-  assert.ok(index.includes("exports.getStationScheduleRange = onCall({ enforceAppCheck: true }"));
+  assert.ok(index.includes("exports.getStationScheduleRange = onCall({ enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] }"));
+  assert.ok(index.includes("measuredCostUsageRead('getStationScheduleRange', req,"));
+  assert.ok(index.includes("() => invokeSchedule('getStationRange', req)"));
   const start = runtime.indexOf('async function getStationRange(req)');
   const end = runtime.indexOf('async function getStation(req)', start);
   const range = runtime.slice(start, end);

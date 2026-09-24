@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const billing = require('./cost-billing-reader');
 
 const NOW = Date.parse('2026-09-24T12:00:00.000Z');
-const TABLE = 'billing-project.export_data.gcp_billing_export_v1_ABCDEF-123456-ABCDEF';
+const TABLE = 'billing-project.resq_billing_views.resq_station102_usage_cost';
 function configured(overrides = {}) {
   const calls = [];
   const reader = billing.createCostBillingReader({
@@ -32,9 +32,10 @@ test('disabled reader makes no query and never reports zero cost', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('only an exact safe Billing export identifier and station-102 scope are accepted', async () => {
+test('only the project-filtered authorized view and station-102 scope are accepted', async () => {
   for (const patch of [
     { table: 'billing-project.export_data.other_table' },
+    { table: 'billing-project.export_data.gcp_billing_export_v1_ABCDEF-123456-ABCDEF' },
     { table: TABLE + '` UNION SELECT' },
     { projectId: 'another-project' },
     { location: 'EU; DROP TABLE' },
@@ -116,4 +117,32 @@ test('decimal arithmetic retains fractional units without floating-point drift',
       { day: '2026-09-23', service: 'Storage', currency: 'ILS', net_cost: '0.2', last_export: new Date(NOW).toISOString() }
     ] } });
   assert.equal((await reader.read(7)).value, '0.3');
+});
+
+test('repeat and concurrent reads share a bounded 15-minute cache', async () => {
+  let clock = NOW;
+  const { reader, calls } = configured({ now: () => clock });
+  const [first, second] = await Promise.all([reader.read(7), reader.read(7)]);
+  assert.equal(first.value, second.value);
+  assert.equal(calls.length, 2);
+  await reader.read(7);
+  assert.equal(calls.length, 2);
+  clock += 15 * 60 * 1000;
+  await reader.read(7);
+  assert.equal(calls.length, 4);
+});
+
+test('provider failures are throttled briefly, then retried', async () => {
+  let clock = NOW;
+  let attempts = 0;
+  const { reader } = configured({ now: () => clock, query: async () => {
+    attempts += 1;
+    throw new Error('unavailable');
+  } });
+  assert.equal((await reader.read(7)).available, false);
+  assert.equal((await reader.read(7)).available, false);
+  assert.equal(attempts, 1);
+  clock += 60 * 1000;
+  assert.equal((await reader.read(7)).available, false);
+  assert.equal(attempts, 2);
 });

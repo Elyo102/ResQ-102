@@ -46,7 +46,7 @@
     "dr:test": "node ops-disaster-restore.test.mjs && node ops-backup-seal.test.mjs && node ops-auth-backup.test.mjs && node ops-storage-backup.test.mjs && node --test ../functions/backup-monitoring.test.js && node ops-dr-full-drill.test.mjs && node ops-backup-archive.test.mjs && node ops-export-delete-deny.test.mjs && node nightly-sheet-backup-source.mjs && node firestore-predeploy-gate.mjs",
     "metrics:test": "node ../functions/metrics-catalog.test.js && node ../functions/metrics-service.test.js && node metrics-client.test.mjs && node metrics-source.mjs && node metrics-browser.mjs",
     "mobile:test": "node mobile-shell.mjs",
-    "cost-usage:test": "node ../functions/cost-billing-reader.test.js && node ../functions/cost-completion-event.test.js && node ../functions/cost-usage-service.test.js && node cost-usage-source.mjs"
+    "cost-usage:test": "node ../functions/cost-billing-reader.test.js && node ../functions/cost-completion-event.test.js && node ../functions/cost-completion-outbox.test.js && node ../functions/cost-usage-service.test.js && node cost-usage-source.mjs && node cost-usage-browser.mjs"
   },
   "dependencies": {
     "playwright": "^1.48.0"

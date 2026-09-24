@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const h = require('./cost-usage-test-harness');
 const mod = require('./cost-usage-service');
+const { createServerCompletionEvent } = require('./cost-completion-event');
 const { req, build, rejects, NOW } = h;
 const START = new Date(NOW).toISOString();
 const record = (service, entries) => service.recordAttributedCallsBatch(
@@ -359,7 +360,7 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     assert.equal(dash.panes.users.users.length, pageSize);
     assert.equal(dash.panes.users.has_more, true);
     // Bound: config + pageSize lifetime + pageSize profile gets (+ small slack). Must NOT be O(3000).
-    const upper = pageSize * 2 + 10;
+    const upper = pageSize * 2 + 26; // user page + global/day shards, not 3000 users
     assert.ok(readDelta <= upper, 'readDelta=' + readDelta + ' expected <= ' + upper);
     assert.ok(readDelta < 300, 'readDelta=' + readDelta + ' must be far below N=3000');
     assert.ok(profileReadCount.n <= pageSize + 1, 'profile reads=' + profileReadCount.n);
@@ -391,6 +392,178 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     const after = await service.getCostUsageDashboard(req('super1', {}));
     assert.equal(after.measurement.measurement_start_at, START);
     assert.equal(after.measurement.coverage.locked_start, START);
+  });
+
+  await check('feeder coverage is partial when fresh and delayed when stale', async () => {
+    const { service, db } = build();
+    db._put('cost_usage_config/feeder', {
+      schema: 'cost-usage-feeder-v1', checked_at: START,
+      measured_callables: ['getStationScheduleRange', 'getMyAttendanceMonth', 'listHrRequestsInbox'],
+      backlog: false
+    });
+    const empty = await service.getCostUsageDashboard(req('super1', {}));
+    assert.equal(empty.feeder.status, 'awaiting_sample');
+    assert.equal(empty.feeder.live_counts, false);
+    db._put('cost_usage_config/feeder', {
+      schema: 'cost-usage-feeder-v1', checked_at: START, last_ingested_at: START,
+      measured_callables: ['getStationScheduleRange', 'getMyAttendanceMonth', 'listHrRequestsInbox'],
+      backlog: false
+    });
+    const fresh = await service.getCostUsageDashboard(req('super1', {}));
+    assert.equal(fresh.feeder.status, 'active_partial');
+    assert.equal(fresh.feeder.live_counts, true);
+    assert.equal(fresh.feeder.measured_callables.length, 3);
+    h.setClock(NOW + 16 * 60 * 1000);
+    try {
+      const stale = await service.getCostUsageDashboard(req('super1', {}));
+      assert.equal(stale.feeder.status, 'delayed');
+      assert.equal(stale.feeder.live_counts, false);
+    } finally { h.setClock(NOW); }
+  });
+
+  await check('server completion uses one HMAC boundary, dedupes, and rejects changed replay', async () => {
+    const { service, db } = build();
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    const make = (invocationId, uid = 'w1') => createServerCompletionEvent({
+      callable: 'getStationScheduleRange',
+      actor: { uid, stationId: 'eilat_102', verification: 'live' },
+      invocationId, occurredAt: START, outcome: 'ok', hasher
+    });
+    const first = make('stable_invocation_0001');
+    const second = make('stable_invocation_0002');
+    const beforeWrites = db._stats.writes;
+    const result = await service.recordServerCompletionEventsBatch([first, second]);
+    assert.equal(result.written, 2);
+    assert.equal(db._stats.writes - beforeWrites, 12); // config marker + 5/event (including station/global shards) + cursor
+    assert.ok(db._get('cost_usage_batch_ledger/' + first.event_id));
+    assert.equal(db._get('cost_usage_lifetime/' + first.uid_hash).calls, 2);
+    const stationBeforeReplay = [...db._store.entries()].filter(([path]) => path.startsWith('cost_usage_station_daily/'));
+    assert.equal(stationBeforeReplay.reduce((n, [, row]) => n + row.calls, 0), 2);
+    assert.equal([...db._store.entries()].filter(([path]) => path.startsWith('cost_usage_global_daily/'))
+      .reduce((n, [, row]) => n + row.calls, 0), 2);
+    const replay = await service.recordServerCompletionEventsBatch([first]);
+    assert.equal(replay.skipped_duplicates, 1);
+    assert.equal(db._get('cost_usage_lifetime/' + first.uid_hash).calls, 2);
+    assert.equal([...db._store.entries()].filter(([path]) => path.startsWith('cost_usage_station_daily/'))
+      .reduce((n, [, row]) => n + row.calls, 0), 2);
+    await rejects(service.recordServerCompletionEventsBatch([{ ...first, uid_hash: make('stable_invocation_0001', 'w2').uid_hash }]),
+      'event-collision', 'failed-precondition');
+    await rejects(service.recordServerCompletionEventsBatch([{ ...first, subject_id: 'w1' }]),
+      'completion-schema', 'invalid-argument');
+  });
+
+  await check('station/day totals include new stations automatically and sum exactly once for super', async () => {
+    const { service, db } = build();
+    db._put('stations/eilat_102', { active: true });
+    db._put('stations/newtown_102', { active: true });
+    db._put('stations/quiet_102', { active: true });
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    const event = (id, stationId) => createServerCompletionEvent({
+      callable: 'getStationScheduleRange', actor: { uid: 'w1', stationId, verification: 'live' },
+      invocationId: id, occurredAt: START, outcome: 'ok', hasher
+    });
+    const rows = [event('station_evt_0001', 'eilat_102'), event('station_evt_0002', 'eilat_102'),
+      event('station_evt_0003', 'newtown_102')];
+    await service.recordServerCompletionEventsBatch(rows);
+    await service.recordServerCompletionEventsBatch([rows[0]]);
+    await rejects(service.getCostUsageDashboard(req('w1', { days: 1 })), 'super', 'permission-denied');
+    const pane = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    assert.equal(pane.status, 'partial');
+    assert.equal(pane.days[0].total, 3);
+    assert.deepEqual(Object.fromEntries(pane.days[0].stations.map(s => [s.station_id, s.calls])),
+      { eilat_102: 2, newtown_102: 1, quiet_102: null });
+    assert.equal(pane.station_aggregate_start_at, START);
+    assert.equal([...db._store.entries()].filter(([path]) => path.startsWith('cost_usage_station_daily/'))
+      .reduce((n, [, row]) => n + row.calls, 0), 3);
+    // Global total is independent from the registered-station page.
+    db._store.delete('stations/newtown_102');
+    const afterRemoval = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    assert.equal(afterRemoval.days[0].total, 3);
+    assert.equal(afterRemoval.days[0].stations.some(s => s.station_id === 'newtown_102'), false);
+  });
+
+  await check('hyphen and leading-digit station IDs pass ingest and dashboard pagination', async () => {
+    const { service, db } = build();
+    db._put('stations/station-102', { active: true });
+    db._put('stations/1_station', { active: true });
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    const rows = ['station-102', '1_station'].map((stationId, index) => createServerCompletionEvent({
+      callable: 'getMyAttendanceMonth', actor: { uid: 'w1', stationId, verification: 'live' },
+      invocationId: 'valid_station_' + String(index).padStart(8, '0'),
+      occurredAt: START, outcome: 'ok', hasher
+    }));
+    await service.recordServerCompletionEventsBatch(rows);
+    const pane = (await service.getCostUsageDashboard(req('super1', {}))).panes.station_calls;
+    assert.equal(pane.days[0].total, 2);
+    assert.deepEqual(Object.fromEntries(pane.days[0].stations.map(row => [row.station_id, row.calls])),
+      { '1_station': 1, 'station-102': 1 });
+  });
+
+  await check('legacy events never invent station history; late station activation is separately dated', async () => {
+    const { service, db } = build();
+    db._put('cost_usage_config/settings', { measurement_start_at: new Date(NOW - 3600000).toISOString(),
+      aggregates_present: true, schema: 'cost-usage-config-v1' });
+    const before = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    assert.equal(before.status, 'not_started');
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    assert.equal(db._get('cost_usage_config/settings').station_aggregate_start_at, START);
+    assert.equal(db._get('cost_usage_config/settings').global_aggregate_start_at,
+      new Date(Date.parse('2026-09-19T00:00:00.000Z')).toISOString());
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    const old = createServerCompletionEvent({ callable: 'getStationScheduleRange',
+      actor: { uid: 'w1', stationId: 'eilat_102', verification: 'live' },
+      invocationId: 'older_station_0001', occurredAt: new Date(NOW - 1000).toISOString(), outcome: 'ok', hasher });
+    await service.recordServerCompletionEventsBatch([old]);
+    assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_station_daily/')).length, 0);
+    assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_global_daily/')).length, 0);
+    const pane = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    assert.equal(pane.days[0].total, null);
+  });
+
+  await check('station shard and user counters roll back together on crash and replay once', async () => {
+    const { service, db } = build();
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    const hasher = mod.createAttributionHasher('cost-usage-test-key-32b!!!!');
+    const event = createServerCompletionEvent({ callable: 'getMyAttendanceMonth',
+      actor: { uid: 'w1', stationId: 'eilat_102', verification: 'live' },
+      invocationId: 'atomic_station_0001', occurredAt: START, outcome: 'ok', hasher });
+    db._setFailBeforeCommit(1);
+    await assert.rejects(service.recordServerCompletionEventsBatch([event]), /simulated-crash/);
+    assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_station_daily/')).length, 0);
+    assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_global_daily/')).length, 0);
+    assert.equal([...db._store.keys()].filter(path => path.startsWith('cost_usage_batch_ledger/')).length, 0);
+    await service.recordServerCompletionEventsBatch([event]);
+    const station = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    assert.equal(station.days[0].total, 1);
+    assert.equal([...db._store.entries()].filter(([path]) => path.startsWith('cost_usage_global_daily/'))
+      .reduce((n, [, row]) => n + row.calls, 0), 1);
+  });
+
+  await check('station page scales beyond 100 stations without scanning history', async () => {
+    const { service, db } = build();
+    await service.setCostUsageMeasurementStart(req('super1', {}));
+    for (let i = 0; i < 3000; i++) db._put('stations/station_' + String(i).padStart(4, '0'), { active: true });
+    const before = db._stats.reads;
+    const station = (await service.getCostUsageDashboard(req('super1', { days: 1 }))).panes.station_calls;
+    const delta = db._stats.reads - before;
+    assert.equal(station.status, 'partial');
+    assert.equal(station.days[0].stations.length, 25);
+    assert.equal(station.next_station_page_token, 'station_0024');
+    assert.ok(delta < 500, 'bounded page read delta=' + delta);
+    const next = (await service.getCostUsageDashboard(req('super1', {
+      stationPageToken: station.next_station_page_token
+    }))).panes.station_calls;
+    assert.equal(next.days[0].stations[0].station_id, 'station_0025');
+    assert.equal(next.days[0].total, null);
+    await rejects(service.getCostUsageDashboard(req('super1', { stationPageToken: '../x' })),
+      'station-page-token', 'invalid-argument');
+    await rejects(service.getCostUsageDashboard(req('super1', { stationDay: '2026-09-31' })),
+      'station-day', 'invalid-argument');
+    await rejects(service.getCostUsageDashboard(req('super1', { stationDay: '2026-07-01' })),
+      'station-day', 'invalid-argument');
   });
 
   await check('ingest rejects missing, pre-start, future and older-than-window events', async () => {
@@ -450,7 +623,7 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     assert.equal(dash.feeder.status, 'not_wired');
     assert.equal(dash.feeder.live_counts, false);
     assert.ok(dash.feeder.note_he.includes('מזין'));
-    assert.ok(dash.self_cost_note_he.includes('not_wired'));
+    assert.ok(dash.self_cost_note_he.includes('שיוך למשתמשים אינו חשבונית'));
     assert.equal(dash.panes.users.feeder_status, 'not_wired');
   });
 

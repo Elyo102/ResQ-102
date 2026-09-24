@@ -565,10 +565,19 @@ service cloud.firestore {
     match /cost_usage_daily/{id} {
       allow read, write: if false;
     }
+    match /cost_usage_station_daily/{id} {
+      allow read, write: if false;
+    }
+    match /cost_usage_global_daily/{id} {
+      allow read, write: if false;
+    }
     match /cost_usage_lifetime/{id} {
       allow read, write: if false;
     }
     match /cost_usage_batch_ledger/{id} {
+      allow read, write: if false;
+    }
+    match /cost_usage_outbox/{id} {
       allow read, write: if false;
     }
 

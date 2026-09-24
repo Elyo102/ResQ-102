@@ -90,6 +90,13 @@
     <div id="loadLegend" class="cu-flags"></div>
     <div id="load"></div>
   </section>
+  <section class="cu-card" aria-labelledby="stationCallsTitle">
+    <h2 id="stationCallsTitle" class="cu-section-title">קריאות שרת יומיות לפי תחנה</h2>
+    <label class="cu-sub" for="stationDay">יום UTC</label>
+    <input id="stationDay" type="date" aria-label="יום למדידת קריאות לפי תחנה">
+    <div id="stationCalls"></div>
+    <button id="btnNextStations" type="button" class="cu-hidden">עוד תחנות</button>
+  </section>
   <section class="cu-card" aria-labelledby="usersTitle">
     <h2 id="usersTitle" class="cu-section-title">משתמשים</h2>
     <div id="users"></div>
@@ -116,7 +123,7 @@ const elements={
   refresh:$('btnRefresh'), range:$('range'), rangeLabel:$('rangeLabel'),
   measurement:$('measurement'), attribution:$('attribution'), flags:$('flags'),
   message:$('message'), actual:$('actual'), load:$('load'), loadLegend:$('loadLegend'),
-  users:$('users'), nextPage:$('btnNextUsers'), selfCost:$('selfCost')
+  users:$('users'), stationCalls:$('stationCalls'), stationDay:$('stationDay'), nextStationPage:$('btnNextStations'), nextPage:$('btnNextUsers'), selfCost:$('selfCost')
 };
 const ui=createCostUsageUi({
   elements,
@@ -127,6 +134,8 @@ const ui=createCostUsageUi({
 elements.refresh.addEventListener('click',()=>{ui.resetPaging();ui.refresh();});
 elements.range.addEventListener('change',()=>{ui.setDays(elements.range.value);ui.refresh();});
 elements.nextPage.addEventListener('click',ui.nextPage);
+elements.stationDay.addEventListener('change',()=>{ui.setStationDay(elements.stationDay.value);ui.refresh();});
+elements.nextStationPage.addEventListener('click',ui.nextStationPage);
 onIdTokenChanged(auth,async user=>{
   const mine=++epoch;
   identity=null;

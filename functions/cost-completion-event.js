@@ -8,7 +8,8 @@ const CALLABLE_FEATURES = Object.freeze({
   getMyAttendanceMonth: 'attendance_month_read',
   listHrRequestsInbox: 'hr_inbox_read'
 });
-const STATION_RE = /^[a-z][a-z0-9_]{1,63}$/;
+// Match the station provisioning contract, including leading digits and hyphens.
+const STATION_RE = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const INVOCATION_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 function createServerCompletionEvent({ callable, actor, invocationId, occurredAt, outcome, hasher }) {

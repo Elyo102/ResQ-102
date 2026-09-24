@@ -35,6 +35,43 @@ function fakeDb(options) {
     };
   }
   function collection(colPath) {
+    if (colPath === 'stations') {
+      const query = (after, max) => ({
+        orderBy(field) { assert.equal(field, '__name__'); return query(after, max); },
+        startAfter(id) { return query(id, max); },
+        limit(n) { return query(after, n); },
+        async get() {
+          const docs = [...store.keys()].filter(path => path.startsWith('stations/') &&
+            !path.slice('stations/'.length).includes('/'))
+            .map(path => path.slice('stations/'.length)).sort()
+            .filter(id => !after || id > after).slice(0, max)
+            .map(id => ({ id, exists: true, data: () => clone(store.get('stations/' + id)) }));
+          stats.reads += docs.length;
+          return { docs };
+        }
+      });
+      return query(null, Infinity);
+    }
+    if (colPath === 'cost_usage_station_daily') {
+      const query = (filters, max) => ({
+        where(field, op, value) { return query([...filters, [field, op, value]], max); },
+        limit(n) { return query(filters, n); },
+        async get() {
+          const docs = [];
+          for (const [path, row] of store.entries()) {
+            if (!path.startsWith(colPath + '/') || path.slice(colPath.length + 1).includes('/')) continue;
+            if (!filters.every(([field, op, value]) => op === '>=' ? row[field] >= value
+              : op === '<=' ? row[field] <= value : op === '==' ? row[field] === value : false)) continue;
+            docs.push({ id: path.split('/').pop(), data: () => clone(row) });
+          }
+          docs.sort((a, b) => a.id.localeCompare(b.id));
+          const result = docs.slice(0, max);
+          stats.reads += result.length;
+          return { docs: result };
+        }
+      });
+      return query([], Infinity);
+    }
     return {
       path: colPath,
       limit(n) {
@@ -144,6 +181,7 @@ function fakeDb(options) {
     _get(p) { return store.get(p); },
     _setFailBeforeCommit(n) { failBeforeCommitRemaining = n; },
     doc: docRef,
+    getAll: async (...refs) => refs.map(ref => snapOf(ref.path)),
     collection,
     runTransaction(work) {
       // Serialize like Firestore client: overlapping txs queue; conflict retries inside.
@@ -239,7 +277,8 @@ function build(over) {
     listExpiredCostUsageDocs: async (nowMs, limit) => {
       const out = [];
       for (const [path, row] of db._store.entries()) {
-        if (!(path.startsWith('cost_usage_daily/') || path.startsWith('cost_usage_batch_ledger/'))) continue;
+        if (!(path.startsWith('cost_usage_daily/') || path.startsWith('cost_usage_batch_ledger/') ||
+            path.startsWith('cost_usage_station_daily/'))) continue;
         const exp = row && row.expires_at;
         const ms = exp instanceof Date ? exp.getTime() : Date.parse(exp);
         if (Number.isFinite(ms) && ms <= nowMs) out.push(path);

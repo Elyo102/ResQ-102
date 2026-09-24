@@ -22,6 +22,7 @@ const ui = read('cost-usage-ui.js');
 const nav = read('nav.js');
 const billingReader = read('functions/cost-billing-reader.js');
 const completionEvent = read('functions/cost-completion-event.js');
+const completionOutbox = read('functions/cost-completion-outbox.js');
 const privacyMap = read('PRIVACY-DATA-MAP.md');
 
 check('cost-usage.html is RTL Hebrew with theme.css?v=42h34 and one App Check init',
@@ -107,8 +108,20 @@ check('batch enforces event time and measurement start inside its transaction',
   /tx\.get\(configRef\)/.test(service) &&
   /before-measurement-start/.test(service) && /event-age/.test(service));
 check('daily and ledger TTL field overrides are declared',
-  ['cost_usage_daily', 'cost_usage_batch_ledger'].every((name) =>
+  ['cost_usage_daily', 'cost_usage_station_daily', 'cost_usage_global_daily', 'cost_usage_batch_ledger'].every((name) =>
     indexes.fieldOverrides.some((item) => item.collectionGroup === name && item.fieldPath === 'expires_at' && item.ttl === true)));
+check('station counts are sharded, private, restorable and rendered only as partial coverage',
+  /STATION_SHARDS = 16/.test(service) && /station_aggregate_start_at/.test(service) &&
+  /tx\.set\(stationRef/.test(service) && /station_calls: stationCalls/.test(service) &&
+  /match \/cost_usage_station_daily\/\{id\}/.test(rules) &&
+  /policy\('cost_usage_station_daily\/\{id\}'/.test(read('functions/backup-policy.js')) &&
+  /renderStationCalls/.test(ui) && /stationCalls/.test(read('cost-usage.html')));
+check('global daily total is separately sharded, private, and the stations are paged',
+  /GLOBAL_DAILY_COLLECTION/.test(service) && /global_aggregate_start_at/.test(service) &&
+  /STATION_PAGE_SIZE = 25/.test(service) && /next_station_page_token/.test(service) &&
+  /match \/cost_usage_global_daily\/\{id\}/.test(rules) &&
+  /policy\('cost_usage_global_daily\/\{id\}'/.test(read('functions/backup-policy.js')) &&
+  /setStationDay/.test(ui) && /nextStationPage/.test(ui));
 check('pruneExpiredCostUsage stub exists and is NOT scheduled/exported for prod',
   /pruneExpiredCostUsage/.test(service) &&
   !/exports\.pruneExpiredCostUsage/.test(index) &&
@@ -125,11 +138,34 @@ check('Billing Export reader is owner-configured and off by default',
   /billing_configuration_invalid/.test(billingReader) &&
   /dryRun: true/.test(billingReader) &&
   /billing_query_over_budget/.test(billingReader));
-check('server completion contract exists without an active event feeder',
+check('Billing reader accepts only the station-102 authorized view, not the account-wide export',
+  /resq_billing_views/.test(billingReader) &&
+  /resq_station102_usage_cost/.test(billingReader) &&
+  !/gcp_billing_export_\(\?:resource_\)\?v1_/.test(billingReader));
+check('dashboard has a dedicated runtime identity and bounded instances',
+  /serviceAccount: COST_USAGE_DASHBOARD_SERVICE_ACCOUNT, maxInstances: 1/.test(index));
+check('billing reader is a module-scoped singleton across callable requests',
+  /let liveBillingReader = null/.test(index) &&
+  /function createLiveBillingReader\(\)\s*\{[\s\S]*?if \(liveBillingReader\) return liveBillingReader;/.test(index) &&
+  /liveBillingReader = costBillingReaderModule\.createCostBillingReader/.test(index) &&
+  /return liveBillingReader;/.test(index));
+check('UI source badge follows the actual availability state',
+  /hasActual \? 'עלות שימוש מדווחת' : 'עלות בפועל: אין מקור'/.test(ui));
+check('server completion contract has gated durable outbox and scheduled drain',
   /createServerCompletionEvent/.test(completionEvent) &&
   /verification !== 'live'/.test(completionEvent) &&
-  !/exports\.costUsageFeeder/.test(index) &&
-  /feeder_status:\s*'not_wired'|status:\s*'not_wired'/.test(service));
+  /RESQ_COST_USAGE_OUTBOX_ENABLED === 'true'/.test(index) &&
+  /exports\.drainCostUsageOutbox = onSchedule/.test(index) &&
+  /recordServerCompletionEventsBatch/.test(completionOutbox) &&
+  /match \/cost_usage_outbox\/\{id\}/.test(rules) &&
+  /status:\s*'not_wired'/.test(service));
+check('outbox measures only approved reads and is classified for backup',
+  /getStationScheduleRange/.test(completionEvent) &&
+  /getMyAttendanceMonth/.test(completionEvent) &&
+  /listHrRequestsInbox/.test(completionEvent) &&
+  !/sendCallout:/.test(completionEvent) &&
+  /policy\('cost_usage_outbox\/\{id\}'/.test(read('functions/backup-policy.js')) &&
+  /cost_usage_outbox/.test(privacyMap));
 check('privacy map describes cost collections, incomplete coverage, and retention gap',
   /cost_usage_lifetime/.test(privacyMap) &&
   /cost_usage_batch_ledger/.test(privacyMap) &&

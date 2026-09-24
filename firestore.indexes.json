@@ -671,6 +671,18 @@
       "indexes": []
     },
     {
+      "collectionGroup": "cost_usage_station_daily",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "cost_usage_global_daily",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "cost_usage_batch_ledger",
       "fieldPath": "expires_at",
       "ttl": true,

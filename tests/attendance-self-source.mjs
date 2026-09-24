@@ -17,7 +17,8 @@ function section(source, start, end) {
 }
 
 assert.match(index, /exports\.mutateMyAttendanceDay = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
-assert.match(index, /exports\.getMyAttendanceMonth = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
+assert.match(index, /exports\.getMyAttendanceMonth = onCall\(\s*\{ \.\.\.ATTENDANCE_CORRECTION_OPTIONS, secrets: \[RESQ_COST_USAGE_HASH_KEY\] \}/);
+assert.match(index, /measuredCostUsageRead\('getMyAttendanceMonth', req, \(\) => getAttendanceSelfService\(\)\.readMonth\(req\)\)/);
 assert.match(index, /exports\.mutateMyAttendanceMonth = onCall\(ATTENDANCE_CORRECTION_OPTIONS/);
 assert.match(client, /httpsCallable\(fns, 'mutateMyAttendanceDay'\)/);
 assert.match(client, /httpsCallable\(fns, 'getMyAttendanceMonth'\)/);
