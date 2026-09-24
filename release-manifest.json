@@ -4,5 +4,6 @@
   "asset_query": "42h331",
   "sw_cache_key": "resq-v42h331-release1",
   "scope": "hosting",
-  "server_version": "42H.33"
+  "server_version": "42H.33",
+  "telemetry_version": "42H.31"
 }

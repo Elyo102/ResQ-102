@@ -76,6 +76,7 @@ function localModuleImports(source) {
 export function audit(files, manifest = MANIFEST) {
   const EXPECTED_VERSION = manifest.version;
   const SERVER_VERSION = manifest.scope === 'hosting' ? manifest.server_version : EXPECTED_VERSION;
+  const TELEMETRY_VERSION = manifest.scope === 'hosting' ? manifest.telemetry_version : EXPECTED_VERSION;
   const EXPECTED_DATE = manifest.date;
   const EXPECTED_ASSET_KEY = manifest.asset_query;
   const errors = [];
@@ -119,8 +120,11 @@ export function audit(files, manifest = MANIFEST) {
   if (!versionVocabulary(incidentClient, /TELEMETRY_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(SERVER_VERSION)) {
     errors.push('client telemetry vocabulary (incident-client.js TELEMETRY_VERSIONS) accepts the server release');
   }
-  if (manifest.scope === 'hosting' && !incidentClient.includes("const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + EXPECTED_VERSION + "', server: '" + SERVER_VERSION + "' });")) {
+  if (manifest.scope === 'hosting' && !incidentClient.includes("const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + EXPECTED_VERSION + "', server: '" + TELEMETRY_VERSION + "' });")) {
     errors.push('hosting telemetry alias maps visible version to accepted server version');
+  }
+  if (manifest.scope === 'hosting' && !versionVocabulary(telemetryContract, /const\s+VERSIONS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/).includes(TELEMETRY_VERSION)) {
+    errors.push('server source telemetry vocabulary accepts the verified live version');
   }
 
   const worker = files.get('firebase-messaging-sw.js') || '';

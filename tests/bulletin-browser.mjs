@@ -14,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const releaseVersion = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, '')).v;
 const releaseManifest = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
-const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.server_version : releaseVersion;
+const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.telemetry_version : releaseVersion;
 const stub = path.join(here, 'stub');
 let port = 0;
 const types = {

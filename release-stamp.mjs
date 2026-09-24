@@ -55,8 +55,8 @@ export function validateManifest(manifest) {
   if (!manifest.date) errors.push('manifest.date is set');
   if (!manifest.sw_cache_key) errors.push('manifest.sw_cache_key is set');
   if (manifest.scope && manifest.scope !== 'hosting') errors.push('manifest.scope must be hosting when set');
-  if (manifest.scope === 'hosting' && (!manifest.server_version || manifest.server_version === manifest.version)) {
-    errors.push('hosting release requires a distinct server_version');
+  if (manifest.scope === 'hosting' && (!manifest.server_version || !manifest.telemetry_version || manifest.server_version === manifest.version)) {
+    errors.push('hosting release requires source server_version and live telemetry_version');
   }
   if (manifest.version && manifest.asset_query !== releaseKey(manifest.version)) {
     errors.push('manifest.asset_query (' + manifest.asset_query + ') must equal releaseKey(version) (' + releaseKey(manifest.version || '') + ')');
@@ -105,7 +105,7 @@ export function stampFiles(files, manifest) {
     out.set('incident-client.js', replaceOnce(
       out.get('incident-client.js') || '',
       /const HOSTING_TELEMETRY_ALIAS = Object\.freeze\(\{ visible: '[^']*', server: '[^']*' \}\);/,
-      "const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + manifest.version + "', server: '" + manifest.server_version + "' });",
+      "const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '" + manifest.version + "', server: '" + manifest.telemetry_version + "' });",
       'incident-client.js hosting telemetry alias'
     ));
   } else {

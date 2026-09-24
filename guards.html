@@ -1428,6 +1428,10 @@ function renderLog(){
 // A dictionary without Object.prototype keeps selection state correct for every
 // valid UID and prevents property-name collisions from changing the result.
 let dlgPick = Object.create(null);
+const GUARD_FIELD_ROLES = new Set(['firefighter', 'team_leader', 'deputy_team_leader']);
+function guardFieldPerson(person){
+  return GUARD_FIELD_ROLES.has(String(person && person.role || ''));
+}
 
 function assignmentRows(g){
   // recommend() מוציא משובצים קיימים מן ההצעות בכוונה. בחלון
@@ -1436,6 +1440,8 @@ function assignmentRows(g){
   const current = Array.from(new Set(assignedOf(g)
     .map(uid => String(uid || ''))
     .filter(Boolean)));
+  const fieldPeople = people.filter(guardFieldPerson);
+  const fieldUids = new Set(fieldPeople.map(person => String(person.uid)));
   const assignedRows = current.map(function (uid) {
     const person = people.filter(p => String(p.uid) === uid)[0] || {};
     const load = loadMap[uid] || {};
@@ -1444,6 +1450,7 @@ function assignmentRows(g){
       uid: uid,
       name: person.name || load.name || nameOf(uid),
       crew: crew,
+      role: person.role || '',
       emp: person.emp || load.emp || '',
       signed: isSignedUp(g, uid),
       blocked: false,
@@ -1454,23 +1461,24 @@ function assignmentRows(g){
     };
   });
   const suggestedRows = scheduleClassificationAvailable
-    ? recommend(g, people, loadMap, ctx, busy,
+    ? recommend(g, fieldPeople, loadMap, ctx, busy,
         { needQuals: g.need_quals || [], memberQuals: held })
-    : manualAssignmentRows(g, current);
+        .filter(row => fieldUids.has(String(row.uid)))
+    : manualAssignmentRows(g, current, fieldPeople);
   // Keep the existing sign-up-first recommendation and automatic selection,
   // while letting a manager manually search the full active station roster.
   const suggestedUids = new Set(suggestedRows.map(row => String(row.uid)));
   const manualRows = scheduleClassificationAvailable
-    ? manualAssignmentRows(g, current).filter(row => !suggestedUids.has(String(row.uid)))
+    ? manualAssignmentRows(g, current, fieldPeople).filter(row => !suggestedUids.has(String(row.uid)))
     : [];
   return { current: current, suggested: suggestedRows,
            rows: assignedRows.concat(suggestedRows, manualRows) };
 }
 
-function manualAssignmentRows(g, current){
+function manualAssignmentRows(g, current, fieldPeople){
   const signed = signupsOf(g).map(function (s) { return String(s.uid || ''); }).filter(Boolean);
-  const pool = people.map(function (p) { return String(p.uid || ''); });
-  const peopleByUid = new Map(people.map(person => [String(person.uid), person]));
+  const pool = fieldPeople.map(function (p) { return String(p.uid || ''); });
+  const peopleByUid = new Map(fieldPeople.map(person => [String(person.uid), person]));
   const need = Array.isArray(g.need_quals) ? g.need_quals.filter(Boolean) : [];
   const rows = [];
   Array.from(new Set(pool)).forEach(function (uid) {
@@ -1553,17 +1561,17 @@ function openAssign(g){
     '<div class="note" style="margin-bottom:6px">' +
       (signupsOf(g).length
         ? (scheduleClassificationAvailable
-            ? 'הנרשמים וההמלצות בראש הרשימה; שאר הסגל זמין לבחירה ידנית בחיפוש.'
-            : 'הנרשמים בראש הרשימה; שאר הסגל זמין לבחירה ידנית בחיפוש.')
+            ? 'נרשמו לוחמים ומפקדי צוות? הם בראש הרשימה; שאר תפקידי השטח זמינים בחיפוש.'
+            : 'נרשמו לוחמים ומפקדי צוות? הם בראש הרשימה; שאר תפקידי השטח זמינים בחיפוש.')
         : (scheduleClassificationAvailable
-            ? 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.'
-            : 'אין נרשמים — כל הסגל מוצג לבחירה ידנית ללא דירוג עומס.')) +
+            ? 'אין נרשמים — לוחמים ומפקדי צוות מדורגים לפי חלוקת עומס.'
+            : 'אין נרשמים — לוחמים ומפקדי צוות מוצגים לבחירה ידנית.')) +
       '<br>בלחיצה על שמירה נשלחת לשרת הרשימה המלאה והעדכנית.</div>' +
     '<label for="dlgSearch">חיפוש לוחם או מפקד צוות לפי שם מלא</label>' +
     '<input id="dlgSearch" type="search" maxlength="80" autocomplete="off" ' +
       'placeholder="הקלד שם מלא">' +
     '<p id="dlgCount" class="note" role="status" aria-live="polite"></p>' +
-    '<div id="dlgList" role="group" aria-label="בחירת אנשי תחנה לשיבוץ"></div>' +
+    '<div id="dlgList" role="group" aria-label="בחירת לוחמים ומפקדי צוות לשיבוץ"></div>' +
     '<div id="dlgMsg" class="msg"></div>' +
     '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
       '<button class="btn go" id="dlgSave">שמור שיבוץ</button>' +
@@ -1621,7 +1629,7 @@ function openAssign(g){
   });
   if (!assignment.rows.length) {
     list.innerHTML = '<div class="note" style="padding:12px">' +
-      'לא נמצאו אנשי סגל פעילים בתחנה.</div>';
+      'לא נמצאו לוחמים או מפקדי צוות פעילים לבחירה בתחנה.</div>';
   }
 
   const search = $('dlgSearch');

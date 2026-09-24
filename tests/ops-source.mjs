@@ -103,7 +103,7 @@ await check('current release incidents use a server-accepted version', () => {
   // לא מקובעת ידנית; release-stamp.mjs מוסיף את הגרסה לשני אוצרות המילים.
   const manifest = JSON.parse(read('release-manifest.json'));
   assert.equal(current, manifest.version);
-  const reportedVersion = manifest.scope === 'hosting' ? manifest.server_version : manifest.version;
+  const reportedVersion = manifest.scope === 'hosting' ? manifest.telemetry_version : manifest.version;
   for (const supported of [...new Set(['42H.16', '42H.18', '42H.19', '42H.19.1', reportedVersion])]) {
     assert.ok(client.TELEMETRY_VERSIONS.includes(supported), supported + ' client rollout support');
     assert.ok(contract.VERSIONS.includes(supported), supported + ' server rollout support');

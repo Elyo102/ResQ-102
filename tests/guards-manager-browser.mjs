@@ -457,6 +457,48 @@ await test('an ordinary firefighter without an appointment sees guards but no ma
   });
   await rosterRetry.close();
 
+  const fieldOnly = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  const fieldBoard = managerGuards().map(guard => {
+    if (guard.id === 'g1') return { ...guard, signups:[...guard.signups, { uid:'u6', name:'רכזת משאבי אנוש', crew:'A' }] };
+    if (guard.id === 'g2') return { ...guard, assigned:['u3', 'u6'] };
+    return guard;
+  });
+  await prepare(fieldOnly, 'firefighter', {
+    getGuardManagementStatus:[{ data:{ guard_manager:true } }],
+    getScheduleGuardManagerBoard:repeatedBoard(fieldBoard),
+    manageScheduleGuard:[{ data:{ guard_id:'g2', revision:1 } }]
+  }, [{ data:[
+    ['u2', { full_name:'טל חודרה', role:'firefighter', crew:'A', is_active:true }],
+    ['u3', { full_name:'משה טויטו', role:'team_leader', crew:'A', is_active:true }],
+    ['u6', { full_name:'רכזת משאבי אנוש', role:'hr_coordinator', crew:'A', is_active:true }],
+    ['u7', { full_name:'תפקיד לא מוגדר', crew:'A', is_active:true }]
+  ] }]);
+  const fieldPage = await fieldOnly.newPage();
+  await open(fieldPage);
+  await test('only field roles are offered even when HR signed up; an existing HR assignee remains removable', async () => {
+    await fieldPage.locator('#openList .g', { hasText:'משחק ליגה' })
+      .getByRole('button', { name:'שבץ' }).click();
+    const list = fieldPage.locator('#dlgList');
+    assert.equal(await list.locator('input[value="u2"]').count(), 1);
+    assert.equal(await list.locator('input[value="u3"]').count(), 1);
+    assert.equal(await list.locator('input[value="u6"]').count(), 0,
+      'HR sign-up cannot enter recommendation or manual selection');
+    assert.equal(await list.locator('input[value="u7"]').count(), 0,
+      'a missing role is never assumed eligible');
+    await fieldPage.locator('#dlgClose').click();
+    await fieldPage.locator('#openList .g', { hasText:'הופעה בפארק' })
+      .getByRole('button', { name:'שבץ' }).click();
+    const oldHr = fieldPage.locator('#dlgList input[value="u6"]');
+    assert.equal(await oldHr.isChecked(), true);
+    await oldHr.uncheck();
+    await fieldPage.locator('#dlgSave').click();
+    await fieldPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some(call => call.name === 'manageScheduleGuard'));
+    const writes = managementCalls(await fieldPage.evaluate(() => window.__CALLABLE_CALLS || []));
+    assert.deepEqual(writes.at(-1).payload.uids, ['u3']);
+  });
+  await fieldOnly.close();
+
   const revokedAssignment = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(revokedAssignment, 'firefighter', {
     getGuardManagementStatus:[{ data:{ guard_manager:true } }],

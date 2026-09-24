@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const releaseVersion = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8').replace(/^\uFEFF/, '')).v;
 const releaseManifest = JSON.parse(fs.readFileSync(path.join(root, 'release-manifest.json'), 'utf8'));
-const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.server_version : releaseVersion;
+const incidentVersion = releaseManifest.scope === 'hosting' ? releaseManifest.telemetry_version : releaseVersion;
 const origin = 'http://127.0.0.1:41998';
 const browser = await chromium.launch();
 let passed = 0;
