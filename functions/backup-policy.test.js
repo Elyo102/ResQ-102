@@ -87,6 +87,8 @@ test('schedule qualification state is backed up, restorable, and retained by its
 test('identity data is one restore-consistency group', () => {
   const expected = [
     'registration_requests/{uid}', 'emp_index/{emp}',
+    'registration_consents/{uid}/events/{requestId}',
+    'registration_terms_active/{uid}',
     'emp_reservations/{emp}', 'identity_operations/{uid}',
     'meta/{docId}', 'station_transfer_requests/{requestId}',
     'station_transfer_locks/{uid}',
