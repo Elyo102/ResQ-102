@@ -28,7 +28,7 @@ try {
       collection:(...args) => ['collection', ...args.slice(1)],
       where:(...args) => ['where', ...args], orderBy:(...args) => ['orderBy', ...args], limit:(...args) => ['limit', ...args],
       query:(...args) => args,
-      onSnapshot:(_q, ok, fail) => { window.snapshots.push({ ok, fail }); return () => { window.unsubscribed += 1; }; }
+      onSnapshot:(q, ok, fail) => { window.lastQuery = q; window.snapshots.push({ ok, fail }); return () => { window.unsubscribed += 1; }; }
     };
     const elements = { tabs:Array.from(document.querySelectorAll('[data-fault-group]')),
       operationalCount:el('oc'), buildingCount:el('bc'), status:el('status'), list:el('list'), empty:el('empty') };
@@ -44,6 +44,8 @@ try {
         { id:'closed', data:() => ({ status:'fixed', kind:'vehicle', title:'סגור' }) }
       ] });
     });
+    assert.deepEqual(await page.evaluate(() => window.lastQuery[2]), ['orderBy', 'created_key', 'desc'],
+      'legacy open faults without created_at must remain in the home query');
     assert.equal(await page.locator('#oc').textContent(), '2');
     assert.equal(await page.locator('#bc').textContent(), '1');
     assert.equal(await page.locator('.home-fault-title').first().textContent(), 'נזילת שמן');

@@ -87,6 +87,7 @@ const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
 const runtimeModeModule = require('./runtime-mode-service');
+const faultReportModule = require('./fault-report-service');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -381,6 +382,12 @@ exports.listHrHoursNudges = onCall({ enforceAppCheck: true }, async (req) => hrH
 // profile. Both modules keep the same station scope and idempotent transaction.
 exports.reportIncident = onCall({ enforceAppCheck: true }, async (req) => incidentLog.report(req));
 exports.submitFeedback = onCall({ enforceAppCheck: true }, async (req) => feedback.submit(req));
+const faultReportService = faultReportModule.createFaultReportService({
+  db, auth: admin.auth(), Timestamp: admin.firestore.Timestamp, now: () => new Date(),
+  fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); }
+});
+exports.createFaultReport = onCall({ enforceAppCheck: true, memory: '512MiB', timeoutSeconds: 60 },
+  req => faultReportService.create(req));
 
 const invitationEngine = invitationsModule.createInvitations({
   clock: Date.now,
@@ -502,7 +509,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.34',
+  monthAuthorityReleaseId: '42H.35',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -6836,7 +6843,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.34', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.35', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

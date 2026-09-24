@@ -126,8 +126,9 @@ for (const role of ['commander','firefighter']) {
   await pg.setInputFiles('#nShotGallery', {
     name:'gallery.png', mimeType:'image/png', buffer:ONE_PIXEL_PNG
   });
-  ck('בחירת גלריה אחרונה מחליפה את בחירת המצלמה',
-     await pg.textContent('#nShotName'), 'gallery.png');
+  ck('מצלמה וגלריה מצורפות יחד ולא מחליפות זו את זו',
+     await pg.$$eval('#nShotList span',e=>e.map(x=>x.textContent).join(',')),
+     'camera.png,gallery.png');
   ck('קלט המצלמה נוקה אחרי בחירה מהגלריה',
      await pg.$eval('#nShot',e=>e.files.length), 0);
 

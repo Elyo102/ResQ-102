@@ -1074,7 +1074,7 @@ head('10 · תקלות וחפיפת משמרת');
 // החומרה נקבעת בידי ראש המשמרת ולא בידי המדווח. תקלה רגילה
 // נסגרת ונשארת בהיסטוריה; רק פגיעת רכב שתוקנה נמחקת.
 
-await ok('כבאי מדווח תקלה',
+await blocked('🔒 לקוח ישן אינו יוצר תקלה ישירות; הדיווח עובר דרך שרת מאמת',
   setDoc(doc(ff, `stations/${SID}/faults/new_f`), {
     by_uid: 'u_ff', by_name: 'כבאי א', title: 'ברז דולף',
     desc: 'תיאור', status: 'open', kind: 'general', severity: 'unset',
@@ -1101,7 +1101,7 @@ await blocked('🔒 תקלה נפתחת ישר כסגורה',
     by_uid: 'u_ff', by_name: 'כבאי א', title: 'תקלה',
     desc: '', status: 'closed', kind: 'general' }));
 
-await blocked('🔒 כותרת ארוכה מהמותר',
+await blocked('🔒 לקוח ישן אינו עוקף את גבול הכותרת בשרת',
   setDoc(doc(ff, `stations/${SID}/faults/long_f`), {
     by_uid: 'u_ff', by_name: 'כבאי א', title: 'א'.repeat(120),
     desc: '', status: 'open', kind: 'general' }));
@@ -1111,6 +1111,24 @@ await blocked('🔒 כבאי משכתב את המדווח בתקלה קיימת'
 
 await blocked('🔒 כבאי משנה כותרת של תקלה קיימת',
   updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { title: 'אחרת' }));
+
+await blocked('🔒 לא ניתן לשנות שיוך רכב בדיווח קיים',
+  updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { vehicle_id: 'forged' }));
+
+await blocked('🔒 לא ניתן להפוך תקלה קיימת לתקלת ציוד ברכב',
+  updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { kind: 'gear' }));
+
+for (const [field, value] of [['report_digest', 'forged'], ['date', '2099-01-01'], ['photos', 9]]) {
+  await blocked('🔒 מדווח אינו משנה שדה שרת של תקלה: ' + field,
+    updateDoc(doc(ff, `stations/${SID}/faults/fa_mine`), { [field]: value }));
+  await blocked('🔒 סגל אינו משנה שדה שרת של תקלה: ' + field,
+    updateDoc(doc(cmdA, `stations/${SID}/faults/fa_mine`), { [field]: value }));
+}
+
+await blocked('🔒 לקוח אינו יוצר צילום יתום או רביעי ישירות',
+  setDoc(doc(ff, `stations/${SID}/faults/fa_mine/photos/p3`), {
+    by_uid:'u_ff', data:'data:image/jpeg;base64,/9j/2Q==', w:1, h:1
+  }));
 
 await blocked('🔒 כבאי עורך תקלה של כבאי אחר',
   updateDoc(doc(ff, `stations/${SID}/faults/fa_damage`), { status: 'closed' }));

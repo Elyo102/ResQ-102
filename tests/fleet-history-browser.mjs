@@ -100,7 +100,11 @@ async function scenario(label, url, fn, withViews = true) {
     passed++; console.log('✓ '+label);
   } finally { await context.close(); }
 }
-const noNewWrites = async page => assert.deepEqual(await page.evaluate(()=>({sets:window.__FIRESTORE_WRITES||[],adds:window.__FIRESTORE_ADDS||[],deletes:window.__HISTORY_DELETES||[]})),{sets:[],adds:[],deletes:[]});
+const noNewWrites = async page => assert.deepEqual(await page.evaluate(()=>({
+  sets:window.__FIRESTORE_WRITES||[], adds:window.__FIRESTORE_ADDS||[],
+  deletes:window.__HISTORY_DELETES||[],
+  reportCalls:(window.__CALLABLE_CALLS||[]).filter(row=>row.name==='createFaultReport')
+})),{sets:[],adds:[],deletes:[],reportCalls:[]});
 const select = (page,name) => tap(page.locator('#vehChips button').filter({hasText:name}));
 
 try {
@@ -141,8 +145,28 @@ try {
     await tap(page.locator('#stageWrap img.base'));
     await page.locator('#nTitle').fill('Synthetic new fault');
     await tap(page.locator('#nSave'));
-    await page.waitForFunction(()=>(window.__FIRESTORE_ADDS||[]).length===1);
-    assert.equal(await page.evaluate(()=>window.__FIRESTORE_ADDS[0].value.vehicle_id),'live');
+    await page.waitForFunction(()=>(window.__CALLABLE_CALLS||[]).some(row=>row.name==='createFaultReport'));
+    const sent=await page.evaluate(()=>(window.__CALLABLE_CALLS||[]).find(row=>row.name==='createFaultReport').payload);
+    assert.equal(sent.vehicleId,'live');
+    assert.equal(sent.point.side,'right');
+    assert.equal(sent.photos.length,0);
+  });
+  await scenario('vehicle map appends three photos and submits them atomically via one callable','vehicle.html?v=live',async page=>{
+    await tap(page.locator('#stageWrap img.base'));
+    await page.locator('#nKind').selectOption('gear');
+    await page.locator('#nTitle').fill('Equipment fault with a title longer than eighty characters '.repeat(2));
+    for(const name of ['one.png','two.png','three.png']) {
+      await page.locator('#nShot').setInputFiles({name,mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
+    }
+    assert.match(await page.locator('#nShotName').innerText(),/3 מתוך 3/);
+    await tap(page.locator('#nSave'));
+    await page.waitForFunction(()=>(window.__CALLABLE_CALLS||[]).some(row=>row.name==='createFaultReport'));
+    const sent=await page.evaluate(()=>(window.__CALLABLE_CALLS||[]).find(row=>row.name==='createFaultReport').payload);
+    assert.equal(sent.kind,'gear');
+    assert.equal(sent.vehicleId,'live');
+    assert.equal(sent.photos.length,3);
+    assert.ok(sent.title.length>80);
+    assert.deepEqual(await page.evaluate(()=>(window.__FIRESTORE_ADDS||[])),[]);
   });
   await scenario('stale new-fault dialog cannot follow selection to retired vehicle','vehicle.html?v=live',async page=>{
     await tap(page.locator('#stageWrap img.base'));

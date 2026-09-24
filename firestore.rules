@@ -1283,9 +1283,9 @@ service cloud.firestore {
 
       // ---------- תקלות וחפיפת משמרת ----------
       //
-      // כל כבאי מדווח תקלה, וזו הנקודה: מי שרואה את הנזילה הוא
-      // מי שעומד ליד הרכב, לא מי שיושב במשרד. לכן create פתוח
-      // לכל חבר תחנה, ושם המדווח ננעל למי שכתב.
+      // כל כבאי רשאי לדווח דרך ה-callable המאמת חברות תחנה ורכב פעיל.
+      // יצירה ישירה מהדפדפן חסומה כדי שלא ניתן יהיה לזייף רכב, זמן
+      // דיווח או ספירת תמונות. שם המדווח נקבע בשרת וננעל.
       //
       // סגירה: הסגל סוגר הכל; מי שפתח סוגר את שלו. כבאי שדיווח
       // בטעות לא צריך לחפש מפקד כדי לבטל.
@@ -1296,23 +1296,22 @@ service cloud.firestore {
       match /faults/{faultId} {
         allow read: if member(sid);
 
-        allow create: if member(sid)
-                      && request.resource.data.get('by_uid', '') == request.auth.uid
-                      && request.resource.data.get('title', '') is string
-                      && request.resource.data.get('title', '').size() > 0
-                      && request.resource.data.get('title', '').size() <= 80
-                      && request.resource.data.get('desc', '').size() <= 600
-                      && request.resource.data.get('created_key', '') is string
-                      && request.resource.data.get('created_key', '')
-                           .matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$')
-                      && request.resource.data.get('severity', '') in
-                           ['unset', 'minor', 'limiting', 'major', 'blocking', 'critical']
-                      && request.resource.data.get('status', '') == 'open';
+        // New reports are server-created. The callable validates the live
+        // member and active vehicle and atomically stores 0–3 photos; Rules
+        // cannot reliably search the board's array of vehicle maps by ID.
+        allow create: if false;
 
         allow update: if (staff(sid) || resource.data.get('by_uid', '') == request.auth.uid)
                       && request.resource.data.get('by_uid', '') == resource.data.get('by_uid', '')
                       && request.resource.data.get('by_name', '') == resource.data.get('by_name', '')
                       && request.resource.data.get('created_key', '') == resource.data.get('created_key', '')
+                      && request.resource.data.get('created_at', null) == resource.data.get('created_at', null)
+                      && request.resource.data.get('date', '') == resource.data.get('date', '')
+                      && request.resource.data.get('photos', 0) == resource.data.get('photos', 0)
+                      && request.resource.data.get('report_digest', '') == resource.data.get('report_digest', '')
+                      && request.resource.data.get('kind', '') == resource.data.get('kind', '')
+                      && request.resource.data.get('vehicle_id', '') == resource.data.get('vehicle_id', '')
+                      && request.resource.data.get('vehicle_name', '') == resource.data.get('vehicle_name', '')
                       && request.resource.data.get('title', '') == resource.data.get('title', '');
 
         // מחיקה. רק פגיעות רכב, ורק בידי הסגל.
@@ -1330,8 +1329,7 @@ service cloud.firestore {
         // יישאר קטן ושהתמונה תיטען רק כשמסתכלים בה.
         match /photos/{photoId} {
           allow read: if member(sid);
-          allow create: if member(sid)
-                        && request.resource.data.get('by_uid', '') == request.auth.uid;
+          allow create: if false;
           allow update: if false;
           allow delete: if staff(sid);
         }

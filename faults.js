@@ -27,7 +27,7 @@
 export const FAULT_KINDS = [
   { id: 'vehicle',  he: 'תקלת רכב',        needsVehicle: true,  group: 'fault' },
   { id: 'damage',   he: 'פגיעה ברכב',      needsVehicle: true,  group: 'damage' },
-  { id: 'gear',     he: 'תקלת ציוד',       needsVehicle: false, group: 'fault' },
+  { id: 'gear',     he: 'תקלת ציוד',       needsVehicle: true,  group: 'fault' },
   { id: 'building', he: 'תקלת בינוי ותחזוקה', needsVehicle: false, group: 'fault',
     titlePlaceholder: 'לדוגמה: נזילה, תקלה בחשמל, דלת או מיזוג',
     descPlaceholder: 'איפה התקלה, מה בדיוק קרה, מתי התגלתה ומה כבר נעשה' },
@@ -253,7 +253,7 @@ export function sortFaults(list) {
     if (ao !== bo) return ao - bo;
     const ar = sevRank(a.severity), br = sevRank(b.severity);
     if (ar !== br) return ar - br;
-    return String(b.created_key || '').localeCompare(String(a.created_key || ''));
+    return compareReportTime(a, b);
   });
 }
 
@@ -269,15 +269,52 @@ export function dmy(key) {
   return p.length === 3 ? Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] : String(key || '');
 }
 
-// "מי דיווח, מתי" — השורה שאלדד ביקש שתופיע לצד כל תקלה.
-// התאריך והשעה נלקחים מ-created_key, שהוא ISO מלא.
+// Firestore's server timestamp wins over the old client clock. Legacy records
+// keep their ISO key as fallback; newly created reports always have both.
+export function reportTime(f) {
+  const v = f || {};
+  const stamp = v.created_at;
+  if (stamp && typeof stamp.toDate === 'function') {
+    const date = stamp.toDate();
+    if (date instanceof Date && Number.isFinite(date.getTime())) return date;
+  }
+  if (stamp && Number.isFinite(stamp.seconds)) {
+    const date = new Date(stamp.seconds * 1000 + Math.floor((stamp.nanoseconds || 0) / 1000000));
+    if (Number.isFinite(date.getTime())) return date;
+  }
+  const date = new Date(String(v.created_key || ''));
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+export function reportDateKey(f) {
+  const date = reportTime(f);
+  if (!date) return String((f || {}).date || '');
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return value.year + '-' + value.month + '-' + value.day;
+}
+
+export function compareReportTime(a, b) {
+  const aa = reportTime(a), bb = reportTime(b);
+  if (aa && bb) return bb.getTime() - aa.getTime();
+  return String((b || {}).created_key || '').localeCompare(String((a || {}).created_key || ''));
+}
+
+// "מי דיווח, מתי" — local Israel time, including daylight-saving transitions.
 export function reportedLine(f) {
   const v = f || {};
-  const iso = String(v.created_key || '');
-  const day = iso.slice(0, 10), tm = iso.slice(11, 16);
   const who = v.by_name || 'לא ידוע';
-  if (!day) return who;
-  return who + ' · ' + dmy(day) + (tm ? ' ' + tm : '');
+  const date = reportTime(v);
+  if (!date) return who;
+  const parts = new Intl.DateTimeFormat('he-IL', {
+    timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', hour12:false
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return who + ' · ' + Number(value.day) + '.' + Number(value.month) + '.' + value.year +
+    ' ' + value.hour + ':' + value.minute;
 }
 
 // ------------------------------------------------------------------
@@ -291,11 +328,11 @@ export function reportedLine(f) {
 export function handoverFor(faults, crew, dateKey) {
   const all = faults || [];
   const mine = all.filter(function (f) {
-    return f && f.crew === crew && String(f.date || '') === String(dateKey);
+    return f && f.crew === crew && reportDateKey(f) === String(dateKey);
   });
   const carried = all.filter(function (f) {
     if (!f || !isOpen(f)) return false;
-    if (f.crew === crew && String(f.date || '') === String(dateKey)) return false;
+    if (f.crew === crew && reportDateKey(f) === String(dateKey)) return false;
     return true;
   });
   return { today: sortFaults(mine), carried: sortFaults(carried) };
@@ -381,8 +418,7 @@ export function subjectName(f) {
 
 export function latestOf(list) {
   return (list || []).slice().sort(function (a, b) {
-    return String((b || {}).created_key || '')
-      .localeCompare(String((a || {}).created_key || ''));
+    return compareReportTime(a, b);
   })[0] || null;
 }
 
@@ -440,8 +476,7 @@ export function bySubject(list, all) {
   rows.sort(function (a, b) {
     const r = sevRank(a.sev) - sevRank(b.sev);
     if (r) return r;
-    return String((b.latest || {}).created_key || '')
-      .localeCompare(String((a.latest || {}).created_key || ''));
+    return compareReportTime(a.latest, b.latest);
   });
   return rows;
 }
@@ -480,6 +515,27 @@ export function acceptedLine(h) {
 
 export const MAX_EDGE  = 1280;
 export const MAX_BYTES = 600 * 1024;   // מתחת למגבלת המסמך של Firestore
+
+// Camera pickers on mobile replace their FileList on every capture. Keep an
+// explicit appendable queue instead of treating the latest input as all photos.
+export function createPhotoQueue(limit = 3) {
+  let files = [];
+  return Object.freeze({
+    add(selected) {
+      const incoming = Array.from(selected || []);
+      if (files.length + incoming.length > limit) return false;
+      files = files.concat(incoming);
+      return true;
+    },
+    remove(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= files.length) return false;
+      files.splice(index, 1);
+      return true;
+    },
+    list() { return files.slice(); },
+    clear() { files = []; }
+  });
+}
 
 export function shrinkImage(file, maxEdge, maxBytes) {
   const edge = maxEdge || MAX_EDGE;

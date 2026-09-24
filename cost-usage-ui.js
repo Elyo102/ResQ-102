@@ -23,6 +23,7 @@ function dateTimeText(iso) {
   if (!Number.isFinite(ms)) return '—';
   try {
     return new Intl.DateTimeFormat('he-IL', {
+      timeZone:'Asia/Jerusalem',
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
       hour12: false
@@ -104,7 +105,7 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
     head.appendChild(badges);
     const value = el('strong', 'cu-value', available
       ? pane.value + ' ' + pane.currency : NO_SOURCE);
-    const asOf = available && pane.as_of ? ' · עדכון ייצוא: ' + new Date(pane.as_of).toLocaleString('he-IL') : '';
+    const asOf = available && pane.as_of ? ' · עדכון ייצוא: ' + dateTimeText(pane.as_of) : '';
     const meta = el('div', 'cu-meta', ((pane && pane.note_he) || '') + asOf);
     card.append(head, value, meta);
     elements.actual.appendChild(card);
@@ -217,6 +218,10 @@ export function createCostUsageUi({ elements, call, currentIdentity, onIdentityL
     elements.stationCalls.replaceChildren();
     const intro = el('div', 'cu-note warn', pane && pane.note_he || 'מדידת תחנות אינה זמינה.');
     elements.stationCalls.appendChild(intro);
+    if (pane && Array.isArray(pane.measured_callables) && pane.measured_callables.length) {
+      elements.stationCalls.appendChild(el('div', 'cu-meta',
+        'הפעולות הנספרות בלבד: ' + pane.measured_callables.join(', ') + '. קריאות אחרות אינן כלולות.'));
+    }
     if (!pane || pane.status === 'not_started') {
       elements.stationCalls.appendChild(el('div', 'cu-note', 'צבירה לפי תחנה טרם הופעלה. אין היסטוריה מומצאת.'));
       return;
