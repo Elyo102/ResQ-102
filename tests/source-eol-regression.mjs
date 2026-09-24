@@ -104,6 +104,8 @@ const SOURCES = [
   'saas-admin.html',
   'saas-admin-ui.js',
   'metrics.html',
+  'cost-usage.html',
+  'cost-usage-ui.js',
   'metrics-ui.js',
   'metrics-client.js',
   'apps/mobile/src/navigation-policy.js',

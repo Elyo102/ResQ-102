@@ -44,13 +44,22 @@ App Store Privacy Nutrition Labels, `PrivacyInfo.xcprivacy`). הוא אינו מ
 | 12 | **טלמטריית תקלות** (אוצר מילים סגור, ללא PII) | `kind` ∈ 4 ערכים, `screen` ∈ רשימה סגורה, `version` ∈ רשימה סגורה, `code` ∈ רשימה סגורה, שם callable ∈ רשימה סגורה. **לא נשלחים:** טקסט שגיאה, stack, URL, גוף בקשה (`incident-client.js`) | `stations/{sid}/incidents/{fingerprint}` · `stations/{sid}/incident_days/{day}` | `allow read, write: if false` — שרת בלבד | `incidents`: `manual_after_resolution` (רשומה בקוד: מחיקה ידנית אחרי טיפול) · `incident_days`: `ttl_3_days` (רשומה בקוד) | `operational` |
 | 13 | **מדדים תפעוליים** (חבילה שטרם חוברה) | מונים יומיים לפי `event_code`/`release`; תחנה כ-`station_hash` | `metrics_daily/{day}__{event_code}__{release}__{station_hash}` (מ-`functions/metrics-sink.js`) | לוח למנהל-על בלבד (`metrics.html`); **לא מחובר לייצור** | `ttl_90_days` (מ-`functions/metrics-backup-policies.js`, מוצע) | `operational` — **הגיבוב פסאודונימי, הפיך במנייה** כשאין `RESQ_METRICS_HASH_KEY` (sha256 של מזהה תחנה ידוע); הלוח מסמן זאת במפורש |
 | 14 | **פידבק פרטי** | טקסט חופשי מהמשתמש + זהות | `stations/{sid}/feedback/{feedbackId}` | לא נבדק כאן | `ttl_30_days_or_manual` (רשומה בקוד) | `restricted_identity` |
+| 15 | **לוח עלות ושימוש — מועמד מקומי, טרם נפרס** | תחילת מדידה; תאריך, תחנה, שם פעולה ומונה; מזהה משתמש HMAC (ללא UID גולמי במסמך המונה); מזהה אירוע HMAC למניעת ספירה כפולה. בלוח עצמו מוצגים שם והתחברות אחרונה מ-Auth למנהל-על בלבד | `cost_usage_config/{id}` · `cost_usage_daily/{id}` · `cost_usage_lifetime/{id}` · `cost_usage_batch_ledger/{id}` | כל ארבעת האוספים חסומים לקריאה/כתיבה מהלקוח ב-`firestore.rules`; שירות callable דורש מנהל-על חי ו-App Check. מזין האירועים **אינו מחובר**, ולכן אין לייחס לנתונים כיסוי מלא | `daily` ו-`batch_ledger`: שדה `expires_at` עם TTL מוצהר ל-90 יום (אינדקס/TTL עדיין טעונים פריסה ואימות); `config` ו-`lifetime`: מדיניות מחיקה/תיקון ותקופת שמירה **לא הוכרעו** | `restricted_identity` (שיוך אישי ותחנה), גם כאשר המזהה פסאודונימי |
 
 הערות לטבלה:
 
-- לכל הנתיבים בטבלה יש רשומה ב-`DATA_POLICIES` של `backup-policy.js`, אך ברוב
+- לכל הנתיבים עד #14 יש רשומה ב-`DATA_POLICIES` של `backup-policy.js`; #15
+  נוסף במועמד המקומי ומסווג שם בנפרד. ברוב
   המקרים ערך `retention` הוא "נדרשת הכרעה". אין במסמך זה שום זמן שמירה
-  שהומצא. **מספר ימי שמירה שאפשר להצהיר עליו בחנות קיים רק ל-#12, #13, #14**
-  (וגם #13 הוא מוצע, לא מחובר).
+  שהומצא. **אין להציג את 90 הימים של #15 כמדיניות ייצור שהופעלה**, כל עוד
+  TTL, מחיקה והפעלת המזין לא אומתו בפרויקט הייצור.
+- קורא Cloud Billing Export במועמד המקומי כבוי כברירת מחדל. אם יופעל,
+  הוא קורא טבלת BigQuery מוגדרת מראש להצגת עלות שימוש מדווחת לפי שירות/יום;
+  אינו שומר שורות Billing ב-Firestore ואינו מחשב עלות מדויקת לפי משתמש.
+  זמן ייצוא Billing עשוי להתעכב והסכום אינו חשבונית סופית. מקור, הרשאות IAM,
+  תקרת שאילתה והפעלה בייצור דורשים החלטה נפרדת.
+- חוזה אירועי השלמת-callable החדש הוא רכיב טהור בלבד: אין emitter או מזין
+  מחובר, אין היסטוריה שנבנתה לאחור, ואין כרגע מדידה מלאה של קריאות לפי משתמש.
 - `hr(sid)`, `staff(sid)`, `member(sid)`, `isSuper()`, `stationCommander(sid)`
   הן פונקציות ב-`firestore.rules` (שורות 81–175). "סגל" = `staff`, "חבר תחנה"
   = `member`. הפירוט המלא של מי נכנס לכל קבוצה — בקובץ הכללים, לא כאן.

@@ -87,14 +87,14 @@ test('hosting-only release changes the PWA identity without touching any Functio
   const hotfix = {
     version: hotfixVersion, date: '1.1.2099', asset_query: releaseKey(hotfixVersion),
     sw_cache_key: 'resq-v' + releaseKey(hotfixVersion) + '-release1',
-    scope: 'hosting', server_version: '42H.33', telemetry_version: '42H.31'
+    scope: 'hosting', server_version: MANIFEST.version, telemetry_version: MANIFEST.version
   };
   const { files: stamped } = stampFiles(files, hotfix);
   for (const name of ['functions/index.js', 'functions/maintenance-service.js', 'functions/ops-telemetry-contract.js']) {
     assert.equal(stamped.get(name), files.get(name), name + ' remains byte-identical');
   }
   assert.deepEqual(audit(stamped, hotfix).errors, []);
-  assert.match(stamped.get('incident-client.js'), /HOSTING_TELEMETRY_ALIAS = Object\.freeze\(\{ visible: '99Z\.99\.1', server: '42H\.31' \}\)/);
+  assert.ok(stamped.get('incident-client.js').includes("HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '99Z.99.1', server: '" + MANIFEST.version + "' });"));
 });
 
 test('bumping the release does not change how many static references exist, only their value', () => {

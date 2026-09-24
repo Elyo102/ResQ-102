@@ -86,7 +86,7 @@ const member = [
 ];
 const staff = member.concat(['access.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
-const all = audit.concat(['admin.html', 'hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html', 'saas-admin.html', 'metrics.html']);
+const all = audit.concat(['admin.html', 'hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html', 'saas-admin.html', 'metrics.html', 'cost-usage.html']);
 const roles = [
   ['firefighter', { role:'firefighter' }, member, 2],
   ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],

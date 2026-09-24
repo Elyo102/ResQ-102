@@ -77,6 +77,8 @@ const saasServiceModule = require('./saas-service');
 const saasBillingModule = require('./saas-billing-provider');
 const metricsSinkModule = require('./metrics-sink');
 const metricsServiceModule = require('./metrics-service');
+const costUsageServiceModule = require('./cost-usage-service');
+const costBillingReaderModule = require('./cost-billing-reader');
 const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
@@ -494,7 +496,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.33',
+  monthAuthorityReleaseId: '42H.34',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -693,6 +695,134 @@ const metricsService = metricsServiceModule.createMetricsService({
 });
 exports.recordMetrics = onCall({ enforceAppCheck: true }, req => metricsService.recordMetrics(req));
 exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsService.getMetricsDashboard(req));
+
+// ---------- עלות ושימוש (מנהל-על בלבד) ----------
+// Billing remains disabled unless an owner configures one exact export table,
+// a read-only service identity, location and an explicit enable flag.
+// No export/IAM/secret is activated by deploying this code alone.
+const { defineSecret: defineCostUsageSecret } = require('firebase-functions/params');
+const RESQ_COST_USAGE_HASH_KEY = defineCostUsageSecret('RESQ_COST_USAGE_HASH_KEY');
+let billingApi = null;
+
+function createLiveBillingReader() {
+  const rawLimit = process.env.RESQ_BILLING_MAX_BYTES_BILLED;
+  const maxBytesBilled = rawLimit === undefined ? undefined
+    : (/^[1-9][0-9]*$/.test(rawLimit) ? Number(rawLimit) : NaN);
+  return costBillingReaderModule.createCostBillingReader({
+    enabled: process.env.RESQ_BILLING_READER_ENABLED === 'true',
+    table: process.env.RESQ_BILLING_EXPORT_TABLE,
+    jobProject: process.env.RESQ_BILLING_JOB_PROJECT,
+    projectId: 'station-102',
+    location: process.env.RESQ_BILLING_LOCATION,
+    maxBytesBilled,
+    now: Date.now,
+    query: async ({ sql, projectId, location, maxBytesBilled: limit, parameters, dryRun }) => {
+      if (!billingApi) {
+        const { google } = require('googleapis');
+        const auth = new google.auth.GoogleAuth({
+          scopes: ['https://www.googleapis.com/auth/bigquery']
+        });
+        billingApi = google.bigquery({ version: 'v2', auth });
+      }
+      const queryParameters = Object.entries(parameters).map(([name, value]) => ({
+        name,
+        parameterType: { type: name === 'project_id' ? 'STRING' : 'TIMESTAMP' },
+        parameterValue: { value }
+      }));
+      const response = await billingApi.jobs.query({
+        projectId,
+        requestBody: {
+          query: sql, useLegacySql: false, parameterMode: 'NAMED',
+          queryParameters, location, dryRun, maxResults: 1000,
+          maximumBytesBilled: String(limit), timeoutMs: 20000,
+          jobTimeoutMs: '20000', labels: { app: 'resq', purpose: 'cost_usage_board' }
+        }
+      });
+      const data = response && response.data ? response.data : {};
+      if (dryRun) return { totalBytesProcessed: data.totalBytesProcessed };
+      return {
+        complete: data.jobComplete === true,
+        pageToken: data.pageToken || null,
+        rows: (data.rows || []).map((row) => {
+          const fields = row && Array.isArray(row.f) ? row.f : [];
+          const exportedMs = Number(fields[4] && fields[4].v);
+          return {
+            day: fields[0] && fields[0].v,
+            service: fields[1] && fields[1].v,
+            currency: fields[2] && fields[2].v,
+            net_cost: fields[3] && fields[3].v,
+            last_export: Number.isFinite(exportedMs)
+              ? new Date(exportedMs).toISOString() : null
+          };
+        })
+      };
+    }
+  });
+}
+
+function createLiveCostUsageService() {
+  let hashKey = '';
+  try {
+    hashKey = RESQ_COST_USAGE_HASH_KEY.value() || '';
+  } catch (ignore) {
+    hashKey = '';
+  }
+  return costUsageServiceModule.createCostUsageService({
+    db,
+    metricsSink,
+    billingReader: createLiveBillingReader(),
+    fail: (status, message, reason) => { throw new HttpsError(status, message, { reason }); },
+    requireAuth,
+    getAuthUser: uid => admin.auth().getUser(uid),
+    listAuthUsers: async ({ pageSize, pageToken } = {}) => {
+      // Staged paging for pane3 - never dump all Auth users on board open.
+      const size = Math.min(Math.max(Number(pageSize) || 25, 1), 100);
+      const page = await admin.auth().listUsers(size, pageToken || undefined);
+      return {
+        users: page.users || [],
+        nextPageToken: page.pageToken || null
+      };
+    },
+    loadUserProfiles: async (authUsers) => {
+      // Page-scoped only: one employee profile doc get per Auth page user.
+      // Never scan stations/*/users collections wholesale (would be O(station size)).
+      const list = Array.isArray(authUsers) ? authUsers : [];
+      const byUid = {};
+      await Promise.all(list.map(async (u) => {
+        if (!u || typeof u.uid !== 'string') return;
+        const claims = (u && u.customClaims) || {};
+        const sid = typeof claims.stationId === 'string' ? claims.stationId : '';
+        if (!sid) return;
+        try {
+          const snap = await db.doc('stations/' + sid + '/users/' + u.uid).get();
+          if (snap.exists) {
+            const v = snap.data() || {};
+            byUid[u.uid] = { full_name: v.full_name || '' };
+          }
+        } catch (e) { /* missing profile ok */ }
+      }));
+      return byUid;
+    },
+    now: Date.now,
+    serverTimestamp: () => FV.serverTimestamp(),
+    hashKey
+  });
+}
+
+exports.getCostUsageDashboard = onCall(
+  { enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  req => createLiveCostUsageService().getCostUsageDashboard(req)
+);
+exports.setCostUsageMeasurementStart = onCall(
+  { enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
+  req => createLiveCostUsageService().setCostUsageMeasurementStart(req)
+);
+// recordAttributedCallsBatch intentionally NOT exported as a public callable in this PR —
+// batch path only; no per-request callout metering.
+// pruneExpiredCostUsage / feeder: stubs exist on the service; NOT scheduled and NOT exported for prod deploy.
+// Without an explicit feeder (scheduled job / logging sink calling the internal batch), feeder_status stays not_wired.
+
+
 
 // The browser catalogue currently contains one regional station.  Future
 // stations can be activated without trusting a client value by creating a
@@ -6644,7 +6774,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.33', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.34', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

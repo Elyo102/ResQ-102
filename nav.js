@@ -37,7 +37,8 @@ const ITEMS = [
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' },
   { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' },
   { href: 'saas-admin.html', label: 'ארגונים ומנויים', who: 'super', dot: '#5c6bc0', group: 'admin' },
-  { href: 'metrics.html', label: 'מדדים תפעוליים', who: 'super', dot: '#7e57c2', group: 'admin' }
+  { href: 'metrics.html', label: 'מדדים תפעוליים', who: 'super', dot: '#7e57c2', group: 'admin' },
+  { href: 'cost-usage.html', label: 'עלות ושימוש', who: 'super', dot: '#00897b', group: 'admin' }
 ];
 
 // שלוש קבוצות תצוגה בלבד. ההרשאה נשארת בשדה who של כל פריט.
@@ -55,10 +56,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h331';
-import { attachModeChip } from './mode-bar.js?v=42h331';
-import { assertPresentationOnly } from './role-view.js?v=42h331';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h331';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h34';
+import { attachModeChip } from './mode-bar.js?v=42h34';
+import { assertPresentationOnly } from './role-view.js?v=42h34';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h34';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -648,7 +649,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h331')
+  import('./mode-controller.js?v=42h34')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -856,7 +857,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h331')
+  import('./mode-controller.js?v=42h34')
     .then(module => module.stopModeController())
     .catch(() => {});
 }

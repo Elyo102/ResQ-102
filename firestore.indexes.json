@@ -663,6 +663,18 @@
       "fieldPath": "expires_at",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "cost_usage_daily",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "cost_usage_batch_ledger",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

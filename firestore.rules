@@ -556,6 +556,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------- עלות ושימוש ----------
+    //
+    // מוני עלות/שיוך/משתמשים — Callable בלבד. הדפדפן אינו קורא ואינו כותב.
+    match /cost_usage_config/{id} {
+      allow read, write: if false;
+    }
+    match /cost_usage_daily/{id} {
+      allow read, write: if false;
+    }
+    match /cost_usage_lifetime/{id} {
+      allow read, write: if false;
+    }
+    match /cost_usage_batch_ledger/{id} {
+      allow read, write: if false;
+    }
+
 
     // ---------- חיפוש עובד ----------
     //

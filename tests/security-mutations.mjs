@@ -42,8 +42,8 @@ function mutate(file, before, after) {
 
 const COPY_DIRS = ['functions', 'tests', 'rules-test'];
 const COPY_ROOT_FILES = ['firestore.rules', 'firebase.json', '.gitignore', 'nav.js',
-  'saas-admin-ui.js', 'metrics-ui.js', 'metrics-client.js', 'incident-client.js',
-  'saas-admin.html', 'metrics.html', 'apps'];
+  'saas-admin-ui.js', 'metrics-ui.js', 'metrics-client.js', 'cost-usage-ui.js', 'incident-client.js',
+  'saas-admin.html', 'metrics.html', 'cost-usage.html', 'apps'];
 
 function copyInto(dir) {
   for (const d of COPY_DIRS) {
