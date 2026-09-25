@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ResQ — רכבים מבצעיים</title>
+  <link rel="stylesheet" href="./theme.css?v=42h39">
+  <link rel="manifest" href="./manifest.json">
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
+    main{width:min(100%,1440px);margin:auto;padding:18px 20px 96px}
+    h1{font-size:clamp(22px,2vw,30px);margin:16px 0 4px}
+    h2{font-size:19px;margin:0 0 12px}
+    h3{font-size:16px;margin:0 0 8px}
+    p{line-height:1.55}
+    .muted{color:var(--muted)}
+    .layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:16px;margin-top:18px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;min-width:0}
+    .vehicles,.sectors,.fault-list{display:grid;gap:9px}
+    button,.link{min-height:44px;font:inherit;border-radius:9px;cursor:pointer}
+    .vehicle-button,.sector-button{width:100%;text-align:right;background:var(--chip);color:var(--txt);border:1px solid var(--line);padding:9px 12px}
+    .vehicle-button[aria-pressed="true"],.sector-button[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 3px 0 var(--accent);font-weight:800}
+    .link{display:inline-flex;align-items:center;padding:8px 13px;background:var(--chip);color:var(--txt);text-decoration:none;border:1px solid var(--line)}
+    .sections{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:14px;margin-top:14px}
+    .photo{border:1px dashed var(--line);border-radius:12px;min-height:180px;display:grid;place-items:center;text-align:center;padding:20px;background:var(--panel)}
+    .equipment{margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:12px}
+    .faults{margin-top:16px}
+    .fault{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--panel)}
+    .fault small{display:block;color:var(--muted);margin-top:4px}
+    .banner{padding:14px;border-radius:11px;border:1px solid var(--line);background:var(--info-bg);margin:12px 0}
+    .error{background:var(--bad-bg,#fff0f0);color:var(--bad,#8b1d1d)}
+    [hidden]{display:none!important}
+    @media(max-width:760px){main{padding:12px 12px 96px}.layout,.sections{grid-template-columns:1fr}.sectors{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>רכבים מבצעיים</h1>
+  <p class="muted">בחרו רכב ותא כדי לראות את מצב התיעוד. התקלות מוצגות מתוך מסך התקלות הקיים.</p>
+  <div id="notice" class="banner" role="status" aria-live="polite">מאמת הרשאה וטוען רכבים…</div>
+  <div id="layout" class="layout" hidden>
+    <aside class="card">
+      <h2>רכבי התחנה</h2>
+      <div id="vehicles" class="vehicles"></div>
+    </aside>
+    <section class="card" aria-labelledby="vehicleTitle">
+      <h2 id="vehicleTitle">בחרו רכב</h2>
+      <div id="vehicleContent" hidden>
+        <p class="muted">התאים מסודרים לפי מבנה רכב הכיבוי. בחירת תא מציגה קודם את התמונה, ואחריה את רשימת הציוד.</p>
+        <div class="sections">
+          <div>
+            <h3>תאי הרכב</h3>
+            <div id="sectors" class="sectors"></div>
+          </div>
+          <div id="sectorDetail" hidden>
+            <h3 id="sectorTitle"></h3>
+            <div id="sectorPhoto" class="photo" role="status"></div>
+            <div class="equipment">
+              <h3>רשימת ציוד</h3>
+              <p id="equipmentStatus" class="muted"></p>
+            </div>
+          </div>
+        </div>
+        <div class="faults">
+          <h3>תקלות ברכב ובציוד שלו</h3>
+          <p id="faultStatus" class="muted" role="status"></p>
+          <div id="faultList" class="fault-list"></div>
+          <a id="faultLink" class="link" href="./vehicle.html">למפת הרכב והתקלות</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<script type="module">
+  import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h39';
+  import { renderNav, renderStuckNav } from './nav.js?v=42h39';
+  import { MEMBER_ROLES } from './roles.js?v=42h39';
+  import { initPWA } from './pwa.js?v=42h39';
+  import { COMPARTMENTS, operationalFleet } from './operational-vehicles-model.js?v=42h41';
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+  import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+  import { getFirestore, collection, doc, getDoc, getDocs, query, where, limit }
+    from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+  import { initAppCheck } from './appcheck.js?v=42h39';
+
+  const $ = id => document.getElementById(id);
+  const app = initializeApp(firebaseConfig);
+  await initAppCheck(app);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  let generation = 0, stationId = '', selectedVehicle = '', currentUid = '';
+  renderStuckNav('');
+  initPWA({ offer:false });
+
+  function notice(message, error = false) {
+    $('notice').textContent = message;
+    $('notice').classList.toggle('error', error);
+  }
+  function makeButton(label, className, selected, click) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = className;
+    button.textContent = label; button.setAttribute('aria-pressed', String(selected));
+    button.addEventListener('click', click);
+    return button;
+  }
+  function sameContext(context) {
+    return generation === context.gen && stationId === context.sid &&
+      currentUid === context.uid && auth.currentUser?.uid === context.uid;
+  }
+  function showCompartment(item, context) {
+    if (!sameContext(context) || selectedVehicle !== context.vehicleId) return;
+    $('sectorDetail').hidden = false;
+    $('sectorTitle').textContent = item.label;
+    $('sectorPhoto').textContent = 'טרם הוגדרה תמונה לתא הזה — אין להסיק שהתא ריק.';
+    $('equipmentStatus').textContent = 'רשימת הציוד לתא הזה טרם הוגדרה במערכת.';
+    [...$('sectors').children].forEach(button =>
+      button.setAttribute('aria-pressed', String(button.dataset.sector === item.id)));
+  }
+  async function showVehicle(vehicle, context) {
+    if (!sameContext(context)) return;
+    selectedVehicle = vehicle.id;
+    $('vehicleTitle').textContent = vehicle.name;
+    $('vehicleContent').hidden = false;
+    $('sectorDetail').hidden = true;
+    $('sectors').replaceChildren();
+    COMPARTMENTS.forEach(item => {
+      const button = makeButton(item.label, 'sector-button', false,
+        () => showCompartment(item, { ...context, vehicleId:vehicle.id }));
+      button.dataset.sector = item.id;
+      $('sectors').append(button);
+    });
+    [...$('vehicles').children].forEach(button =>
+      button.setAttribute('aria-pressed', String(button.dataset.vehicle === vehicle.id)));
+    $('faultList').replaceChildren();
+    $('faultStatus').textContent = 'טוען תקלות של הרכב…';
+    $('faultLink').href = './vehicle.html?v=' + encodeURIComponent(vehicle.id);
+    const expected = { ...context, vehicleId:vehicle.id };
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, 'stations', context.sid, 'faults'),
+        where('vehicle_id', '==', vehicle.id), limit(50)));
+      if (!sameContext(expected) || selectedVehicle !== expected.vehicleId) return;
+      const faults = snapshot.docs.map(item => ({ id:item.id, ...item.data() }));
+      $('faultStatus').textContent = faults.length === 0
+        ? 'לא נמצאו תקלות מקושרות לרכב הזה.'
+        : faults.length === 50
+          ? 'מוצגות עד 50 תקלות ללא סדר מובטח; ייתכן שלא כולן מוצגות. להיסטוריה המלאה עברו למפת הרכב.'
+          : faults.length + ' תקלות מקושרות לרכב.';
+      faults.forEach(fault => {
+        const card = document.createElement('div'); card.className = 'fault';
+        const heading = document.createElement('strong');
+        heading.textContent = fault.title || fault.name || 'דיווח ללא כותרת';
+        const detail = document.createElement('small');
+        detail.textContent = fault.kind === 'gear' ? 'תקלת ציוד' : 'תקלה או פגיעה ברכב';
+        card.append(heading, detail); $('faultList').append(card);
+      });
+    } catch (error) {
+      if (!sameContext(expected) || selectedVehicle !== expected.vehicleId) return;
+      $('faultStatus').textContent = 'לא ניתן לטעון את התקלות. נסו לבחור שוב את הרכב.';
+    }
+  }
+  onIdTokenChanged(auth, async user => {
+    const gen = ++generation;
+    stationId = ''; selectedVehicle = ''; currentUid = user?.uid || '';
+    $('layout').hidden = true; $('vehicleContent').hidden = true;
+    if (!user) {
+      location.replace('./login.html?next=operational-vehicles.html');
+      return;
+    }
+    try {
+      const claims = (await user.getIdTokenResult()).claims || {};
+      if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
+      const sid = claims.stationId || (claims.super === true ? STATION_ID : '');
+      if (!sid || !(claims.super === true || MEMBER_ROLES.includes(claims.role))) {
+        notice('אין הרשאה לצפות ברכבי התחנה.', true); return;
+      }
+      stationId = sid;
+      renderNav(claims, 'operational-vehicles.html', user.email || '');
+      const board = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
+      if (!sameContext({ gen, sid, uid:user.uid })) return;
+      const fleet = operationalFleet(board.exists() ? board.data().vehicles : []);
+      $('vehicles').replaceChildren();
+      $('layout').hidden = false;
+      notice(fleet.length ? 'בחרו רכב מהרשימה.' : 'עדיין לא הוגדרו רכבים מבצעיים בתחנה.');
+      fleet.forEach(vehicle => {
+        const button = makeButton(vehicle.name, 'vehicle-button', false,
+          () => { void showVehicle(vehicle, { sid, gen, uid:user.uid }); });
+        button.dataset.vehicle = vehicle.id;
+        $('vehicles').append(button);
+      });
+    } catch (error) {
+      if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
+      $('layout').hidden = true;
+      notice('לא ניתן לטעון את רכבי התחנה. רעננו ונסו שוב.', true);
+    }
+  });
+</script>
+</body>
+</html>

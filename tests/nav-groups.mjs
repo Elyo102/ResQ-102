@@ -80,7 +80,7 @@ function same(actual, expected, label) {
 }
 
 const member = [
-  'login.html', 'schedule-management.html', 'board.html', 'attendance.html', 'guards.html',
+  'login.html', 'schedule-management.html', 'attendance.html', 'guards.html',
   'faults.html', 'forms.html', 'sign.html', 'swaps.html', 'feedback.html', 'quals.html',
   'alerts.html', 'people.html', 'hr-requests.html', 'hr-documents.html'
 ];

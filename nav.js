@@ -14,8 +14,13 @@
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
   { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  // The read-only vehicle view is under construction; do not advertise it
+  // before compartment data and write authorization are implemented.
+  { href: 'operational-vehicles.html', label: 'רכבים מבצעיים', who: 'member', dot: '#e8590c', group: 'mine', hiddenFromMenu: true },
   { href: 'callout.html',  label: 'קריאת פתע',   who: 'shift_command', dot: '#f0523f', group: 'mine' },
-  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
+  // The board still backs scheduling and operational vehicles. Keep this
+  // route for existing links and native-back history, but omit its menu item.
+  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station', hiddenFromMenu: true },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
   { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
@@ -572,7 +577,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
 
   GROUPS.forEach(function (g) {
     const items = ITEMS.filter(function (it) {
-      return it.group === g.id && allowed(it.who, claims, presentation);
+      return !it.hiddenFromMenu && it.group === g.id && allowed(it.who, claims, presentation);
     });
     if (!items.length) return;
 
@@ -679,7 +684,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   const directDockPages = new Set(['schedule-management.html', 'attendance.html']);
   function dockMoreItems(){
     return ITEMS.filter(function (item) {
-      if (item.href === 'login.html' || directDockPages.has(item.href)) return false;
+      if (item.hiddenFromMenu || item.href === 'login.html' || directDockPages.has(item.href)) return false;
       return (item.group === 'mine' || item.group === 'admin')
         && allowed(item.who, claims, presentation);
     });
@@ -688,7 +693,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   function openDockPanel(groupId, trigger){
     const group = GROUPS.find(function (item) { return item.id === groupId; });
     const items = groupId === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
-      return item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims, presentation);
+      return !item.hiddenFromMenu && item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims, presentation);
     });
     dockSheet.replaceChildren();
     const title = document.createElement('h2');
@@ -751,7 +756,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
     { id:'more', label:'עוד' }
   ].forEach(function (entry) {
     const permitted = entry.id === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
-      return item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims, presentation);
+      return !item.hiddenFromMenu && item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims, presentation);
     });
     if (!permitted.length && entry.id !== 'more') return;
     const button = document.createElement('button');

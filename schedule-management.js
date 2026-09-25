@@ -1831,7 +1831,6 @@ function cellContent(cell, block, minVisualSlots, context) {
         openQuickEditFromBoard(person, context.date, context.subStation);
       });
     }
-    if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
     /* ⭐ 42H.20 §1 · עובד ללא חשבון נשאר גלוי ומשובץ בלוח, מסומן
      * בבירור, ואינו חוסם דבר — הוא לא מקבל פוש (נאכף בשרת, ראה
      * schedule-publication-recipients.js), וזה כל מה שהתג הזה אומר. */

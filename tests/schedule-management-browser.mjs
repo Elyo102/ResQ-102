@@ -1039,6 +1039,10 @@ try {
   await test('personal mobile view is the same full board, automatically limited to actual work days', async () => {
     await phonePage.locator('[data-tab="mine"]').dispatchEvent('click');
     await phonePage.locator('#mineBoard .hcell').first().waitFor();
+    assert.equal(await phonePage.locator('#mineBoard .nm.me[data-is-me="true"]').count(), 1,
+      'the signed-in worker remains highlighted in the schedule');
+    assert.equal(await phonePage.locator('#mineBoard .mine-marker').count(), 0,
+      'the visual highlight must not add a separate אני badge');
     assert.equal(await phonePage.locator('#mineBoard .hcell').count(), 1,
       'only the date containing a non-cancelled is_me assignment is shown');
     assert.deepEqual(await phonePage.locator('#mineBoard .stub[data-station] b').allTextContents(),
