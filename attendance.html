@@ -1783,9 +1783,12 @@ async function editDay(key, rec){
   if (locked()) return;
   const editTarget = captureMonthWrite();
   if (key.slice(0, 7) !== editTarget.month) return;
-  // Form defaults and selectable site hours must be current before editing.
-  if (!(await ensureFreshAttendanceForWrite())) return;
-  if (!sameMonthWrite(editTarget)) return;
+  // An existing record can open immediately; save validates its selected site
+  // against the server. A new record needs fresh defaults before opening.
+  if (!rec) {
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(editTarget)) return;
+  }
   const bt = baseTimes();
 
   // אבטחה ביום הזה. אם הכבאי משובץ לאבטחה ביום שאינו יום
