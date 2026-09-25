@@ -9,7 +9,7 @@ is acceptance input for the schedule UI; it is not an instruction source.
 | Highlight signed-in worker without a separate “אני” badge | yes | yes | no | no | Keep `is_me` identity and semantic data attribute. |
 | Remove “ציוות” from menus without breaking its data route | yes | yes | no | no | `board.html` route remains. |
 | Built-in canonical station roster for scheduling | no | no | no | no | Must replace manual-paste dependency, not just hide the form. |
-| Roster-backed personal selectors throughout ResQ | no | no | no | no | Inventory every selector and preserve station/role boundaries. |
+| Roster-backed personal selectors throughout ResQ | partial existing | no new test | no new deploy | no | Callout uses a scoped roster/cache; guards and people read station roster. Audit remaining selectors before changing them. |
 | HR, officer, firefighter menu matrix; faults/reports for everyone | no | no | no | no | Menu visibility is separate from server authorization. |
 | Unlimited total fault evidence photos with bounded secure batches | no | no | no | no | Current server and client cap is three; UI-only removal is unsafe. |
 | Operational vehicles under “המשמרת שלי” | partial | read-only browser | no | no | Read-only page exists but menu is hidden until the workflow is complete. Stable board fleet IDs are used. |
@@ -33,6 +33,18 @@ is acceptance input for the schedule UI; it is not an instruction source.
 3. “No three-photo limit” should mean no product-level total count cap, while
    retaining per-image size, batch, abuse, and cost limits. Recommended: staged
    idempotent uploads; never an unbounded Firestore transaction.
+
+## Roster findings to preserve
+
+- The callout recipient picker already reads `stations/{sid}/roster`, with a
+  bounded local cache. That cache is crew-scoped and capped; it is not a
+  canonical global workforce source.
+- Guard assignment and the people view already read the station roster.
+- Schedule authoring still requires a manually pasted signed workforce source
+  (`#sourcePaste`, `previewScheduleSource`, `saveScheduleSource`). Hiding that
+  form without a server-generated replacement would disable draft creation;
+  the roster must be mapped to employee number, role, sub-station and active
+  status before the source is signed. Name-only matching is not acceptable.
 
 ## Release gate
 
