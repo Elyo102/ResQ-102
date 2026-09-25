@@ -124,6 +124,20 @@ export function segmentHours(start, end, dayOffset) {
   return Math.round((diff / 60) * 100) / 100;
 }
 
+// A roster-defined shift may span midnight, but equal clock times alone do
+// not establish a 24-hour shift. Accept an offset only when the trusted
+// duration and both configured clocks describe exactly the same interval.
+export function configuredDayOffset(start, end, hours) {
+  if (!validTime(start) || !validTime(end) || typeof hours !== 'number' ||
+      !Number.isFinite(hours)) return null;
+  const duration = hours * 60;
+  if (!Number.isInteger(duration) || duration <= 0 || duration > 48 * 60) return null;
+  const s = String(start).split(':').map(Number);
+  const e = String(end).split(':').map(Number);
+  const offset = (duration - ((e[0] * 60 + e[1]) - (s[0] * 60 + s[1]))) / (24 * 60);
+  return Number.isInteger(offset) && offset >= 0 && offset <= 2 ? offset : null;
+}
+
 // כמה ימים לדלג, לפי מה שנשמר. ברירת מחדל: הכלל הישן.
 export function guessDayOffset(start, end) {
   if (!validTime(start) || !validTime(end)) return 0;

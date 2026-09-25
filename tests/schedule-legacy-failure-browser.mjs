@@ -218,6 +218,68 @@ try {
     console.log('✓ attendance treats ' + variant + ' as unknown — no fill, no suggestion, no guard default');
   }
 
+  // A fresh manual report cannot silently convert equal clock times into a
+  // paid day. The worker must choose the next-day meaning explicitly.
+  {
+    const context = await contextWithPlan({});
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.waitForFunction(() => document.querySelector('#btnManual') && !document.querySelector('#btnManual').disabled);
+    await page.addStyleTag({ content:'#coWrap{display:none!important}' });
+    await page.locator('#btnManual').click();
+    await page.locator('#dFullDay').waitFor({ state:'visible' });
+    assert.equal(await page.locator('#dStart').inputValue(), '07:00');
+    assert.equal(await page.locator('#dEnd').inputValue(), '07:00');
+    assert.equal(await page.locator('#dFullDay').isChecked(), false);
+    const before = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceDay').length);
+    await page.locator('#dSave').click();
+    assert.equal(await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceDay').length), before,
+    'equal manual clocks without next-day consent do not save');
+    await page.locator('#dFullDay').check();
+    assert.match(await page.locator('#dHint').textContent(), /24/);
+    await page.locator('#dSave').click();
+    await page.waitForFunction(count => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceDay').length > count, before);
+    const saved = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceDay').at(-1).payload);
+    assert.equal(saved.patch.end_day, 1);
+    await context.close();
+    console.log('✓ a 24-hour manual report needs an explicit next-day choice');
+  }
+  {
+    const context = await contextWithPlan({});
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
+    await page.waitForFunction(() => document.querySelector('#rows tr.sug') &&
+      document.querySelector('#btnFill') && !document.querySelector('#btnFill').disabled);
+    await page.addStyleTag({ content:'#coWrap{display:none!important}' });
+    assert.ok(await page.locator('#rows tr.sug').count() > 0, 'fixture has roster-backed missing days');
+    assert.match(await page.locator('#rows tr.sug').first().textContent(), /24/,
+      'the suggested row uses the same explicit 24-hour interval');
+    await page.locator('#btnFill').click();
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some(call => call.name === 'mutateMyAttendanceMonth'));
+    const fill = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .find(call => call.name === 'mutateMyAttendanceMonth').payload);
+    assert.ok(fill.entries.length > 0);
+    assert.ok(fill.entries.every(entry => entry.patch.start === '07:00' &&
+      entry.patch.end === '07:00' && entry.patch.end_day === 1),
+    'all auto-created days have the trusted next-day offset');
+    await page.waitForFunction(() => document.querySelector('#btnSync') &&
+      !document.querySelector('#btnSync').disabled);
+    await page.locator('#btnSync').click();
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceMonth').length > 1);
+    const sync = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceMonth').at(-1).payload);
+    assert.ok(sync.entries.length > 0 && sync.entries.every(entry => entry.patch.end_day === 1),
+      'reconciliation uses the same explicit roster-backed interval');
+    await context.close();
+    console.log('✓ missing-day fill and reconciliation submit explicit roster-backed 24-hour intervals');
+  }
+
   // Defense in depth: every screen parses the workdays answer through the
   // shared allowlist instead of assigning the server response object directly.
   {
@@ -236,4 +298,4 @@ try {
   await new Promise(resolve => server.close(resolve));
 }
 
-console.log('\n9/9 effective-schedule and month-read failure checks passed.');
+console.log('\nEffective-schedule, month-read and 24-hour attendance browser checks passed.');

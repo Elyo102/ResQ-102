@@ -28,7 +28,8 @@ function is(name, got, want){
 }
 
 console.log('--- שעות ---');
-is('משמרת מלאה 07:00→07:00',  H.calcHours({day_type:'regular',start:'07:00',end:'07:00'}), 24);
+is('שעות זהות ללא יום סיום אינן 24', H.calcHours({day_type:'regular',start:'07:00',end:'07:00'}), null);
+is('משמרת מלאה 07:00→07:00 במפורש', H.calcHours({day_type:'regular',start:'07:00',end:'07:00',end_day:1}), 24);
 is('חצי משמרת 07:00→19:00',   H.calcHours({day_type:'regular',start:'07:00',end:'19:00'}), 12);
 is('חציית חצות 19:00→07:00',  H.calcHours({day_type:'regular',start:'19:00',end:'07:00'}), 12);
 is('יטבתה 07:00→08:00 = 25',  H.calcHours({day_type:'regular',start:'07:00',end:'08:00'}, 25), 25);
@@ -38,7 +39,12 @@ is('מחלה = 0',                H.calcHours({day_type:'sick'}), 0);
 is('מילואים = 8.5',           H.calcHours({day_type:'reserve'}), 8.5);
 is('מילואים מתעלם משעות',     H.calcHours({day_type:'reserve',start:'07:00',end:'19:00'}), 8.5);
 is('חופש מתעלם מתחנת קצה',    H.calcHours({day_type:'vacation'}, 25), 24);
-is('החלפה נספרת כרגיל',       H.calcHours({day_type:'swap',start:'07:00',end:'07:00'}), 24);
+is('החלפה מלאה במפורש',       H.calcHours({day_type:'swap',start:'07:00',end:'07:00',end_day:1}), 24);
+is('תצורת סבב תקינה 24',      H.configuredDayOffset('07:00','07:00',24), 1);
+is('תצורת מפקד 24.25',        H.configuredDayOffset('06:45','07:00',24.25), 1);
+is('תצורת משמרת 12',         H.configuredDayOffset('07:00','19:00',12), 0);
+is('תצורת סבב סותרת',        H.configuredDayOffset('07:00','07:00',24.25), null);
+is('תצורת סבב חסרה',         H.configuredDayOffset('07:00','07:00',undefined), null);
 is('בלי שעות = null',         H.calcHours({day_type:'regular'}), null);
 is('שעה לא חוקית = null',     H.calcHours({day_type:'regular',start:'99:99',end:'07:00'}), null);
 
@@ -80,7 +86,7 @@ is('נע״ת עם נימוק עובר',   H.reasonMissing({day_type:'extra',star
 
 console.log('--- סיכום חודשי ---');
 const SUM = H.monthSummary([
-  {date:'2026-08-01', day_type:'regular',  start:'07:00', end:'07:00'},
+  {date:'2026-08-01', day_type:'regular',  start:'07:00', end:'07:00', end_day:1},
   {date:'2026-08-04', day_type:'regular',  start:'07:00', end:'08:00', sub_station:'yotvata'},
   {date:'2026-08-07', day_type:'vacation'},
   {date:'2026-08-10', day_type:'reserve'},
@@ -99,7 +105,7 @@ is('היום בלי הנימוק',      SUM.unexplained[0].date, '2026-08-19');
 
 console.log('--- סך חודשי ---');
 is('סך עם יטבתה', H.monthTotal([
-  {day_type:'regular', start:'07:00', end:'07:00', sub_station:''},
+  {day_type:'regular', start:'07:00', end:'07:00', end_day:1, sub_station:''},
   {day_type:'regular', start:'07:00', end:'08:00', sub_station:'yotvata'},
   {day_type:'vacation'}, {day_type:'sick'}, {day_type:'reserve'}
 ], id => id === 'yotvata' ? 25 : 0), 81.5);
