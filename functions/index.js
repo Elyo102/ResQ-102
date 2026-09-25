@@ -89,6 +89,14 @@ const formSubmissionsModule = require('./form-submissions');
 const runtimeModeModule = require('./runtime-mode-service');
 const faultReportModule = require('./fault-report-service');
 const { createRegistrationTermsGate, createPreApprovalOnCall } = require('./registration-terms-gate');
+// Hardening package (pilot) — surgical port. israel-time intentionally OUT of candidate.
+const structuredLog = require('./structured-log');
+const appCheckGateModule = require('./app-check-gate');
+const stationJobsModule = require('./station-jobs');
+const freshAdminModule = require('./fresh-admin');
+const authHardeningModule = require('./auth-hardening');
+const swapSafety = require('./swap-safety');
+const onCallModule = require('./on-call');
 
 admin.initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -205,6 +213,26 @@ function isPolicySuppressedPush(value) {
     && (!Object.hasOwn(value, 'failed') || value.failed === false);
 }
 const FV = admin.firestore.FieldValue;
+// App Check runtime gate: MONITOR default. H2 stays OPEN (owner console). Auth callables keep enforceAppCheck:false.
+const appCheckGate = appCheckGateModule.createAppCheckGate({
+  db, HttpsError, FV,
+  log: (event, fields) => structuredLog.info(event, fields || {})
+});
+// GAP3: empty config/station_jobs still runs Eilat (eilat_102) until migration+rollback complete.
+const stationJobs = stationJobsModule.createStationJobs({
+  db, HttpsError,
+  fallbackStationId: 'eilat_102',
+  log: (event, fields) => structuredLog.info(event, fields || {}),
+  alert: (event, fields) => structuredLog.alert(event, fields || {})
+});
+const freshAdmin = freshAdminModule.createFreshAdmin({ auth: admin.auth(), HttpsError });
+const authHardening = authHardeningModule.createAuthHardening({
+  log: (event, fields) => structuredLog.warn('auth_guard', Object.assign({ event }, fields || {}))
+});
+const AUTH_CALLABLE_OPTIONS = Object.freeze({
+  enforceAppCheck: false, consumeAppCheckToken: true,
+  maxInstances: 5, concurrency: 40, timeoutSeconds: 30
+});
 const runtimeModeService = runtimeModeModule.createRuntimeModeService({
   db,
   serverTimestamp: () => FV.serverTimestamp(),
@@ -2233,7 +2261,7 @@ exports.cancelStationTransfer = onCall({
 //  הסיסמה עוברת דרך הפונקציה. היא לא נשמרת ולא נרשמת ביומן.
 // ---------------------------------------------------------------------
 
-exports.loginWithEmployeeNumber = onCall(async (req) => {
+exports.loginWithEmployeeNumber = onCall(AUTH_CALLABLE_OPTIONS, appCheckGate.gated('loginWithEmployeeNumber', async (req) => {
   const d = req.data || {};
   const emp      = String(d.emp || '').trim();
   const password = String(d.password || '');
@@ -2322,7 +2350,7 @@ exports.loginWithEmployeeNumber = onCall(async (req) => {
   // ---------------------------------------------------------------
 
   return { ok: true, email: email, uid: uid };
-});
+}));
 
 // המונה חייב להיות טרנזקציה. בגרסה הקודמת הוא נקרא פעם אחת
 // בתחילת הבקשה, וכל הבקשות המקבילות כתבו את אותו ערך — כך שמאה
@@ -2398,7 +2426,7 @@ async function noteFailedLogin(ref, lockIgnored, emp, email) {
 //  היה אפשר — סיסמה במייל נשארת בתיבה ובגיבויים לנצח.
 // ---------------------------------------------------------------------
 
-exports.requestPasswordReset = firebaseOnCall(async (req) => {
+exports.requestPasswordReset = firebaseOnCall(AUTH_CALLABLE_OPTIONS, appCheckGate.gated('requestPasswordReset', async (req) => {
   const id = String((req.data || {}).id || '').trim();
   if (!id) throw new HttpsError('invalid-argument', 'נא להזין מספר עובד או מייל.');
 
@@ -2457,7 +2485,7 @@ exports.requestPasswordReset = firebaseOnCall(async (req) => {
                  mailShell('הפרטים שלך', body));
 
   return answer;
-});
+}));
 
 // ---------------------------------------------------------------------
 //  5ב. שחרור נעילה
@@ -2465,7 +2493,7 @@ exports.requestPasswordReset = firebaseOnCall(async (req) => {
 //     להשתמש בו. חד-פעמי, ותקף לשעה.
 // ---------------------------------------------------------------------
 
-exports.unlockAccount = onCall(async (req) => {
+exports.unlockAccount = onCall(AUTH_CALLABLE_OPTIONS, appCheckGate.gated('unlockAccount', async (req) => {
   const token = String((req.data || {}).token || '').trim();
   if (!token) throw new HttpsError('invalid-argument', 'קישור לא תקין.');
 
@@ -2488,7 +2516,7 @@ exports.unlockAccount = onCall(async (req) => {
   await ref.delete().catch(function () {});
 
   return { ok: true, message: 'הנעילה שוחררה. אפשר לנסות להיכנס שוב.' };
-});
+}));
 
 // ---------------------------------------------------------------------
 //  הצטרפות עם קוד תחנה — מושבתת ב-41B
@@ -5120,7 +5148,7 @@ exports.hoursReminder = onSchedule({
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   if (last - now.getDate() !== 3) return;
 
-  const sid = PUSH_STATION;
+  await stationJobs.forEachEnabled('hoursReminder', async (sid) => {
   const uids = await uidsInCrew(sid, '');
   // שתי פעולות ולא אחת: לדווח את מה שחסר, **ולאשר** את הדוח.
   // דוח שלא אושר אינו מגיע לרכז כוח אדם, וכבאי שדיווח הכל
@@ -5132,6 +5160,7 @@ exports.hoursReminder = onSchedule({
     './attendance.html');
   console.log('hoursReminder: ' + res.people + ' people, ' +
               res.devices + ' devices');
+  });
 });
 
 // ---------- שליחה ידנית ----------
@@ -5831,7 +5860,7 @@ exports.guardReminder = onSchedule(
   timeoutSeconds: 300, schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
     region: 'europe-west1' },
   async () => {
-    const sid = PUSH_STATION;
+    await stationJobs.forEachEnabled('guardReminder', async (sid) => {
     const t = new Date(Date.now() + 24 * 3600 * 1000);
     const key = t.toISOString().slice(0, 10);
 
@@ -5865,6 +5894,7 @@ exports.guardReminder = onSchedule(
           (v.place ? ' · ' + v.place : ''),
         './guards.html', true);
     }
+    });
   });
 
 
@@ -6496,7 +6526,7 @@ exports.signReminder = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
-  const sid = PUSH_STATION;
+  await stationJobs.forEachEnabled('signReminder', async (sid) => {
   const now = new Date();
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = last - now.getDate();
@@ -6584,6 +6614,7 @@ exports.signReminder = onSchedule({
       console.warn('signReminder · מפקדים נכשל: ' + (e && e.message));
     }
   }
+  });
 });
 
 
