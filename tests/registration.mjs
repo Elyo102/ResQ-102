@@ -15,7 +15,7 @@ function ok(name, value) {
 }
 
 const flowMatch = html.match(
-  /async function submitFirst\(marketingOptIn\) \{([\s\S]*?)\/\/ ---------- ניתוב ----------/
+  /async function submitFirst\(\) \{([\s\S]*?)\/\/ ---------- ניתוב ----------/
 );
 ok('registration handler is present', !!flowMatch);
 const flow = flowMatch ? flowMatch[1] : '';
@@ -51,13 +51,11 @@ ok('uncertain write result preserves the Auth account',
    /else if \(!absenceConfirmed\)[\s\S]*?showRegistrationRecovery\(applicant\)/.test(flow));
 ok('double-click protection disables the submit button',
    flow.indexOf('btn.disabled = true') < writePos);
-ok('registration offers an explicit no-marketing path',
-   /id="btnFirst"[^>]*>שלח בקשה ללא הצעות/.test(html) &&
-   /\$\('btnFirst'\)\.onclick = \(\) => submitFirst\(false\)/.test(flow));
-ok('marketing is separately chosen and recorded',
-   /id="btnFirstMarketing"[^>]*>שלח בקשה וקבל הצעות/.test(html) &&
-   /\$\('btnFirstMarketing'\)\.onclick = \(\) => submitFirst\(true\)/.test(flow) &&
-   /marketing_opt_in: marketingOptIn === true/.test(flow));
+ok('registration offers one terms action and does not record marketing consent',
+   /id="btnFirst"[^>]*>שלח בקשה ואשר תקנון/.test(html) &&
+   !/id="btnFirstMarketing"/.test(html) &&
+   /\$\('btnFirst'\)\.onclick = submitFirst/.test(flow) &&
+   /marketing_opt_in: false/.test(flow));
 ok('operator contact and full terms are available before submission',
    /אלדד יונה/.test(html) && /fire102\.shits@gmail\.com/.test(html) &&
    /href="\.\/terms\.html"/.test(html));

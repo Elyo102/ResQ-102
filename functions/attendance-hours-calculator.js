@@ -23,7 +23,10 @@ function segmentHours(start, end, dayOffset) {
   if (!validTime(start) || !validTime(end)) return null;
   const s = String(start).split(':').map(Number), e = String(end).split(':').map(Number);
   let diff = e[0] * 60 + e[1] - (s[0] * 60 + s[1]);
-  if (dayOffset == null || dayOffset === '') { if (diff <= 0) diff += 24 * 60; }
+  if (dayOffset == null || dayOffset === '') {
+    if (diff === 0) return null;
+    if (diff < 0) diff += 24 * 60;
+  }
   else { diff += Number(dayOffset) * 24 * 60; if (diff <= 0) return null; }
   return Math.round((diff / 60) * 100) / 100;
 }

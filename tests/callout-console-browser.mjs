@@ -543,7 +543,7 @@ try {
     await superRun.page.evaluate(() => { window.__CALLABLE_PLAN = { sendCallout:[{ reject:true, code:'functions/unavailable' }] }; });
     await superRun.page.locator('#calloutText').fill('קריאה ממתינה');
     await superRun.page.locator('#calloutSend').evaluate(button => button.click());
-    await superRun.page.waitForFunction(() => document.querySelector('#calloutMessage').textContent.includes('נכשלה'));
+    await superRun.page.waitForFunction(() => document.querySelector('#calloutMessage').textContent.includes('לא ניתן לאמת'));
     await superRun.page.locator('#targetStation').fill('changed_station');
     assert.deepEqual(await superRun.page.locator('#targetCrew').evaluate(select => Array.from(select.options, option => option.value)), ['', 'A', 'B', 'C']);
     await superRun.page.locator('#targetCrew').selectOption('A');

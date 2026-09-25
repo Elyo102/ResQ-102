@@ -106,8 +106,8 @@ function validTime(s) {
 // מחזיר שעתיים בשני המקרים, ומי שנשאר יממה ועוד שעתיים
 // מקבל שכר על שעתיים בלי שאיש ישים לב.
 //
-// בלי dayOffset נשמר הכלל הישן, כדי שרשומות שכבר נשמרו
-// ימשיכו להתנהג כפי שהתנהגו.
+// בלי dayOffset נשמר כלל חציית החצות רק כשהיציאה מוקדמת
+// מהכניסה. שעות זהות אינן הוכחה למשמרת של 24 שעות.
 export function segmentHours(start, end, dayOffset) {
   if (!validTime(start) || !validTime(end)) return null;
   const s = String(start).split(':').map(Number);
@@ -115,7 +115,8 @@ export function segmentHours(start, end, dayOffset) {
   let diff = (e[0] * 60 + e[1]) - (s[0] * 60 + s[1]);
 
   if (dayOffset == null || dayOffset === '') {
-    if (diff <= 0) diff += 24 * 60;
+    if (diff === 0) return null;
+    if (diff < 0) diff += 24 * 60;
   } else {
     diff += Number(dayOffset) * 24 * 60;
     if (diff <= 0) return null;

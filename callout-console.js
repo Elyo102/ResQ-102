@@ -8,6 +8,9 @@ import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roste
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
 const ROSTER_LOAD_TIMEOUT_MS = 7000;
 let active = null;
+// Only an in-memory handoff across an ID-token refresh on this page. Never
+// persist the callout text or recipients in browser storage.
+let pendingTransfer = null;
 
 function text(value, max) {
   return String(value == null ? '' : value).normalize('NFC').trim().slice(0, max);
@@ -416,7 +419,7 @@ function watchOwnCallouts(session) {
           ['reserved','delivering','partial'].includes(String(value.delivery_state || '')) &&
           /^[A-Za-z0-9_-]{16,80}$/.test(String(value.request_id || '')) && text(value.text, 300)) {
         session.pendingRequest = {
-          id:String(value.request_id), message:text(value.text, 300), retries:0,
+          id:String(value.request_id), message:text(value.text, 300), retries:0, uncertain:true,
           uids:value.target === 'people' && Array.isArray(value.uids) ? value.uids.slice() : null
         };
         session.elements.input.value = session.pendingRequest.message;
@@ -462,10 +465,16 @@ function watchResponses(session, calloutId) {
   session.responseStops.set(calloutId, stop);
 }
 
-export function destroyCalloutConsole() {
+export function destroyCalloutConsole(options = {}) {
   const prior = active;
   active = null;
+  if (options.discardPending === true) pendingTransfer = null;
   if (!prior) return;
+  if (options.discardPending !== true && prior.pendingRequest) {
+    pendingTransfer = { uid:prior.uid, sid:prior.sid, crew:prior.crew, isSuper:prior.isSuper,
+      request:{ ...prior.pendingRequest,
+        uids:Array.isArray(prior.pendingRequest.uids) ? prior.pendingRequest.uids.slice() : null } };
+  }
   try { prior.stop(); } catch (_) {}
   try { clearTimeout(prior.retryTimer); } catch (_) {}
   const els = prior.elements || {};
@@ -511,6 +520,16 @@ export async function initCalloutConsole(options = {}) {
     listCalloutRecipients:options.sdk.httpsCallable(options.functions, 'listCalloutRecipients'),
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
   };
+  if (pendingTransfer) {
+    if (pendingTransfer.uid === session.uid && pendingTransfer.sid === session.sid &&
+        pendingTransfer.crew === session.crew && pendingTransfer.isSuper === session.isSuper) {
+      session.pendingRequest = pendingTransfer.request;
+      session.elements.input.value = session.pendingRequest.message;
+      session.elements.input.readOnly = true;
+    }
+    // A different identity or target must never inherit a pending send.
+    pendingTransfer = null;
+  }
   active = session;
   const cachedRows = readCalloutRosterCache(session);
   if (cachedRows.length) {
@@ -558,13 +577,13 @@ export async function initCalloutConsole(options = {}) {
   const sendPending = async (autoRetry, rehearsalRequested) => {
     if (active !== session) return;
     const typedMessage = text(session.elements.input.value, 300);
-    const message = autoRetry && session.pendingRequest
+    const message = session.pendingRequest
       ? session.pendingRequest.message : typedMessage;
     if (!message) {
       setMessage(session.elements.message, 'צריך לכתוב את הודעת הקריאה.', 'err');
       return;
     }
-    const currentUids = autoRetry && session.pendingRequest
+    const currentUids = session.pendingRequest
       ? (Array.isArray(session.pendingRequest.uids) ? session.pendingRequest.uids.slice() : null)
       : selectedUids(session);
     if (Array.isArray(currentUids) && currentUids.length === 0) {
@@ -572,9 +591,9 @@ export async function initCalloutConsole(options = {}) {
       return;
     }
     const targetName = selectionLabel(session, currentUids);
-    const rehearsal = autoRetry && session.pendingRequest
+    const rehearsal = session.pendingRequest
       ? session.pendingRequest.rehearsal === true : rehearsalRequested === true;
-    if (!autoRetry && !window.confirm(rehearsal
+    if (!session.pendingRequest && !window.confirm(rehearsal
       ? 'לשמור תרגול עבור ' + targetName + '?\n\nלא תישלח התראה, לא יושמע צליל והעובדים לא יראו את התרגול.\n\n' + message
       : 'להזעיק את ' + targetName + ' בתחנה ' + sid + '?\n\n' + message)) return;
     const priorUids = session.pendingRequest && Array.isArray(session.pendingRequest.uids)
@@ -589,7 +608,7 @@ export async function initCalloutConsole(options = {}) {
     /* ⭐ תגית קטנה בכותרת מספיקה כדי לזכור שהמערכת בניסוי. היא אינה
      * מספיקה כדי לא לשדר לתחנה בטעות, ולכן לפני שידור הניסוח המלא
      * עדיין מוצג — ודורש אישור מפורש. */
-    if (!rehearsal && isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
+    if (!session.pendingRequest && !rehearsal && isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
       setMessage(session.elements.message, 'השידור בוטל. לא נשלחה קריאה.', 'info');
       return;
     }
@@ -597,7 +616,7 @@ export async function initCalloutConsole(options = {}) {
       const raw = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
         ? globalThis.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
       session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_'), rehearsal,
-        uids:Array.isArray(currentUids) ? currentUids.slice() : null };
+        uids:Array.isArray(currentUids) ? currentUids.slice() : null, uncertain:false };
     }
     session.elements.input.readOnly = true;
     session.elements.send.disabled = true;
@@ -614,6 +633,7 @@ export async function initCalloutConsole(options = {}) {
       if (active !== session) return;
       const data = response && response.data ? response.data : {};
       if (data.ok === false && data.retryable === true) {
+        session.pendingRequest.uncertain = true;
         const wait = Math.max(500, Math.min(120000, Number(data.retry_after_ms) || 1000));
         session.pendingRequest.retries = Number(session.pendingRequest.retries || 0) + 1;
         if (session.pendingRequest.retries <= 3) {
@@ -652,8 +672,30 @@ export async function initCalloutConsole(options = {}) {
       session.pendingRequest = null;
       session.resumeStarted = false;
     } catch (error) {
-      if (active === session) setMessage(session.elements.message,
-        (logError('callout send', error), 'שליחת הקריאה נכשלה. ' + errorText(error)), 'err');
+      if (active === session) {
+        logError('callout send', error);
+        const code = String(error && error.code || '').replace(/^functions\//, '');
+        if (['permission-denied','invalid-argument','failed-precondition'].includes(code)) {
+          if (session.pendingRequest && session.pendingRequest.uncertain) {
+            // A prior attempt may have committed before a network failure.
+            // A later terminal error does not prove that it did not.
+            setMessage(session.elements.message,
+              'הקריאה הקודמת עדיין אינה מאומתת. לא תיפתח קריאה חדשה; פנה למעקב הקריאות או למנהל. ' + errorText(error), 'err');
+          } else {
+            // First-attempt terminal rejection: no server send took place.
+            session.pendingRequest = null;
+            session.resumeStarted = false;
+            session.elements.input.readOnly = false;
+            setMessage(session.elements.message, 'הקריאה לא נשלחה. ' + errorText(error), 'err');
+          }
+        } else {
+          // Network/timeout is ambiguous. A retry MUST keep request_id and
+          // recipients; otherwise it may create a second live callout.
+          if (session.pendingRequest) session.pendingRequest.uncertain = true;
+          setMessage(session.elements.message,
+            'לא ניתן לאמת אם הקריאה נקלטה. נסה שוב — אותו מזהה שליחה יישמר. ' + errorText(error), 'err');
+        }
+      }
     } finally {
       if (active === session) {
         session.elements.send.disabled = false;
@@ -664,6 +706,11 @@ export async function initCalloutConsole(options = {}) {
   session.resumeDelivery = () => sendPending(true, false);
   session.elements.send.onclick = () => sendPending(false, false);
   if (session.elements.rehearse) session.elements.rehearse.onclick = () => sendPending(false, true);
+  if (session.pendingRequest) {
+    setMessage(session.elements.message, 'בודק מחדש שליחה קודמת עם אותו מזהה קריאה…', 'info');
+    session.resumeStarted = true;
+    setTimeout(() => { if (active === session) session.resumeDelivery(); }, 0);
+  }
 
   // Both reads begin only after the actual signed role, station and crew have
   // passed the fail-closed gate above.

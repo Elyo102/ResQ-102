@@ -2038,7 +2038,10 @@ function renderBoardHead(target, ym, onMonth, boardId, weekLabelId) {
     const board = $(boardId);
     if (!board) return;
     const width = parseInt(getComputedStyle(board).getPropertyValue('--dayw'), 10) || 96;
-    board.scrollBy({ left: direction * width * 7, behavior: 'smooth' });
+    // Later dates are to the left on the RTL board (negative scrollLeft in
+    // modern browsers); use the board's actual direction for LTR fallbacks.
+    const rtl = getComputedStyle(board).direction === 'rtl';
+    board.scrollBy({ left: (rtl ? -direction : direction) * width * 7, behavior: 'smooth' });
   };
   prev.addEventListener('click', () => step(-1));
   next.addEventListener('click', () => step(1));

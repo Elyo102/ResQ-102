@@ -5462,6 +5462,9 @@ exports.sendCallout = onCall(
       uids = uids.filter(uid => uid !== auth.uid);
     }
   } catch (error) {
+    // Preserve the deliberate pilot authorization verdict. Only failures to
+    // read/verify runtime state should look like server unavailability.
+    if (error instanceof HttpsError && error.code === 'permission-denied') throw error;
     throw new HttpsError('unavailable', 'לא ניתן לאמת את מצב המערכת. הקריאה לא נשלחה.');
   }
 

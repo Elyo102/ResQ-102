@@ -1171,12 +1171,26 @@ function faultCard(f){
     el.appendChild(d);
   }
 
+  // F-01: history / damageReport / subjectReport / list cards — placeholder
+  // from photos count only. No getDocs(/photos) until the user opens this
+  // fault's photos (click). loadShots still keyed SID:faultId + AUTH_GEN.
   if (Number(f.photos || 0) > 0) {
     const box = document.createElement('div');
     box.className = 'shots';
-    box.innerHTML = '<span class="ld">טוען ' + f.photos + ' תמונות…</span>';
+    const n = Number(f.photos || 0);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ld';
+    btn.style.cssText = 'background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit;text-decoration:underline';
+    btn.textContent = n + ' תמונות · הצג';
+    btn.setAttribute('aria-label', 'הצג ' + n + ' תמונות לתקלה');
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      box.innerHTML = '<span class="ld">טוען ' + n + ' תמונות…</span>';
+      loadShots(f, box);
+    };
+    box.appendChild(btn);
     el.appendChild(box);
-    loadShots(f, box);
   }
 
   const rep = document.createElement('div');

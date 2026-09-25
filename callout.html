@@ -183,7 +183,9 @@ function showRecipientInitError(retryFn) {
 
 onIdTokenChanged(auth, async user => {
   const turn = ++generation;
-  destroyCalloutConsole();
+  // Keep an unresolved request in memory across a token refresh, but never
+  // carry callout text or recipients through an actual sign-out.
+  destroyCalloutConsole({ discardPending: !user });
   if (stopIncoming) { try { stopIncoming(); } catch (_) {} stopIncoming = null; }
   $('work').classList.add('hide'); $('denyCard').classList.add('hide');
   if (!user) { location.replace('./login.html'); return; }

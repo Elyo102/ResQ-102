@@ -1248,6 +1248,21 @@ function myGuardOn(key){
   return myGuards.filter(g => String(g.date || '') === String(key))[0] || null;
 }
 
+// HR must never turn a corrupt stored value into a believable month total.
+// A split record can legitimately reach 96 hours; values outside that range
+// are displayed as unknown and require a data correction.
+function reportedHours(row){
+  const value = row && row.hours;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 96) return null;
+  return value;
+}
+function correctedMonthHours(rows){
+  const values = rows.map(reportedHours);
+  if (values.some(value => value === null)) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number.isFinite(total) ? Math.round(total * 100) / 100 : null;
+}
+
 function render(){
   const unknownDays = unknownDaysThisMonth();
   $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear +
@@ -1258,12 +1273,10 @@ function render(){
 
   const list = Object.keys(records).sort();
   const saved = list.map(k => records[k]);
-  const total = onOther()
-    ? Math.round(saved.reduce((sum, row) => sum + (Number.isFinite(Number(row.hours)) ? Number(row.hours) : 0), 0) * 100) / 100
-    : monthTotal(saved, siteHoursOf);
+  const total = onOther() ? correctedMonthHours(saved) : monthTotal(saved, siteHoursOf);
   const sug = suggestedDays();
 
-  $('tHours').textContent = total;
+  $('tHours').textContent = total == null ? '— · נתון שעות פגום' : total;
   $('tDays').textContent  = saved.length;
   $('tSug').textContent   = sug.length;
 
@@ -1335,7 +1348,7 @@ function renderRows(sug){
 
     const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
                           sub_station: mySite };
-    const hrs = onOther() && rec ? (Number.isFinite(Number(rec.hours)) ? Number(rec.hours) : null)
+    const hrs = onOther() && rec ? reportedHours(rec)
       : calcHours(view, siteHoursOf(view.sub_station));
     const why = reasonWhy(view, siteHoursOf(view.sub_station), shiftHoursFor());
     const running = !!(rec && rec.start && !rec.end);
@@ -1584,6 +1597,10 @@ $('btnStop').onclick = async () => {
   if (!rec) return;
   const hh = String(now.getHours()).padStart(2, '0') + ':' +
              String(now.getMinutes()).padStart(2, '0');
+  if (hh === rec.start) {
+    msg('אי אפשר לסיים משמרת באותה דקה שבה התחילה. המתן דקה או פתח דיווח ידני ובדוק את השעות.', 'err');
+    return;
+  }
   try {
     await saveRecord(key, Object.assign({}, rec, { end: hh }));
     await loadMonth();
@@ -1962,6 +1979,11 @@ async function editDay(key, rec){
     if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
     }
+    if (needsTimes(t) && sh !== 'continued' &&
+        (cur.start === cur.end || (sh === 'split' && cur.start2 === cur.end2))) {
+      msg('כניסה ויציאה באותה שעה אינן משמרת של 24 שעות. תקן את השעות לפני שמירה.', 'err');
+      return;
+    }
 
     // The form may have stayed open while site hours or the assignment changed.
     // Validate against the server again immediately before deriving the patch.
@@ -2101,8 +2123,7 @@ function submitPreview(){
   const st = (report && report.status) || 'draft';
   const saved = Object.keys(records).sort().map(k => records[k]);
   const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
-  if (onOther()) s.hours = Math.round(saved.reduce((sum, row) => sum +
-    (Number.isFinite(Number(row.hours)) ? Number(row.hours) : 0), 0) * 100) / 100;
+  if (onOther()) s.hours = correctedMonthHours(saved);
   const sug = suggestedDays();
 
   const typeLines = DAY_TYPES
@@ -2125,7 +2146,7 @@ function submitPreview(){
     '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
       ' · ' + esc(SUBJ.full_name || '') + ' · מס׳ ' + esc(SUBJ.emp) + '</div>' +
 
-    '<div class="sum-big">' + s.hours + '</div>' +
+    '<div class="sum-big">' + (s.hours == null ? '— · נתון שעות פגום' : s.hours) + '</div>' +
     '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
 
     '<div class="sum-line"><span>ימים שדווחו</span><b>' + s.days + '</b></div>' +

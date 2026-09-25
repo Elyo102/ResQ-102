@@ -71,11 +71,13 @@ function styleOnce() {
     '#coWrap{position:fixed;inset:0;z-index:99999;display:none;',
     '  background:rgba(10,4,4,.92);direction:rtl;',
     '  font-family:"Segoe UI",Arial,sans-serif;',
-    '  align-items:center;justify-content:center;padding:20px;',
-    '  overflow:auto}',
+    '  align-items:flex-start;justify-content:center;',
+    '  padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));',
+    '  box-sizing:border-box;overflow:auto}',
     '#coWrap.on{display:flex}',
     '#coBox{background:#241315;border:2px solid #ef5350;border-radius:16px;',
-    '  max-width:520px;width:100%;padding:24px;color:#e8eaed;',
+    '  max-width:520px;width:100%;padding:24px;margin:auto 0;',
+    '  box-sizing:border-box;color:#e8eaed;',
     '  box-shadow:0 18px 60px rgba(0,0,0,.6)}',
     '#coBox .kicker{display:flex;align-items:center;gap:9px;',
     '  color:#ff8a80;font-size:13px;font-weight:800;letter-spacing:.04em}',
@@ -334,6 +336,8 @@ export function watchCallouts(db, sid, uid, opts) {
     legacyAnswered: new Set(),
     responseStops: new Map(),
     doneTimer: null,
+    confirmingId: '',
+    visibleId: '',
     latest: []
   };
   owner.dispose = function () {
@@ -362,17 +366,24 @@ export function watchCallouts(db, sid, uid, opts) {
     if (!list.length) {
       /* ⭐ המאזין מסיר את הקריאה ברגע שהתשובה נכתבה — מהר מכדי
        * לקרוא את האישור. כל עוד שעון האישור רץ, הוא זה שיסגור. */
-      if (!owner.doneTimer) {
+      if (!owner.doneTimer && !owner.confirmingId) {
         const w = document.getElementById('coWrap');
         if (w) w.classList.remove('on');
       }
-      shownId = '';
+      if (!owner.doneTimer && !owner.confirmingId) shownId = '';
       return;
     }
     const cur = list[0];
+    // Keep the answered call's confirmation visible until its timer expires.
+    // A second pending call must never inherit the first call's closing timer.
+    if (owner.doneTimer || (owner.confirmingId && owner.visibleId === owner.confirmingId &&
+        cur.id !== owner.confirmingId)) return;
     if (cur.id === shownId) return;
     shownId = cur.id;
-    show(owner, db, sid, uid, cur.id, cur.v, o, list.length);
+    show(owner, db, sid, uid, cur.id, cur.v, o, list.length, function () {
+      shownId = '';
+      renderLatest();
+    });
   }
 
   function watchOwnResponse(calloutId) {
@@ -433,8 +444,9 @@ export function watchCallouts(db, sid, uid, opts) {
   return owner.dispose;
 }
 
-function show(owner, db, sid, uid, id, v, o, count) {
+function show(owner, db, sid, uid, id, v, o, count, advance) {
   if (activeOwner !== owner || owner.disposed) return;
+  owner.visibleId = id;
   const w = box();
   const t = document.getElementById('coText');
   const f = document.getElementById('coFrom');
@@ -525,6 +537,8 @@ function show(owner, db, sid, uid, id, v, o, count) {
    * והדבר הבא שקורה הוא לחיצה שנייה. */
   function succeed(which) {
     if (activeOwner !== owner || owner.disposed) return;
+    owner.confirmingId = '';
+    if (owner.visibleId !== id) return;
     releaseKeyboardWatch();
     btns.hidden = true;
     reasonWrap.hidden = true;
@@ -539,12 +553,13 @@ function show(owner, db, sid, uid, id, v, o, count) {
     owner.doneTimer = setTimeout(function () {
       owner.doneTimer = null;
       if (activeOwner !== owner || owner.disposed) return;
-      w.classList.remove('on');
+      advance();
     }, 1800);
   }
 
   function answer(which, why) {
     if (activeOwner !== owner || owner.disposed || sending) return;
+    owner.confirmingId = id;
     lock(true);
     if (which === 'coming') yes.textContent = 'שולח…';
     else send.textContent = 'שולח…';
@@ -556,6 +571,7 @@ function show(owner, db, sid, uid, id, v, o, count) {
       })
       .catch(function (err) {
         if (activeOwner !== owner || owner.disposed) return;
+        owner.confirmingId = '';
         lock(false);
         yes.textContent = 'מגיע';
         send.textContent = 'שלח דחייה';
@@ -563,6 +579,7 @@ function show(owner, db, sid, uid, id, v, o, count) {
         // המשתמש רואה עברית. הקוד הטכני הלך ל-console.
         e.textContent = 'התשובה לא נשמרה. ' + errorText(err);
         e.style.display = 'block';
+        if (owner.answered.has(id) || owner.legacyAnswered.has(id)) advance();
       });
   }
 

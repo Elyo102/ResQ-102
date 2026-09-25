@@ -229,7 +229,27 @@ const createFaultReport = httpsCallable(getFunctions(app, 'europe-west1'), 'crea
   { timeout:60000 });
 
 let SID = '', ME = { uid:'', name:'', crew:'' }, CAN_MANAGE = false;
-let faults = [], views = [], fleet = [], shots = {};
+let faults = [], views = [], fleet = [], shots = {}, shotsInflight = {};
+let AUTH_GEN = 0;
+let LOAD_GEN = 0, DETAIL_GEN = 0;
+const shotObjectUrls = [];
+
+function bumpIdentity(){
+  AUTH_GEN += 1;
+  LOAD_GEN += 1;
+  DETAIL_GEN += 1;
+  SID = ''; ME = { uid:'', name:'', crew:'' }; CAN_MANAGE = false;
+  faults = []; views = []; fleet = [];
+  shots = {}; shotsInflight = {};
+  $('work').classList.add('hide');
+  $('ov').classList.remove('on');
+  $('dlgBody').replaceChildren();
+  $('lb').classList.remove('on');
+  while (shotObjectUrls.length) {
+    try { URL.revokeObjectURL(shotObjectUrls.pop()); } catch (ignore) {}
+  }
+  return AUTH_GEN;
+}
 let vid = '', side = 'right', vehicleRequested = false;
 const photoTargets = new Map();
 
@@ -259,10 +279,14 @@ function actionError(error){
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
+  // F-01: clear photo cache / inflight on every auth edge (logout, station,
+  // user switch) so a late getDocs cannot paint foreign photos.
+  const gen = bumpIdentity();
   if (!user) { location.replace('./login.html?next=vehicle.html'); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (gen !== AUTH_GEN) return;
 
   const isSuper = c.super === true;
   const isMember = isSuper ||
@@ -279,7 +303,6 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  $('work').classList.remove('hide');
   renderNav(c, 'vehicle.html', user.email || '');
   watchCallouts(db, SID, user.uid, { name: user.email || '' });
 
@@ -298,31 +321,37 @@ $('btnOutDeny').onclick = () => signOut(auth);
 // ---------- טעינה ----------
 
 async function loadAll(){
-  faults = []; views = []; let boardVehicles = [], anchors = [];
+  const reqSid = SID, reqGen = AUTH_GEN, reqLoad = ++LOAD_GEN;
+  if (!reqSid) return;
+  const nextFaults = [], nextViews = [];
+  let boardVehicles = [], anchors = [];
   const safe = p => p.catch(() => null);
 
   const [fs_, bd, vs, vw] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', SID, 'faults'))),
-    safe(getDoc(doc(db, 'stations', SID, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', SID, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', SID, 'vehicle_views')))
+    safe(getDocs(collection(db, 'stations', reqSid, 'faults'))),
+    safe(getDoc(doc(db, 'stations', reqSid, 'config', 'board'))),
+    safe(getDocs(collection(db, 'stations', reqSid, 'vehicles'))),
+    safe(getDocs(collection(db, 'stations', reqSid, 'vehicle_views')))
   ]);
+  if (reqSid !== SID || reqGen !== AUTH_GEN || reqLoad !== LOAD_GEN) return;
 
-  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id:d.id }, d.data() || {})));
+  if (fs_) fs_.forEach(d => nextFaults.push(Object.assign({ id:d.id }, d.data() || {})));
   if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
   if (vs) vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
     anchors.push(Object.assign({ id:d.id }, v));
   });
-  if (vw) vw.forEach(d => views.push(Object.assign({ id:d.id }, d.data() || {})));
+  if (vw) vw.forEach(d => nextViews.push(Object.assign({ id:d.id }, d.data() || {})));
 
+  faults = nextFaults; views = nextViews;
   fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
   // A deep link is an identity, not a suggestion. Never replace an explicit
   // archived/missing vehicle with a different one that happens to be first.
   if (!vid && !vehicleRequested) vid = (fleet.find(v => v.active !== false) || {}).id || '';
 
   render();
+  $('work').classList.remove('hide');
 }
 
 // ---------- ציור ----------
@@ -724,7 +753,12 @@ function toKey(d){
   return d.getFullYear() + '-' + m + '-' + a;
 }
 
-function close(){ $('ov').classList.remove('on'); }
+function close(){
+  DETAIL_GEN += 1;
+  shotsInflight = {};
+  $('ov').classList.remove('on');
+  $('dlgBody').replaceChildren();
+}
 $('dlgX').onclick = close;
 $('ov').onclick = e => { if (e.target === $('ov')) close(); };
 $('lbX').onclick = () => $('lb').classList.remove('on');
@@ -733,14 +767,19 @@ $('lb').onclick = e => { if (e.target !== $('lbImg')) $('lb').classList.remove('
 // ---------- כרטיס נקודה ----------
 
 function openFault(f, n){
-  $('dlgTitle').textContent = 'נקודה ' + n + ' · ' + sideHe(f.side);
+  DETAIL_GEN += 1;
+  shotsInflight = {};
+  $('dlgTitle').textContent = hasPoint(f)
+    ? 'נקודה ' + n + ' · ' + sideHe(f.side)
+    : 'דיווח רכב ללא מיקום';
   $('dlgHint').textContent = kindHe(f.kind);
   $('dlgBody').innerHTML = '';
-  $('dlgBody').appendChild(faultCard(f, n));
+  $('dlgBody').appendChild(faultCard(f, n, { loadPhotos:true }));
   $('ov').classList.add('on');
 }
 
-function faultCard(f, n){
+function faultCard(f, n, opts){
+  opts = opts || {};
   const target = captureFaultTarget(f);
   const open = isOpen(f);
   // בג'ר לרקע רווי (עיגול המספר, פס הצבע בצד הכרטיס) לעומת בג'ר
@@ -765,13 +804,28 @@ function faultCard(f, n){
         esc(open ? sevHe(f.severity) : 'טופלה') + '</span>' +
     '</div>' +
     (f.desc ? '<div class="desc">' + esc(f.desc) + '</div>' : '') +
-    '<div class="shots"><span class="ld">טוען צילומים…</span></div>' +
+    '<div class="shots"></div>' +
     '<div class="rep">דווח: ' + esc(reportedLine(f)) + '</div>';
 
-  loadShots(f, el.querySelector('.shots'));
+  const shotsBox = el.querySelector('.shots');
+  const photoCount = Number(f.photos || 0);
+  if (opts.loadPhotos) {
+    shotsBox.innerHTML = photoCount
+      ? '<span class="ld">טוען ' + photoCount + ' תמונות…</span>'
+      : '<span class="ld">אין צילום.</span>';
+    if (photoCount) loadShots(f, shotsBox);
+  } else if (photoCount > 0) {
+    // F-01: list / renderList — count-only skeleton, no getDocs(/photos).
+    shotsBox.innerHTML = '<span class="ld">' + photoCount + ' תמונות</span>';
+  }
 
   const acts = document.createElement('div');
   acts.className = 'acts';
+  if (!opts.loadPhotos) {
+    const detail = btn('הצג פרטים ותמונות', 'btn sm', () => openFault(f, n));
+    detail.setAttribute('aria-label', 'הצג פרטים ותמונות · ' + String(f.title || 'דיווח רכב'));
+    acts.appendChild(detail);
+  }
 
   // דירוג — סגל בלבד. הכבאי מתאר מה ראה; כמה זה חמור זו
   // החלטה מבצעית של ראש המשמרת.
@@ -803,14 +857,43 @@ function btn(t, cls, fn){
 }
 
 async function loadShots(f, box){
-  if (!f.photos) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
-  if (shots[f.id]) { paint(shots[f.id], box); return; }
+  // F-01: cache key MUST be stationId+faultId (match faults.html).
+  // AUTH_GEN + late-response discard before cache write AND before paint.
+  if (!Number(f.photos || 0)) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
+  const reqSid = SID;
+  const reqGen = AUTH_GEN;
+  const reqDetail = DETAIL_GEN;
+  const key = String(reqSid || '') + ':' + String(f.id || '');
+  if (shots[key]) { paint(shots[key], box); return; }
+  if (!shotsInflight[key]) {
+    const request = getDocs(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'))
+      .then(function (s) {
+        const list = [];
+        s.forEach(d => list.push(d.data() || {}));
+        if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail ||
+            shotsInflight[key] !== request) {
+          return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
+        }
+        shots[key] = list;
+        return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
+      })
+      .finally(function () {
+        if (shotsInflight[key] === request) delete shotsInflight[key];
+      });
+    shotsInflight[key] = request;
+  }
   try {
-    const s = await getDocs(
-      collection(db, 'stations', SID, 'faults', f.id, 'photos'));
-    const list = []; s.forEach(d => list.push(d.data() || {}));
-    shots[f.id] = list; paint(list, box);
-  } catch (e) { box.innerHTML = '<span class="ld">הצילומים לא נטענו.</span>'; }
+    const result = await shotsInflight[key];
+    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen ||
+        DETAIL_GEN !== reqDetail || !box.isConnected ||
+        result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
+      return;
+    }
+    paint(result.list, box);
+  } catch (e) {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+    box.innerHTML = '<span class="ld">הצילומים לא נטענו.</span>';
+  }
 }
 
 function paint(list, box){
@@ -866,7 +949,7 @@ async function wipe(f, target){
     } catch (ignore) {}
     requireFaultTarget(target);
     await deleteDoc(doc(db, 'stations', target.sid, 'faults', target.id));
-    delete shots[target.id];
+    delete shots[String(target.sid || SID || '') + ':' + String(target.id || '')];
     close(); await loadAll();
   } catch (e) { actionError(e); }
 }

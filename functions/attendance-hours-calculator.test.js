@@ -63,6 +63,9 @@ test('every valid minute as start and end against boundary anchors, with all exp
   assert.equal(checked, 92160); t.diagnostic('Compared ' + checked + ' complete minute/anchor/offset cases.');
 });
 test('minute rounding, split-rounding order, two-day segments and exact Hebrew reasons', () => {
+  assert.equal(actual.calcHours({ day_type:'regular', start:'08:00', end:'08:00' }, 0), null);
+  assert.equal(browser.calcHours({ day_type:'regular', start:'08:00', end:'08:00' }, 0), null);
+  assert.equal(actual.calcHours({ day_type:'regular', start:'08:00', end:'08:00', end_day:1 }, 0), 24);
   const oneMinute = { day_type:'regular', start:'00:00', end:'00:01', end_day:0 };
   assert.equal(actual.calcHours(oneMinute, 0), 0.02);
   assert.equal(actual.calcHours({ ...oneMinute, start2:'00:03', end2:'00:04', end_day2:0 }, 0), 0.04);

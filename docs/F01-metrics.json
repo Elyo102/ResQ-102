@@ -1,0 +1,10 @@
+{
+  "N_faults_with_photos": 501,
+  "before_model_photo_getDocs_on_history_open": 501,
+  "after_history_photo_getDocs": 0,
+  "after_detail_photo_getDocs": 1,
+  "history_open_ms_p50": 357,
+  "history_open_ms_p95": 357,
+  "detail_open_ms_p50": 44,
+  "detail_open_ms_p95": 44
+}

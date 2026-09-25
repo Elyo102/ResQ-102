@@ -220,6 +220,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body.art .tab.on{ color:#fff }
   body.art .link{ color:#dbe4ee }
   body.art .login-credit{ color:#cbd5e1 }
+  /* The join card sits on a dark glass surface even in the light theme.
+     Override light-theme text tokens here, including the nested legal card. */
+  body.art #joinPanel,
+  body.art #joinPanel .join-title,
+  body.art #joinPanel .join-step h3,
+  body.art #joinPanel .join-choice,
+  body.art #joinPanel label,
+  body.art #joinPanel legend,
+  body.art #joinPanel #joinWho{ color:#f8fafc }
+  body.art #joinPanel .join-text,
+  body.art #joinPanel .join-hint,
+  body.art #joinPanel .join-legal-doc p{ color:#dbe4ee }
+  body.art #joinPanel button.ghost{ color:#f8fafc; border-color:rgba(255,255,255,.45) }
+  body.art #joinPanel button.link,
+  body.art #joinPanel .join-legal-doc summary{ color:#bfdbfe }
+  body.art #joinPanel .join-legal-doc{ background:rgba(9,14,24,.88); border-color:rgba(255,255,255,.35) }
+  body.art #joinPanel .join-ok{ color:#86efac }
   body.art #btnLogin, body.art #btnFirst{ box-shadow:0 6px 18px rgba(232,89,12,.42) }
 
   /* מי שביקש פחות תנועה מקבל את המסך מיד. */
@@ -313,9 +330,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div id="invitationVerified" class="hide">
       <p id="invitationWho"></p>
       <button type="button" id="invitationVerify">שלח מייל אימות</button>
-      <p>לפני מימוש ההזמנה, קרא/י את <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>. בחירה באחד הכפתורים מאשרת את שניהם ומתועדת.</p>
-      <button type="button" id="invitationRedeem">אני מסכים/ה — ללא הצעות שיווקיות</button>
-      <button type="button" id="invitationRedeemMarketing">אני מסכים/ה — לקבל גם הצעות שיווקיות</button>
+      <p>לפני מימוש ההזמנה, קרא/י את <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>. אישור התקנון מתועד ואינו מהווה הסכמה להצעות שיווקיות.</p>
+      <button type="button" id="invitationRedeem">אני מסכים/ה לתקנון</button>
     </div>
     <button type="button" id="invitationReset">נקה פרטי הזמנה</button>
     <p id="invitationStatus" class="msg" role="status" aria-live="polite"></p>
@@ -405,10 +421,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <a href="mailto:fire102.shits@gmail.com">fire102.shits@gmail.com</a>.<br>
         <a href="./terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a> ·
         <a href="./privacy.html" target="_blank" rel="noopener">הודעת פרטיות · גרסה 2026-09-24</a>.
-        שליחת הבקשה מאשרת את תנאי השימוש; קבלת הצעות שיווקיות היא בחירה נפרדת.
+        שליחת הבקשה מאשרת את תנאי השימוש; היא אינה הסכמה להצעות שיווקיות.
       </div>
-      <button id="btnFirst">שלח בקשה ללא הצעות</button>
-      <button id="btnFirstMarketing" type="button" class="back">שלח בקשה וקבל הצעות</button>
+      <button id="btnFirst">שלח בקשה ואשר תקנון</button>
       <button type="button" class="back hide" id="btnResubmitCancel">חזרה למסך החשבון</button>
       <div class="note">
         מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
@@ -440,8 +455,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <p>כדי שמנהל המערכת יוכל לאשר את בקשתך, יש לקרוא ולאשר את
           <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת
           <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.</p>
-        <button type="button" id="pendingTermsNoMarketing">אני מסכים/ה — ללא הצעות</button>
-        <button type="button" id="pendingTermsMarketing">אני מסכים/ה — לקבל גם הצעות</button>
+        <button type="button" id="pendingTermsNoMarketing">אני מסכים/ה לתקנון</button>
         <div id="pendingTermsStatus" class="msg" role="status" aria-live="polite"></div>
       </div>
     </div>
@@ -891,17 +905,13 @@ function clearInvitation(){
   invitationControls();
 }
 function invitationControls(){
-  ['invitationSignIn','invitationCreate','invitationChoosePassword','invitationVerify','invitationRedeem','invitationRedeemMarketing','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
-  if(invitationIntent){
-    $('invitationRedeem').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in===true;
-    $('invitationRedeemMarketing').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in!==true;
-  }
+  ['invitationSignIn','invitationCreate','invitationChoosePassword','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
   ['invitationId','invitationSecret'].forEach(id=>$(id).disabled=invitationBusy||!!invitationIntent);
   $('invitationAccount').classList.toggle('hide',!!auth.currentUser);
   $('invitationVerified').classList.toggle('hide',!auth.currentUser);
   $('invitationWho').textContent=auth.currentUser?'מחובר: '+(auth.currentUser.email||''):'';
 }
-async function invitationAction(action, marketingOptIn){
+async function invitationAction(action){
   if(invitationBusy)return;
   const epoch=invitationEpoch, initialUid=auth.currentUser?.uid||'';
   let expectedUid=initialUid;
@@ -942,10 +952,8 @@ async function invitationAction(action, marketingOptIn){
           const invite_id=$('invitationId').value.trim(),secret=$('invitationSecret').value.trim();
           if(!invite_id||!secret)throw new Error('יש להזין מזהה הזמנה וסוד הזמנה.');
           invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret,ack:{
-            terms_version:'1.3',privacy_version:'2026-09-24',marketing_opt_in:marketingOptIn===true
+            terms_version:'1.3',privacy_version:'2026-09-24',marketing_opt_in:false
           }});
-        }else if(invitationIntent.ack.marketing_opt_in!==(marketingOptIn===true)){
-          throw new Error('ניסיון המימוש הקודם נשמר עם בחירת שיווק אחרת. לניסיון חוזר בחר/י באותה אפשרות, או נקה/י פרטי הזמנה והתחל/י מחדש.');
         }
         const result=(await callRedeemInvitation(invitationIntent)).data;
         if(!current())return;
@@ -965,8 +973,7 @@ $('invitationSignIn').onclick=()=>invitationAction('signin');
 $('invitationCreate').onclick=()=>invitationAction('create');
 $('invitationChoosePassword').onclick=()=>invitationAction('choose-password');
 $('invitationVerify').onclick=()=>invitationAction('verify');
-$('invitationRedeem').onclick=()=>invitationAction('redeem',false);
-$('invitationRedeemMarketing').onclick=()=>invitationAction('redeem',true);
+$('invitationRedeem').onclick=()=>invitationAction('redeem');
 $('invitationReset').onclick=()=>{if(!invitationBusy)clearInvitation();};
 window.addEventListener('pagehide',clearInvitation);
 
@@ -981,7 +988,7 @@ function resetRegistrationMode(){
   $('authTabs').classList.remove('hide');
   $('newPasswordFields').classList.remove('hide');
   $('fEmail').readOnly = false;
-  $('btnFirst').textContent = 'שלח בקשה';
+  $('btnFirst').textContent = 'שלח בקשה ואשר תקנון';
   $('btnResubmitCancel').classList.add('hide');
 }
 
@@ -1026,7 +1033,8 @@ registerPwaUpdateGuard(function () {
   if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
   const authView = $('authView');
   if (authView && !authView.classList.contains('hide')) {
-    const protectedIds = ['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2'];
+    const protectedIds = ['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2',
+      'joinEmail','joinPassword','joinName','joinPhone','joinNote'];
     if (protectedIds.some(function (id) { const el = $(id); return el && String(el.value || '').trim(); })) {
       return 'יש פרטים שמולאו במסך. נקה אותם לפני העדכון כדי שלא יאבדו.';
     }
@@ -1169,10 +1177,9 @@ $('btnForgot').onclick = async () => {
 
 const REGISTRATION_TERMS_VERSION = '1.3';
 const REGISTRATION_PRIVACY_VERSION = '2026-09-24';
-async function submitFirst(marketingOptIn) {
+async function submitFirst() {
   if (onboarding) return;
   const btn = $('btnFirst');
-  const marketingBtn = $('btnFirstMarketing');
   clearMsg();
 
   const name     = $('fName').value.trim();
@@ -1198,7 +1205,7 @@ async function submitFirst(marketingOptIn) {
     return;
   }
 
-  btn.disabled = true; marketingBtn.disabled = true;
+  btn.disabled = true;
   onboarding = true;
 
   let applicant = null;
@@ -1218,7 +1225,7 @@ async function submitFirst(marketingOptIn) {
       }
       const serverClaims = live.claims_on_server || {};
       if (hasServerAssignment(serverClaims)) {
-        onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+        onboarding = false; btn.disabled = false;
         if (hasCompleteServerAssignment(serverClaims)) {
           await applicant.getIdToken(true);
           resetRegistrationMode();
@@ -1233,12 +1240,12 @@ async function submitFirst(marketingOptIn) {
       // שכבר קיימת. המשתמש פשוט חוזר למסך ההמתנה.
       const pending = await getDoc(doc(db, 'registration_requests', applicant.uid));
       if (pending.exists()) {
-        onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+        onboarding = false; btn.disabled = false;
         showWaiting(applicant, pending.data() || {});
         return;
       }
     } catch (e) {
-      onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+      onboarding = false; btn.disabled = false;
       show('לא ניתן לאמת כרגע את מצב החשבון, ולכן לא נשלחה בקשה. ' +
            'בדוק חיבור ונסה שוב.', 'err');
       return;
@@ -1249,7 +1256,7 @@ async function submitFirst(marketingOptIn) {
       applicant = cred.user;
       createdNow = true;
     } catch (e) {
-      onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+      onboarding = false; btn.disabled = false;
       if (e.code === 'auth/email-already-in-use') {
         show('כבר קיים חשבון עם המייל הזה. עבור ללשונית "כניסה", ' +
              'היכנס עם המייל והסיסמה, ומשם תוכל להגיש בקשה מחדש.', 'err');
@@ -1268,7 +1275,7 @@ async function submitFirst(marketingOptIn) {
     const consent = {
       terms_version: REGISTRATION_TERMS_VERSION,
       privacy_version: REGISTRATION_PRIVACY_VERSION,
-      marketing_opt_in: marketingOptIn === true
+      marketing_opt_in: false
     };
     const batch = writeBatch(db);
     batch.set(requestRef, {
@@ -1294,7 +1301,7 @@ async function submitFirst(marketingOptIn) {
       accepted_at: serverTimestamp()
     });
     await batch.commit();
-    onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+    onboarding = false; btn.disabled = false;
     showWaiting();
   } catch (e) {
     // כשל רשת יכול להגיע אחרי שהשרת כבר שמר את הבקשה. קודם
@@ -1308,7 +1315,7 @@ async function submitFirst(marketingOptIn) {
       absenceConfirmed = !requestSaved;
     } catch (ignore) {}
 
-    onboarding = false; btn.disabled = false; marketingBtn.disabled = false;
+    onboarding = false; btn.disabled = false;
 
     if (requestSaved) {
       showWaiting(applicant);
@@ -1332,8 +1339,7 @@ async function submitFirst(marketingOptIn) {
     show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
   }
 }
-$('btnFirst').onclick = () => submitFirst(false);
-$('btnFirstMarketing').onclick = () => submitFirst(true);
+$('btnFirst').onclick = submitFirst;
 
 // ---------- ניתוב ----------
 
@@ -1720,7 +1726,7 @@ function showApprovedTerms(user, failed){
   $('waitTtl').textContent = failed ? 'לא ניתן לבדוק את ההסכמה' : 'נדרש אישור תקנון 1.3';
   $('waitTxt').textContent = failed
     ? 'לא ניתן לאמת כרגע את התקנון מול השרת. בדוק חיבור ונסה שוב; הגישה למערכת חסומה עד לאימות.'
-    : 'התקנון המעודכן חל על כל המשתמשים. בחר/י אם לאשר אותו ללא הצעות שיווקיות או גם עם הצעות.';
+    : 'התקנון המעודכן חל על כל המשתמשים. יש לקרוא ולאשר אותו כדי להמשיך להשתמש בשירות.';
   showWho(user);
   $('btnBootstrap').classList.add('hide');
   $('btnResubmit').classList.add('hide');
@@ -1752,7 +1758,6 @@ async function acceptPendingTerms(marketingOptIn){
   }finally{panel.querySelectorAll('button').forEach(button=>button.disabled=false);}
 }
 $('pendingTermsNoMarketing').onclick=()=>acceptPendingTerms(false);
-$('pendingTermsMarketing').onclick=()=>acceptPendingTerms(true);
 
 function showRegistrationRecovery(user){
   showWaiting(user);

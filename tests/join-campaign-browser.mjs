@@ -145,8 +145,8 @@ try {
     check('shift and declaration come from the form', payload.shift === 'C' && payload.qualifications.length === 1 && payload.qualifications[0].key === 'driver' && payload.qualifications[0].valid_until_ms > Date.now());
     check('success text makes no grant claim', await page.locator('#joinStatus').textContent().then((t) => t.includes('עדיין לא הוענקו הרשאות')));
     check('route continues after redemption', await page.evaluate(() => routed === 1));
-    // Positive marketing path, and an uncertain result must not permit a
-    // different choice under the same request id.
+    // One legal action. An uncertain result must retain the same request id
+    // and must never create a marketing consent on retry.
     await page.evaluate(() => panel.load());
     await page.waitForFunction(() => document.getElementById('joinPanel').dataset.joinState === 'active');
     await page.locator('#joinName').fill('בודק דמה');
@@ -154,17 +154,17 @@ try {
     await page.locator('#joinShift_C').check();
     await page.locator('#joinAck').check();
     await page.evaluate(() => { redeemError = 'network'; });
-    await page.locator('#joinSubmitMarketing').click();
-    await page.waitForFunction(() => document.getElementById('joinStatus').textContent.includes('לא נשלחה'));
-    const beforeChangedChoice = await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').length);
+    check('campaign join shows one submit action', await page.locator('#joinSubmit').count() === 1 &&
+      await page.locator('#joinSubmitMarketing').count() === 0);
     await page.locator('#joinSubmit').click();
-    check('uncertain retry cannot silently switch the marketing choice',
-      await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').length) === beforeChangedChoice);
+    await page.waitForFunction(() => document.getElementById('joinStatus').textContent.includes('לא נשלחה'));
+    const uncertain = await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').pop()[1]);
     await page.evaluate(() => { redeemError = null; });
-    await page.locator('#joinSubmitMarketing').click();
+    await page.locator('#joinSubmit').click();
     await page.waitForFunction(() => document.getElementById('joinStatus').textContent.includes('ממתינה לאישור'));
-    check('positive marketing action is explicitly sent as true',
-      await page.evaluate(() => calls.filter((c) => c[0] === 'redeem').pop()[1].ack.marketing_opt_in === true));
+    check('uncertain retry preserves exact intent without marketing',
+      await page.evaluate(() => JSON.stringify(calls.filter((c) => c[0] === 'redeem').pop()[1])) === JSON.stringify(uncertain) &&
+      uncertain.ack.marketing_opt_in === false);
     // replay: same request id on retry
     const first = payload.request_id;
     await page.evaluate(() => { try { sessionStorage.setItem('resq_join_request_AAAAAAAAAAAAAAAA', 'jc_replay_0000000000000000'); } catch (e) {} });

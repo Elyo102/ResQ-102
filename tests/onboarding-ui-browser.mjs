@@ -104,8 +104,8 @@ try{
   await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('טרם')||document.getElementById('invitationStatus').textContent.includes('עדיין לא אומתה'));
   check('unverified identity never reaches redeem',await lp.evaluate(()=>calls.length===0));
   await lp.evaluate(()=>{verifyAccount();window.nextError=true;});await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('connection lost'));
-  check('uncertain retry locks the marketing choice until explicit reset',
-    await lp.locator('#invitationRedeemMarketing').isDisabled() &&
+  check('uncertain retry retains the single agreement action',
+    await lp.locator('#invitationRedeemMarketing').count() === 0 &&
     await lp.locator('#invitationRedeem').isEnabled());
   await lp.locator('#invitationRedeem').click();await lp.waitForFunction(()=>document.getElementById('invitationStatus').textContent.includes('ההזמנה מומשה'));
   check('redeem exact retry preserves request and secret',await lp.evaluate(()=>JSON.stringify(calls[0])===JSON.stringify(calls[1])));

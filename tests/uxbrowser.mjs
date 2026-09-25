@@ -65,6 +65,7 @@ await check((await source.getAttribute('data-date')).startsWith('2026-08-'), 'at
 await check((await attendance.locator('#moLabel').textContent()).includes('אוגוסט 2026'), 'attendance displayed month matches the fixture');
 await source.focus();
 await attendance.keyboard.press('Enter');
+await attendance.locator('#ov[aria-hidden="false"]').waitFor({ state:'visible', timeout:8000 });
 await check(await attendance.locator('#ov').getAttribute('aria-hidden') === 'false', 'attendance dialog opens semantically');
 await attendance.waitForFunction(() => document.activeElement?.id === 'dType');
 await check(await attendance.evaluate(() => document.activeElement?.id === 'dType'), 'attendance dialog focuses its first control');
@@ -95,6 +96,8 @@ await check(await source.evaluate(el => document.activeElement === el), 'attenda
 const sourceDate = await source.getAttribute('data-date');
 await attendance.keyboard.press('Enter');
 await attendance.waitForFunction(() => document.activeElement?.id === 'dType');
+await attendance.locator('#dStart').fill('08:00');
+await attendance.locator('#dEnd').fill('16:00');
 await attendance.locator('#dSave').focus();
 await attendance.keyboard.press('Enter');
 await attendance.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
