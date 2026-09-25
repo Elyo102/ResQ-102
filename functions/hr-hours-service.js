@@ -207,7 +207,7 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
   async function overHoursAlert(req) {
     const requestContext = request(req, []);
     const root = db.collection('stations').doc(requestContext.ctx.sid);
-    return db.runTransaction(async tx => {
+    const response = await db.runTransaction(async tx => {
       await live(tx, requestContext);
       const snap = await tx.get(root.collection('hr_reports').orderBy('month', 'desc').limit(1));
       if (snap.empty) return { month: null, hour_limit: null, over_employees: [] };
@@ -226,6 +226,10 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
         over_employees: employees
       };
     });
+    // Same post-read boundary as listMonth/getEmployeeMonth: an actor revoked,
+    // transferred or deactivated while the report was read is rejected, not served.
+    await finalize(requestContext, new Map());
+    return response;
   }
 
   // Inert until explicitly wired to a callable with notification/quota gates.

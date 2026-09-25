@@ -3526,7 +3526,15 @@ try {
     assert.equal(await button.isVisible(), true, 'the button is offered while the board holds today');
     await todayPage.evaluate(() => { document.getElementById('stationBoard').scrollLeft = 0; });
     await button.click();
-    await todayPage.waitForTimeout(600);
+    // focusTodayColumn scrolls with behavior:'smooth'. A fixed 600ms wait races the
+    // animation on a loaded machine (observed 22px short at 390px wide). Wait for the
+    // scroll to settle instead, then measure; the timeout still fails the test.
+    await todayPage.waitForFunction(() => {
+      const board = document.getElementById('stationBoard');
+      const head = board.querySelector('.hcell.today');
+      const b = board.getBoundingClientRect(), h = head.getBoundingClientRect();
+      return h.left >= b.left - 1 && h.right <= b.right + 1;
+    }, null, { timeout: 5000 });
     const back = await todayPage.evaluate(() => {
       const board = document.getElementById('stationBoard');
       const head = board.querySelector('.hcell.today');

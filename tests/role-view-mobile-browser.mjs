@@ -173,6 +173,15 @@ try {
   for (const width of [320, 360, 390]) {
     const mobile = await open('super', width);
     await check('mobile ' + width + ' selector fits and keeps a touch target', async () => {
+      // login.html animates the card in with transform:scale(.97) (760ms after a 2s
+      // delay). getBoundingClientRect reflects the mid-animation scale, so a 44px
+      // control reads 42.68px. Wait until the enclosing card has settled before
+      // measuring; this measures the real touch target, not an animation frame.
+      await mobile.page.locator('#roleViewSelect').waitFor({ state:'visible', timeout:10000 });
+      await mobile.page.waitForFunction(() => {
+        const card = document.getElementById('roleViewSelect').closest('.card');
+        return !card || getComputedStyle(card).transform === 'none';
+      }, null, { timeout:10000 });
       const metrics = await mobile.page.locator('#roleViewSelect').evaluate(node => ({
         height:node.getBoundingClientRect().height,
         fits:document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
