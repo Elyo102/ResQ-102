@@ -84,6 +84,16 @@ try {
       const decline = pg.locator('#coNo');
       if (await decline.isVisible()) await decline.click({timeout:1000}).catch(()=>{});
       await pg.waitForTimeout(250);
+      // login.html animates its card in with transform:scale(.97) → none over
+      // 760ms after a 2000ms delay (body.art.ready .card). Once auth resolves the
+      // page drops `art`, but the transition that already started keeps running
+      // on its own timeline, so the card sits at 0.97 for ~2.8s after `ready`
+      // even on the home view. A 44px control measured in that window reads
+      // 42.68px and fails the touch-target rule for a frame no finger ever
+      // meets. Wait until no .card is still transformed; on timeout we still
+      // measure and the rule can still fail.
+      await pg.waitForFunction(()=>Array.from(document.querySelectorAll('.card'))
+        .every(c=>getComputedStyle(c).transform==='none'), null, {timeout:10000}).catch(()=>{});
       const r = await pg.evaluate(()=>{
         const de=document.documentElement;
         const nav=document.getElementById('appNav');
