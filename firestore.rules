@@ -43,11 +43,10 @@ service cloud.firestore {
     // immutable Terms 1.3 receipt. An old ID token must not bypass cutover.
     function currentTermsAccepted() {
       let marker = get(/databases/$(database)/documents/registration_terms_active/$(request.auth.uid)).data;
-      return marker.get('uid', '') == request.auth.uid
-             && marker.get('terms_version', '') == '1.3'
-             && marker.get('privacy_version', '') == '2026-09-24'
-             && marker.get('receipt_path', '') is string
-             && marker.get('receipt_path', '').matches('registration_consents/' + request.auth.uid + '/events/.+');
+      // This document is server-write-only and its path already binds it to
+      // the caller. Receipt and identity integrity are verified by Functions.
+      // Keep this hot-path check small enough for complex approval rules.
+      return marker.get('consent_key', '') == '1.3|2026-09-24';
     }
 
     function signedIn() {
@@ -1206,10 +1205,10 @@ service cloud.firestore {
         // הלאה. בלי השורה הזאת כל השרשרת הייתה עיצוב מסך
         // בלבד — מי שיודע לשלוח בקשה היה עוקף אותה.
         allow update: if (
-                        ( staff(sid)
+                        ( resource.data.get('status', '') == 'submitted'
+                          && staff(sid)
                           && seesCrewData(sid, resource.data.get('crew', ''))
                           && resource.data.get('by_uid', '') != request.auth.uid
-                          && resource.data.get('status', '') == 'submitted'
                           && request.resource.data.get('status', '') in
                              ['approved', 'rejected', 'pending_station']
                           // "בחו״ל" נבדק כתבנית ולא כמחרוזת מדויקת.
@@ -1231,9 +1230,9 @@ service cloud.firestore {
                                           && request.resource.data.get('signatures', {})
                                             .get('commander', {}).get('emp', '') == myEmp()))))
                         ||
-                        ( (stationCommander(sid) || isSuper())
+                        ( resource.data.get('status', '') == 'pending_station'
+                          && (stationCommander(sid) || isSuper())
                           && resource.data.get('by_uid', '') != request.auth.uid
-                          && resource.data.get('status', '') == 'pending_station'
                           && request.resource.data.get('status', '') in
                              ['approved', 'rejected']
                           && (request.resource.data.get('status', '') == 'rejected'

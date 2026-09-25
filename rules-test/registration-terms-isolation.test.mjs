@@ -23,12 +23,22 @@ try {
   await assert.rejects(getDocFromServer(doc(superDb, superPath)), error => error?.code === 'permission-denied');
   assert.equal((await getDocFromServer(doc(pendingDb, superPath))).data().status, 'pending');
   await env.withSecurityRulesDisabled(async ctx => {
-    await setDoc(doc(ctx.firestore(), markerPath), { uid: superUid, terms_version: '1.3',
+    await setDoc(doc(ctx.firestore(), markerPath), { uid: superUid, consent_key: '1.2|2026-09-24', terms_version: '1.2',
+      privacy_version: '2026-09-24', receipt_path: 'registration_consents/' + superUid + '/events/old' });
+  });
+  await assert.rejects(getDocFromServer(doc(superDb, superPath)), error => error?.code === 'permission-denied');
+  await env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(doc(ctx.firestore(), markerPath), { uid: superUid, consent_key: '1.3|2026-09-01', terms_version: '1.3',
+      privacy_version: '2026-09-01', receipt_path: 'registration_consents/' + superUid + '/events/old' });
+  });
+  await assert.rejects(getDocFromServer(doc(superDb, superPath)), error => error?.code === 'permission-denied');
+  await env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(doc(ctx.firestore(), markerPath), { uid: superUid, consent_key: '1.3|2026-09-24', terms_version: '1.3',
       privacy_version: '2026-09-24', receipt_path: 'registration_consents/' + superUid + '/events/old' });
   });
   assert.equal((await getDocFromServer(doc(superDb, superPath))).data().status, 'pending');
   await assert.rejects(getDocFromServer(doc(superDb, markerPath)), error => error?.code === 'permission-denied');
-  console.log('registration terms isolation: 4 PASS');
+  console.log('registration terms isolation: 6 PASS');
 } finally {
   await env.cleanup();
 }

@@ -20,12 +20,14 @@ function fixture(request = { status: 'pending' }, customClaims = {}) {
           return { exists: data.has(ref.path), data: () => data.get(ref.path) };
         },
         set(ref, value, opts) { writes.push(['set', ref.path, value, opts]); },
-        create(ref, value) { writes.push(['create', ref.path, value]); }
+        create(ref, value) { writes.push(['create', ref.path, value]); },
+        update(ref, value) { writes.push(['update', ref.path, value]); }
       };
       const result = await fn(tx);
       for (const [mode, path, value, opts] of writes) {
         if (mode === 'create' && data.has(path)) throw new Error('already exists');
-        data.set(path, opts?.merge ? { ...data.get(path), ...value } : value);
+        if (mode === 'update' && !data.has(path)) throw new Error('missing document');
+        data.set(path, opts?.merge || mode === 'update' ? { ...data.get(path), ...value } : value);
       }
       return result;
     }
@@ -118,11 +120,38 @@ async function main() {
       uid: 'member1', request_id: 'original-request', terms_version: '1.3',
       privacy_version: '2026-09-24', marketing_opt_in: false, accepted_at: 99
     });
-    f.data.set('registration_terms_active/member1', { uid: 'member1', terms_version: '1.3',
+    f.data.set('registration_terms_active/member1', { uid: 'member1', consent_key: '1.3|2026-09-24', terms_version: '1.3',
       privacy_version: '2026-09-24',
       receipt_path: 'registration_consents/member1/events/original-request', activated_at: 100 });
     assert.equal((await f.call('status')).accepted, true);
     assert.equal((await f.call('accept', false)).replayed, true);
+  });
+  await test('legacy marker is upgraded only after its immutable receipt is verified', async () => {
+    const f = fixture(null, { emp: '102' });
+    const path = 'registration_consents/member1/events/old-request';
+    f.data.set(path, { uid:'member1', request_id:'old-request', terms_version:'1.3',
+      privacy_version:'2026-09-24', marketing_opt_in:false, accepted_at:99 });
+    f.data.set('registration_terms_active/member1', { uid:'member1', terms_version:'1.3',
+      privacy_version:'2026-09-24', receipt_path:path, activated_at:100 });
+    assert.equal((await f.call('status')).accepted, true);
+    assert.deepEqual(f.data.get('registration_terms_active/member1'), { uid:'member1',
+      consent_key:'1.3|2026-09-24', terms_version:'1.3', privacy_version:'2026-09-24',
+      receipt_path:path, activated_at:100 });
+    await assert.rejects(f.call('accept', true), e => e.code === 'failed-precondition');
+  });
+  await test('corrupt legacy marker or receipt is never upgraded', async () => {
+    const f = fixture(null, { emp:'102' });
+    const path = 'registration_consents/member1/events/old-request';
+    f.data.set('registration_terms_active/member1', { uid:'member1', terms_version:'1.3',
+      privacy_version:'2026-09-24', receipt_path:path, activated_at:100 });
+    f.data.set(path, { uid:'member1', request_id:'other-request', terms_version:'1.3',
+      privacy_version:'2026-09-24', marketing_opt_in:false, accepted_at:99 });
+    await assert.rejects(f.call('status'), e => e.code === 'failed-precondition');
+    assert.equal(f.data.get('registration_terms_active/member1').consent_key, undefined);
+    f.data.set(path, { uid:'other-user', request_id:'old-request', terms_version:'1.3',
+      privacy_version:'2026-09-24', marketing_opt_in:false, accepted_at:99 });
+    await assert.rejects(f.call('status'), e => e.code === 'failed-precondition');
+    assert.equal(f.data.get('registration_terms_active/member1').consent_key, undefined);
   });
   await test('unapproved and corrupt approved receipts do not activate access', async () => {
     const f = fixture(null);

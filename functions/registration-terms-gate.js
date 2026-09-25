@@ -1,7 +1,7 @@
 'use strict';
 
 function validMarker(uid, marker) {
-  return !!marker && marker.uid === uid && marker.terms_version === '1.3' &&
+  return !!marker && marker.uid === uid && marker.consent_key === '1.3|2026-09-24' && marker.terms_version === '1.3' &&
     marker.privacy_version === '2026-09-24' &&
     typeof marker.receipt_path === 'string' && marker.receipt_path.startsWith(
       'registration_consents/' + uid + '/events/');

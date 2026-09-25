@@ -151,6 +151,11 @@ function request(label, options = {}) {
 async function seed(runtime, recipients) {
   await db.doc('config/runtime').set(runtime);
   const batch = db.batch();
+  batch.set(db.doc(`registration_terms_active/${sender}`), {
+    uid:sender, consent_key:'1.3|2026-09-24', terms_version:'1.3',
+    privacy_version:'2026-09-24',
+    receipt_path:`registration_consents/${sender}/events/test-receipt`
+  });
   batch.set(db.doc(`stations/${SID}`), {
     station_id:SID, active:true, status:'ready', silent:false
   });

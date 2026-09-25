@@ -103,6 +103,11 @@ const protectedCollections = [
 try {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
+    await setDoc(doc(db, 'registration_terms_active/stale_member'), {
+      uid:'stale_member', consent_key:'1.3|2026-09-24', terms_version:'1.3',
+      privacy_version:'2026-09-24',
+      receipt_path:'registration_consents/stale_member/events/test-receipt'
+    });
 
     for (const collectionName of protectedCollections) {
       await setDoc(doc(db, collectionName + '/seeded'), {

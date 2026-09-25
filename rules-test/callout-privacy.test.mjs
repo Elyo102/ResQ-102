@@ -29,6 +29,12 @@ const calloutPath = `stations/${SID}/callouts/callout_1`;
 
 await env.withSecurityRulesDisabled(async context => {
   const db = context.firestore();
+  for (const uid of ['commander_1', 'recipient_1', 'recipient_2', 'unrelated_1', 'super_1', 'fake_super']) {
+    await setDoc(doc(db, `registration_terms_active/${uid}`), {
+      uid, consent_key:'1.3|2026-09-24', terms_version:'1.3', privacy_version:'2026-09-24',
+      receipt_path:`registration_consents/${uid}/events/test-receipt`
+    });
+  }
   for (const [uid, role] of [['commander_1','commander'], ['recipient_1','firefighter'], ['recipient_2','firefighter'], ['unrelated_1','firefighter']]) {
     await setDoc(doc(db, `stations/${SID}/users/${uid}`), {
       stationId:SID, role, employee_number:'9' + uid.length, is_active:true

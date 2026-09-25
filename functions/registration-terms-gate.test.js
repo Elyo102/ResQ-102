@@ -7,7 +7,7 @@ class HttpsError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 const uid = 'member1';
-const marker = { uid, terms_version: '1.3', privacy_version: '2026-09-24',
+const marker = { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3', privacy_version: '2026-09-24',
   receipt_path: 'registration_consents/member1/events/receipt1' };
 
 async function main() {
@@ -25,7 +25,7 @@ async function main() {
   assert.equal(reads, 2);
   assert.equal(await onCall(async () => 'anonymous')({}), 'anonymous');
   assert.equal(reads, 2);
-  for (const bad of [{ ...marker, uid: 'other' }, { ...marker, terms_version: '1.2' },
+  for (const bad of [{ ...marker, uid: 'other' }, { ...marker, consent_key: '1.2|2026-09-24' }, { ...marker, terms_version: '1.2' },
     { ...marker, receipt_path: 'registration_consents/other/events/x' }]) {
     assert.equal(validMarker(uid, bad), false);
     current = bad;

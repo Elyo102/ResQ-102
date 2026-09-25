@@ -35,7 +35,9 @@ function createRegistrationTermsConsentService({ db, auth, HttpsError, serverTim
         const markerSnap = await tx.get(markerRef);
         const marker = markerSnap.exists ? markerSnap.data() || {} : null;
         const receiptPrefix = 'registration_consents/' + uid + '/events/';
-        if (marker && (marker.uid !== uid || marker.terms_version !== '1.3' ||
+        if (marker && (marker.uid !== uid ||
+            (marker.consent_key !== undefined && marker.consent_key !== '1.3|2026-09-24') ||
+            marker.terms_version !== '1.3' ||
             marker.privacy_version !== '2026-09-24' ||
             typeof marker.receipt_path !== 'string' ||
             !marker.receipt_path.startsWith(receiptPrefix))) {
@@ -65,28 +67,35 @@ function createRegistrationTermsConsentService({ db, auth, HttpsError, serverTim
         const receiptPath = valid(markerReceipt) ? markerReceiptRef.path :
           valid(approvedReceipt) ? approvedRef.path :
           valid(operationReceipt) ? operationRef.path : '';
-        if (marker && (!valid(markerReceipt) || marker.receipt_path !== receiptPath)) {
+        if (marker && (!valid(markerReceipt) || marker.receipt_path !== receiptPath ||
+            (markerReceipt.request_id && marker.receipt_path !== receiptPrefix + markerReceipt.request_id))) {
           fail('failed-precondition', 'סמן ההסכמה אינו תואם לקבלה; פנה למנהל המערכת.');
         }
         if (action === 'status') {
-          if (accepted && !marker) tx.create(markerRef, { uid, terms_version: '1.3',
+          if (accepted && !marker) tx.create(markerRef, { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3',
             privacy_version: '2026-09-24', receipt_path: receiptPath,
             activated_at: serverTimestamp() });
+          else if (accepted && marker && marker.consent_key === undefined) {
+            tx.update(markerRef, { consent_key: '1.3|2026-09-24' });
+          }
           return { ok: true, accepted, status: 'approved' };
         }
         if (accepted) {
           if (previous.marketing_opt_in !== input.marketing_opt_in) {
             fail('failed-precondition', 'בחירת ההסכמה הקודמת נשמרה ולא ניתן לשנותה כניסיון חוזר.');
           }
-          if (!marker) tx.create(markerRef, { uid, terms_version: '1.3',
+          if (!marker) tx.create(markerRef, { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3',
             privacy_version: '2026-09-24', receipt_path: receiptPath,
             activated_at: serverTimestamp() });
+          else if (marker.consent_key === undefined) {
+            tx.update(markerRef, { consent_key: '1.3|2026-09-24' });
+          }
           return { ok: true, accepted: true, replayed: true };
         }
         tx.create(approvedRef, { uid, terms_version: '1.3', privacy_version: '2026-09-24',
           marketing_opt_in: input.marketing_opt_in, accepted_at: serverTimestamp(),
           source: 'approved_account_reconsent' });
-        tx.create(markerRef, { uid, terms_version: '1.3', privacy_version: '2026-09-24',
+        tx.create(markerRef, { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3', privacy_version: '2026-09-24',
           receipt_path: approvedRef.path, activated_at: serverTimestamp() });
         return { ok: true, accepted: true, replayed: false };
       }

@@ -38,6 +38,7 @@ async function ok(name, p) {
   try { await assertSucceeds(p); console.log('  \x1b[32m✓\x1b[0m ' + name); pass++; }
   catch (e) {
     console.log('  \x1b[31m✗\x1b[0m ' + name + '  \x1b[2m← נחסם, והיה אמור להיות מותר\x1b[0m');
+    console.log('    סיבה: ' + String(e && e.message || e).slice(0, 600));
     failures.push(name + ' — נחסם והיה אמור להיות מותר'); fail++;
   }
 }
@@ -147,9 +148,10 @@ await env.withSecurityRulesDisabled(async (c) => {
   const termsBatch = writeBatch(d);
   for (const uid of ['u_ff', 'u_ffb', 'u_cmda', 'u_cmdb', 'u_dep', 'u_st', 'u_hr',
     'u_st_inactive', 'u_hr_inactive', 'u_hr_stale', 'u_hr_missing', 'u_sup',
+    'u_super_claim_only',
     'u_out', 'u_out_hr', 'u_dist', 'u_new', 'u_tl', 'u_dtl', 'u_legacy_num']) {
     termsBatch.set(doc(d, 'registration_terms_active/' + uid), {
-      uid, terms_version: '1.3', privacy_version: '2026-09-24',
+      uid, consent_key: '1.3|2026-09-24', terms_version: '1.3', privacy_version: '2026-09-24',
       receipt_path: 'registration_consents/' + uid + '/events/test-receipt'
     });
   }

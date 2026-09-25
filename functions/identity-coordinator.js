@@ -614,6 +614,7 @@ function createIdentityCoordinator(deps) {
         // The marker is usable only with a later approved identity claim.
         tx.set(db.doc('registration_terms_active/' + params.uid), {
           uid: params.uid,
+          consent_key: '1.3|2026-09-24',
           terms_version: '1.3',
           privacy_version: '2026-09-24',
           receipt_path: 'registration_consents/' + params.uid + '/events/' + exactRequestId,

@@ -74,6 +74,11 @@ for (const stationId of [sid, otherSid]) {
   seed('stations/' + stationId + '/vehicles/control', { name: 'Synthetic operational control', active: true });
 }
 for (const actor of actors) {
+  if (!actor.unauthenticated) seed('registration_terms_active/' + actor.uid, {
+    uid:actor.uid, consent_key:'1.3|2026-09-24', terms_version:'1.3',
+    privacy_version:'2026-09-24',
+    receipt_path:`registration_consents/${actor.uid}/events/test-receipt`
+  });
   if (actor.stationId) seed('stations/' + actor.stationId + '/users/' + actor.uid, {
     uid: actor.uid, role: actor.role, stationId: actor.stationId, employee_number: actor.emp,
     crew: 'A', active: true, is_active: true, full_name: 'Synthetic fixture' });

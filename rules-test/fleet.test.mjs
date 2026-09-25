@@ -89,6 +89,12 @@ const boardDoc = (vehicles, command) => ({
 try {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
+    for (const uid of ['ff', 'dep', 'cmd', 'stcmd', 'hr', 'sup', 'out']) {
+      await setDoc(doc(db, `registration_terms_active/${uid}`), {
+        uid, consent_key:'1.3|2026-09-24', terms_version:'1.3',
+        privacy_version:'2026-09-24', receipt_path:`registration_consents/${uid}/events/test-receipt`
+      });
+    }
     await setDoc(doc(db, `stations/${SID}`), {
       name: 'Fleet', districtId: 'south', status: 'active', active: true, lifecycle: { revision: 1 }
     });
