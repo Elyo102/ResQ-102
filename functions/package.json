@@ -5,7 +5,8 @@
   "scripts": {
     "test:onboarding-callables": "node onboarding-callables.integration.test.js",
     "audit:station-claims": "node run-station-claims-audit.js",
-    "test:identity": "node identity-coordinator.integration.test.js"
+    "test:identity": "node identity-coordinator.integration.test.js",
+    "test:hardening": "node app-check-gate.test.js && node auth-hardening.test.js && node fresh-admin.test.js && node station-jobs.test.js && node swap-safety.test.js"
   },
   "engines": {
     "node": "22"
