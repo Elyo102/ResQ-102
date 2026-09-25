@@ -283,7 +283,14 @@ export function createJoinPanel(root, deps) {
     restoreTransientDraft();
     controls();
   }
-  function controls() { root.querySelectorAll('button, input, select, textarea').forEach((n) => { n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified)); }); }
+  function controls() {
+    // A pending account/redeem request must not be interrupted by a PWA update,
+    // even when all input controls are disabled and appear empty to the guard.
+    root.dataset.pwaUpdateBlocked = state.busy ? 'true' : 'false';
+    root.querySelectorAll('button, input, select, textarea').forEach((n) => {
+      n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified));
+    });
+  }
   const DRAFT_TTL_MS = 30 * 60 * 1000;
   function draftKey(uid) {
     return 'resq_join_draft_v2:' + token.slice(0, 16) + ':' + (uid || 'guest');

@@ -91,6 +91,35 @@ try {
       login.match(/const protectedIds = \[([\s\S]*?)\];/)?.[1].includes("'" + id + "'")));
   await page.close();
 
+  const guardPage = await browser.newPage();
+  await guardPage.setContent('<div id="authView"><div id="joinPanel"><form id="joinForm">' +
+    '<input id="joinName"><input id="joinQual_driver" type="checkbox">' +
+    '<input id="joinShift_A" name="joinShift" type="radio" checked>' +
+    '<input id="joinShift_B" name="joinShift" type="radio">' +
+    '<input id="joinAck" type="checkbox"></form></div></div><div id="homeView" class="hide"></div>');
+  const guardStart = login.indexOf("['input', 'change'].forEach(function (type) {");
+  const guardEnd = login.indexOf('initPWA({ offer: true });', guardStart);
+  assert.ok(guardStart >= 0 && guardEnd > guardStart, 'login update guard can be exercised');
+  await guardPage.addScriptTag({ content:
+    'const $ = (id) => document.getElementById(id);' +
+    'let authSettled=true, onboarding=false, loginTransitionPending=false;' +
+    'function registerPwaUpdateGuard(guard) { window.checkUpdate = guard; }' +
+    login.slice(guardStart, guardEnd) });
+  check('untouched join form permits manual update', await guardPage.evaluate(() => window.checkUpdate() === true));
+  await guardPage.locator('#joinQual_driver').check();
+  check('qualification-only draft blocks update', await guardPage.evaluate(() => window.checkUpdate() !== true));
+  await guardPage.evaluate(() => { document.getElementById('joinPanel').dataset.joinDraftDirty = ''; });
+  await guardPage.locator('#joinShift_B').check();
+  check('shift-only draft blocks update', await guardPage.evaluate(() => window.checkUpdate() !== true));
+  await guardPage.evaluate(() => { document.getElementById('joinPanel').dataset.joinDraftDirty = ''; });
+  await guardPage.locator('#joinAck').check();
+  check('acknowledgement-only draft blocks update', await guardPage.evaluate(() => window.checkUpdate() !== true));
+  await guardPage.locator('#joinForm').evaluate((form) => { form.innerHTML = '<input id="joinName">'; });
+  check('form rerender cannot erase the dirty guard', await guardPage.evaluate(() => window.checkUpdate() !== true));
+  await guardPage.evaluate(() => { document.getElementById('joinPanel').classList.add('hide'); });
+  check('hidden join form does not block update', await guardPage.evaluate(() => window.checkUpdate() === true));
+  await guardPage.close();
+
   const boardPage = await browser.newPage({ viewport:{ width:320, height:740 } });
   await boardPage.setContent('<html dir="rtl"><style>#board{direction:rtl;width:320px;overflow:auto;--dayw:80px}#wide{width:2800px;height:20px}</style><div id="head"></div><div id="board"><div id="wide"></div></div></html>');
   const start = schedule.indexOf('function renderBoardHead(');

@@ -241,8 +241,22 @@ assert.equal(waitingDespiteCheckFailure.replaced.length, 1,
     'pre-auth update status is announced accessibly');
   assert.match(loginSource, /\$\('preAuthUpdate'\)\.onclick = function \(\) \{ return runVisibleUpdate/,
     'pre-auth and profile update buttons share one update flow');
-  assert.match(loginSource, /protectedIds = \['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2'\]/,
-    'update guard protects typed credentials, invitation secrets and registration data');
+  const protectedList = loginSource.match(/const protectedIds = \[([\s\S]*?)\];/);
+  assert.ok(protectedList, 'login declares protected pre-auth controls');
+  const protectedIds = [...protectedList[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
+  assert.equal(new Set(protectedIds).size, protectedIds.length, 'protected controls contain no duplicates');
+  for (const id of ['loginEmp','loginPass','invitationId','invitationSecret','invitationEmail',
+    'invitationPassword','fName','fEmail','fPhone','fDistrict','fStation','fShift','fPass','fPass2',
+    'joinEmail','joinPassword','joinName','joinPhone','joinNote']) {
+    assert.ok(protectedIds.includes(id), 'update guard protects ' + id);
+  }
+  assert.match(loginSource, /protectedIds\.some\(function \(id\)/,
+    'update guard checks protected control values before activation');
+  assert.match(loginSource, /join\.dataset\.joinDraftDirty === 'true'/,
+    'update guard also checks non-text join form changes');
+  const joinSource = fs.readFileSync(path.join(root, 'join-ui.js'), 'utf8');
+  assert.match(joinSource, /root\.dataset\.pwaUpdateBlocked = state\.busy \? 'true' : 'false'/,
+    'a pending join operation blocks an update even if the form controls are disabled');
 }
 
 {

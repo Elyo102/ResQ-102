@@ -1028,12 +1028,27 @@ const HOME_NAVIGATION = (function () {
   try { return new URLSearchParams(location.search).get('home') === '1'; }
   catch (ignore) { return false; }
 })();
+// The join form is rebuilt after token refresh. Keep a user-interaction marker
+// on its stable panel so a changed shift/qualification cannot disappear during
+// a PWA activation merely because its replacement controls have no DOM default.
+['input', 'change'].forEach(function (type) {
+  $('joinPanel').addEventListener(type, function (event) {
+    if (event.target && event.target.closest('#joinForm')) {
+      $('joinPanel').dataset.joinDraftDirty = 'true';
+    }
+  });
+});
 registerPwaUpdateGuard(function () {
   if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
   if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
+  const join = $('joinPanel');
+  if (join && !join.classList.contains('hide') && join.dataset.joinDraftDirty === 'true') {
+    return 'יש פרטי הצטרפות שטרם נשמרו. סיים/י או נקה/י אותם לפני העדכון.';
+  }
   const authView = $('authView');
   if (authView && !authView.classList.contains('hide')) {
-    const protectedIds = ['loginPass','invitationSecret','invitationPassword','fName','fEmail','fPhone','fPass','fPass2',
+    const protectedIds = ['loginEmp','loginPass','invitationId','invitationSecret','invitationEmail','invitationPassword',
+      'fName','fEmail','fPhone','fDistrict','fStation','fShift','fPass','fPass2',
       'joinEmail','joinPassword','joinName','joinPhone','joinNote'];
     if (protectedIds.some(function (id) { const el = $(id); return el && String(el.value || '').trim(); })) {
       return 'יש פרטים שמולאו במסך. נקה אותם לפני העדכון כדי שלא יאבדו.';
