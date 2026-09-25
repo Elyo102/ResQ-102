@@ -119,7 +119,8 @@ const D = Object.freeze({
   noClientIdentity: (body) => !/data\.(uid|person|subject|recipient|employee)/.test(body),
   noUidFromBody: (runtime) => !/req\.data\.uid|data\.uid\b/.test(runtime),
   capFromServer: (ui) =>
-    /function canManageSchedule\(\) \{[\s\S]{0,220}state\.status\.manager === true/.test(ui),
+    /function hasManagerAccess\(\) \{[\s\S]{0,220}state\.status\.manager === true/.test(ui)
+    && /function canManageSchedule\(\) \{[\s\S]{0,160}state\.managerSetupReady === true && hasManagerAccess\(\)/.test(ui),
   notFromClaims: (ui) => !/claims\.(manager|schedule_manager|roles)/.test(ui),
   notFromWidth: (ui) => !/matchMedia|innerWidth\s*[<>]/.test(ui),
   modeFromServer: (ui) => /view\.may_change !== true/.test(ui),

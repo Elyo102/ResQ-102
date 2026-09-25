@@ -1,15 +1,15 @@
-import { firebaseConfig } from './firebase-config.js?v=42h38';
-import { renderNav, renderStuckNav } from './nav.js?v=42h38';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h38';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h38';
-import { initAppCheck } from './appcheck.js?v=42h38';
-import { readScheduleFile } from './schedule-file-import.js?v=42h38';
-import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h38';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h38';
+import { firebaseConfig } from './firebase-config.js?v=42h39';
+import { renderNav, renderStuckNav } from './nav.js?v=42h39';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h39';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h39';
+import { initAppCheck } from './appcheck.js?v=42h39';
+import { readScheduleFile } from './schedule-file-import.js?v=42h39';
+import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h39';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h39';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h38';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h38';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h39';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h39';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -23,6 +23,12 @@ function mutationCallable(name) {
   return function (payload) {
     if (!scheduleMutationAllowed()) {
       const error = new Error('תצוגת תפקיד היא לקריאה בלבד.');
+      error.code = 'failed-precondition';
+      return Promise.reject(error);
+    }
+    if (!['setScheduleRuntimeMode', 'promoteScheduleToNew', 'respondToSchedule'].includes(name)
+        && !canManageSchedule()) {
+      const error = new Error('ניהול הסידור ייפתח רק לאחר טעינת הגדרות התחנה.');
       error.code = 'failed-precondition';
       return Promise.reject(error);
     }
@@ -73,7 +79,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   user: null, claims: {}, status: null, setup: null, draft: null,
   roleView: Object.freeze({ selected:'actual', preview:false, presentation:null, readOnly:false }),
-  authResolving: true,
+  authResolving: true, managerSetupReady: false, tabChoiceRevision: 0,
   // כל אירוע התחברות מקבל דור חדש. כך תשובה שהתחילה עבור משתמש
   // קודם אינה יכולה להיכנס למטמון או להיצבע במסך של המשתמש הבא.
   authGeneration: 0, authScope: null, authContextVersion: 0,
@@ -101,6 +107,7 @@ const state = {
   tab: null, busy: false, editDrawerOpen: false, editDrawerReturnFocus: null,
   editFormDirty: false, qualificationsDirty: false, gapPolicyDirty: false
 };
+let managerSetupFlight = null;
 
 renderStuckNav('');
 registerPwaUpdateGuard(() => schedulePwaUpdateGuard(state, document));
@@ -342,10 +349,14 @@ function applyPageRoleView(user, claims) {
  * ו-`publish` אוכפים `requireMode` בעצמם. המסך רק מפסיק להסתיר
  * מסך שהשרת ממילא מרשה.
  */
-function canManageSchedule() {
+function hasManagerAccess() {
   return !!state.status && (state.roleView.preview
     ? state.roleView.showScheduleManagement === true
     : state.status.manager === true);
+}
+
+function canManageSchedule() {
+  return state.managerSetupReady === true && hasManagerAccess();
 }
 
 function canRunSchedule() {
@@ -2107,7 +2118,7 @@ function watchWeekLabel(boardId, weekLabelId, dayCount) {
 /* ---------------- סידור התחנה ---------------- */
 
 async function loadStationRange(ym) {
-  if (!canViewSchedule()) return;
+  if (!canViewSchedule()) return null;
   const generation = state.authGeneration;
   const requestedMonth = ym || state.month || monthStart();
   state.month = requestedMonth;
@@ -2118,11 +2129,11 @@ async function loadStationRange(ym) {
   $('stationNote').textContent = '';
   try {
     const view = await fetchRange(requestedMonth, true);
-    if (generation !== state.authGeneration || state.month !== requestedMonth) return;
+    if (generation !== state.authGeneration || state.month !== requestedMonth) return null;
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
-      return;
+      return { active:false, source:view.source || null };
     }
     renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
@@ -2136,15 +2147,21 @@ async function loadStationRange(ym) {
         : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.'
         + publishedLine(state.status && state.status.active))
       + absenceNote(view.days) + guardsNotice(view.days);
+    return {
+      active:true, source:view.source || null,
+      draft_id:view.draft_id || null,
+      display_generation:view.display_generation
+    };
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
-        || state.month !== requestedMonth) return;
+        || state.month !== requestedMonth) return null;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
     const retry = node('button', 'btn sm', 'נסה שוב');
     retry.type = 'button';
     retry.addEventListener('click', () => loadStationRange(requestedMonth));
     box.appendChild(retry);
+    return null;
   }
 }
 
@@ -3143,7 +3160,7 @@ function updateImportDisplayAvailability() {
 }
 
 async function loadImportDisplayStatus(month, generation = state.authGeneration) {
-  if (!canManageSchedule() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
+  if (!hasManagerAccess() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
   if ($('importMonth').value !== month) return;
   const sequence = ++state.displayStatusSequence;
   state.importDisplay = null;
@@ -3203,11 +3220,17 @@ async function showImportedSchedule() {
     state.importDisplay = result;
     state.displayPending = null;
     renderImportDisplayStatus();
-    message('importMessage', 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר '
-      + state.status.mode + ' ולא נשלחה שום התראה.', 'ok');
     invalidateRange();
-    await loadStationRange(month);
+    const board = await loadStationRange(month);
     if (!authTaskCurrent(task)) return;
+    const boardReady = !!board && board.active === true
+      && board.source === 'imported-display'
+      && board.draft_id === result.draft_id
+      && Number(board.display_generation) === Number(result.generation);
+    message('importMessage', boardReady
+      ? 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר ' + state.status.mode + ' ולא נשלחה שום התראה.'
+      : 'הפעולה נשמרה, אך לא ניתן לאמת כעת את הלוח המעודכן. נסו לרענן את הסידור.',
+    boardReady ? 'ok' : 'warn');
   } catch (error) {
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
@@ -3252,10 +3275,15 @@ async function clearImportedSchedule() {
     state.importDisplay = result;
     state.displayPending = null;
     renderImportDisplayStatus();
-    message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
     invalidateRange();
-    await loadStationRange(month);
+    const board = await loadStationRange(month);
     if (!authTaskCurrent(task)) return;
+    const boardReady = !!board && board.source !== 'imported-display'
+      && (board.active === false || ['legacy', 'v2'].includes(board.source));
+    message('importMessage', boardReady
+      ? 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.'
+      : 'הפעולה נשמרה, אך לא ניתן לאמת כעת את הלוח המעודכן. נסו לרענן את הסידור.',
+    boardReady ? 'ok' : 'warn');
   } catch (error) {
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
@@ -3612,7 +3640,7 @@ async function rollbackSchedule() {
 }
 
 async function loadSetup(generation = state.authGeneration) {
-  if (!canManageSchedule()) return;
+  if (!hasManagerAccess()) return;
   try {
     const setup = (await call.setup({})).data;
     if (generation !== state.authGeneration) return;
@@ -4536,6 +4564,8 @@ $('qualSearch').addEventListener('input', renderQualPeople);
 async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration) return;
   state.user = user;
+  state.managerSetupReady = false;
+  managerSetupNotice('', false);
   let claims = knownClaims;
   if (claims === undefined) {
     try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
@@ -4570,22 +4600,38 @@ async function boot(user, generation, knownClaims, knownStatus) {
     // that authoritative request (commanders may lack the manager appointment),
     // but do not hold the board behind its network latency. loadModeOptions
     // checks authGeneration before it can paint a late response.
-    if (!canManageSchedule()) {
+    if (!hasManagerAccess()) {
       void loadModeOptions(generation);
       chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
       $('appMain').classList.remove('hide');
       return;
     }
-    const [setupLoaded] = await Promise.all([loadSetup(generation), loadModeOptions(generation),
-      loadImportDisplayStatus($('importMonth').value, generation)]);
-    if (generation !== state.authGeneration || state.user !== user) return;
-    if (canManageSchedule() && setupLoaded === false) {
-      throw new Error('לא ניתן לטעון את הגדרות התחנה הנוכחית.');
+    const requestedTab = new URLSearchParams(location.search).get('tab') || 'station';
+    const tabRevision = state.tabChoiceRevision;
+    // Only fetch the signed range when a board was requested. A manager deep
+    // link must not add a full-month read just to fill the setup wait.
+    const wantsBoard = requestedTab === 'mine' || requestedTab === 'station';
+    if (wantsBoard) chooseTab(requestedTab, false);
+    else {
+      state.tab = null;
+      document.querySelectorAll('[data-tab]').forEach((button) => {
+        button.classList.remove('on');
+        button.setAttribute('aria-selected', 'false');
+      });
+      ['manageView', 'mineView', 'stationView', 'qualsView'].forEach((id) => { $(id).hidden = true; });
     }
-    updateImportDisplayAvailability();
-    updateEditAvailability();
-    chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
     $('appMain').classList.remove('hide');
+    managerSetupNotice(wantsBoard
+      ? 'כלי הניהול נטענים. הסידור זמין בינתיים לקריאה.'
+      : 'כלי ניהול הסידור נטענים. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', false);
+    // Command options and imported-display status are independent of manager
+    // setup. Their handlers own error states and auth-generation guards.
+    void loadModeOptions(generation);
+    void loadImportDisplayStatus($('importMonth').value, generation);
+    const setupLoaded = await loadManagerSetup(generation);
+    if (generation !== state.authGeneration || state.user !== user) return;
+    if (setupLoaded === true) finishManagerSetup(requestedTab, tabRevision);
+    else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
   } catch (error) {
     if (generation !== state.authGeneration || state.user !== user) return;
     state.status = null;
@@ -4599,7 +4645,10 @@ async function boot(user, generation, knownClaims, knownStatus) {
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) =>
-  button.addEventListener('click', () => chooseTab(button.dataset.tab)));
+  button.addEventListener('click', () => {
+    state.tabChoiceRevision += 1;
+    chooseTab(button.dataset.tab);
+  }));
 $('previewPrev').addEventListener('click', () => {
   if (!state.draftPreview || $('previewPrev').disabled) return;
   loadDraftPreview(shiftDate(state.previewStart, -7), false);
@@ -4789,6 +4838,59 @@ $('sourceCheck').addEventListener('click', managerAction(checkSource));
 $('sourceSave').addEventListener('click', managerAction(saveSource));
 addEventListener('resize', refitAll);
 
+function managerSetupNotice(text, retry) {
+  $('managerSetupNotice').hidden = !text;
+  $('managerSetupNoticeText').textContent = text || '';
+  $('managerSetupRetry').hidden = retry !== true;
+  if (!text || retry === true) $('managerSetupRetry').disabled = false;
+}
+
+// A token refresh invalidates an in-flight setup response. Wait for that
+// request to settle before starting the current generation's request, so a
+// single station does not receive overlapping setup reads.
+async function loadManagerSetup(generation = state.authGeneration) {
+  const scope = state.authScope;
+  while (generation === state.authGeneration && state.authScope === scope && hasManagerAccess()) {
+    const flight = managerSetupFlight;
+    if (flight && flight.scope === scope) {
+      const loaded = await flight.promise;
+      if (flight.generation === generation) return loaded;
+      continue;
+    }
+    const next = { scope, generation, promise:null };
+    next.promise = loadSetup(generation).finally(() => {
+      if (managerSetupFlight === next) managerSetupFlight = null;
+    });
+    managerSetupFlight = next;
+    return next.promise;
+  }
+  return undefined;
+}
+
+function finishManagerSetup(requestedTab, tabRevision) {
+  state.managerSetupReady = true;
+  managerSetupNotice('', false);
+  showScheduleViews();
+  setRollbackAvailability();
+  updateImportDisplayAvailability();
+  updateEditAvailability();
+  if (state.tabChoiceRevision === tabRevision && state.tab !== requestedTab) chooseTab(requestedTab);
+}
+
+$('managerSetupRetry').addEventListener('click', async () => {
+  if (!hasManagerAccess() || state.managerSetupReady || state.authResolving) return;
+  const generation = state.authGeneration;
+  const tabRevision = state.tabChoiceRevision;
+  const requestedTab = new URLSearchParams(location.search).get('tab') || 'manage';
+  $('managerSetupRetry').disabled = true;
+  managerSetupNotice('בודק מחדש את הגדרות התחנה. אפשר לצפות בסידור בזמן ההמתנה.', false);
+  const loaded = await loadManagerSetup(generation);
+  if (generation !== state.authGeneration || !hasManagerAccess()) return;
+  $('managerSetupRetry').disabled = false;
+  if (loaded) finishManagerSetup(requestedTab, tabRevision);
+  else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
+});
+
 // כל המידע הבא שייך לזהות ולתחנה שאושרו בשרת. החלפת scope אינה
 // רק החלפת לוח: היא מוחקת גם טיוטות, מדיניות, מקור, התאמות שמות,
 // כשירויות ומזהי ניסיון חוזר. כך כשל בטעינת התחנה הבאה אינו יכול
@@ -4796,6 +4898,7 @@ addEventListener('resize', refitAll);
 function resetScopedWorkspace() {
   Object.assign(state, {
     authContextVersion: state.authContextVersion + 1,
+    managerSetupReady: false, tabChoiceRevision: 0,
     setup: null, draft: null, draftPreview: null, previewStart: null,
     publishRequestId: null, publishRequestKey: null,
     plannerPending: null, rollbackPending: null,
@@ -4954,6 +5057,21 @@ async function handleIdToken(user) {
     showUnavailable('הסידור החדש עדיין אינו פעיל',
       'לא ניתן לקבוע איזו תצוגת סידור בטוחה להצגה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
     $('appMain').classList.remove('hide');
+    return;
+  }
+  if (hasManagerAccess() && !state.managerSetupReady) {
+    const requestedTab = state.tab || new URLSearchParams(location.search).get('tab') || 'station';
+    const tabRevision = state.tabChoiceRevision;
+    showScheduleViews();
+    if (requestedTab === 'station' || requestedTab === 'mine') chooseTab(requestedTab, false);
+    managerSetupNotice('מאמת מחדש את כלי ניהול הסידור. אפשר לצפות בסידור בזמן ההמתנה.', false);
+    $('appMain').classList.remove('hide');
+    void loadModeOptions(generation);
+    void loadImportDisplayStatus($('importMonth').value, generation);
+    const loaded = await loadManagerSetup(generation);
+    if (generation !== state.authGeneration || state.authScope !== nextScope) return;
+    if (loaded === true) finishManagerSetup(requestedTab, tabRevision);
+    else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
     return;
   }
   setRollbackAvailability();

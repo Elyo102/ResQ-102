@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h38">
+  <link rel="stylesheet" href="./theme.css?v=42h39">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -566,6 +566,10 @@
     <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
     <button type="button" data-tab="quals" id="qualsTab" hidden>כשירויות</button>
   </nav>
+  <div class="card" id="managerSetupNotice" role="status" aria-live="polite" hidden>
+    <p id="managerSetupNoticeText">כלי הניהול נטענים. סידור התחנה זמין בינתיים לקריאה.</p>
+    <button class="btn" id="managerSetupRetry" type="button" hidden>נסה שוב לטעון כלי ניהול</button>
+  </div>
 
   <section id="manageView" hidden>
     <article class="card manager-workflow" id="managerWorkflow" aria-labelledby="managerWorkflowTitle">
@@ -893,6 +897,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h38"></script>
+<script type="module" src="./schedule-management.js?v=42h39"></script>
 </body>
 </html>

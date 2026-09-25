@@ -54,7 +54,7 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = 'http://127.0.0.1:' + server.address().port;
 
-async function open(browser, role) {
+async function open(browser, role, emptyOtherHandovers = false) {
   const context = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL', serviceWorkers:'block' });
   await context.addInitScript(name => { window.__SMOKE_ROLE = name; }, role);
   await context.route('**/firebasejs/**', route => {
@@ -66,6 +66,9 @@ async function open(browser, role) {
       body = body.replace('const FAULTS = [', `const FAULTS = [
         ['building-open', { kind:'building', title:'נזילה בתקרת חדר האוכל', severity:'unset',
           status:'open', photos:0, by_uid:'u2', by_name:'טל', created_key:'2026-09-11T07:00:00.000Z' }],`);
+      if (emptyOtherHandovers) body = body.replace(
+        'return delayed(listSnap(HANDOVERS));',
+        "return delayed(listSnap(p.includes('stations/other_station/') ? [] : HANDOVERS));");
     }
     route.fulfill({ status:200, contentType:'text/javascript', body });
   });
@@ -213,10 +216,85 @@ try {
     assert.equal(sent.severity, 'blocking');
     assert.equal(sent.vehicleId, '');
   });
+  await test('מסירות אינן נקראות בכניסה למסך תקלות רגיל', async () => {
+    const paths = await commander.page.evaluate(() => window.__DATA_PATHS || []);
+    assert.equal(paths.filter(path => path.endsWith('/handovers')).length, 0);
+  });
+  await test('כשל בטעינת מסירות חוסם חתימה ומציע ניסיון חוזר', async () => {
+    await commander.page.evaluate(() => { window.__SMOKE_FAIL_PATHS = ['/handovers']; });
+    await tap(commander.page.locator('#tabShift'));
+    await commander.page.locator('#hoState .msg.err').waitFor();
+    assert.equal(await commander.page.locator('#hoAcceptWrap').isVisible(), false);
+    const beforeWrites = await commander.page.evaluate(() => (window.__FIRESTORE_WRITES || []).length);
+    await tap(commander.page.locator('#btnAccept'));
+    assert.equal(await commander.page.evaluate(() => (window.__FIRESTORE_WRITES || []).length), beforeWrites);
+    const paths = await commander.page.evaluate(() => window.__DATA_PATHS || []);
+    assert.equal(paths.filter(path => path.endsWith('/handovers')).length, 1);
+  });
+  await test('ניסיון חוזר טוען מסירות פעם אחת; מעבר לשונית מהיר משתמש בתוצאה', async () => {
+    await commander.page.evaluate(() => { window.__SMOKE_FAIL_PATHS = []; });
+    await tap(commander.page.locator('#hoState button'));
+    await commander.page.getByText('לוג מסירות').waitFor();
+    const before = (await commander.page.evaluate(() => window.__DATA_PATHS || []))
+      .filter(path => path.endsWith('/handovers')).length;
+    assert.equal(before, 2);
+    await tap(commander.page.locator('#tabOpen'));
+    await tap(commander.page.locator('#tabShift'));
+    const after = (await commander.page.evaluate(() => window.__DATA_PATHS || []))
+      .filter(path => path.endsWith('/handovers')).length;
+    assert.equal(after, before);
+  });
+  await test('כשל בכתיבת חתימה משאיר את ההערכה ומציג כשל', async () => {
+    await commander.page.evaluate(() => {
+      window.confirm = () => true;
+      window.__FIRESTORE_WRITE_FAIL_PATHS = ['/handovers/'];
+    });
+    await commander.page.locator('#hoMsg').fill('הערכת מצב לבדיקה');
+    await tap(commander.page.locator('#btnAccept'));
+    await commander.page.locator('#hoSignMsg.err').waitFor();
+    assert.equal(await commander.page.locator('#hoMsg').inputValue(), 'הערכת מצב לבדיקה');
+  });
+  await test('מסירה קודמת נלקחת מהקריאה הטרייה; אישור הצלחה דורש אימות חוזר', async () => {
+    await commander.page.evaluate(() => { window.__FIRESTORE_WRITE_FAIL_PATHS = []; });
+    const before = await commander.page.evaluate(() => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')).length);
+    await tap(commander.page.locator('#btnAccept'));
+    await commander.page.waitForFunction(n => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')).length === n + 1, before);
+    const rows = await commander.page.evaluate(() => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')));
+    assert.equal(rows.at(-1).value.from_uid, 'u2');
+    assert.equal(rows.at(-1).value.from_name, 'טל חודרה');
+    assert.equal(rows.at(-1).value.assessment, 'הערכת מצב לבדיקה');
+    await commander.page.getByText('אין לחתום שוב לפני בדיקה').waitFor();
+    assert.equal(await commander.page.locator('#hoMsg').inputValue(), 'הערכת מצב לבדיקה');
+  });
   assert.deepEqual(commander.errors, []);
   await commander.context.close();
+
+  const delayed = await open(browser, 'commander', true);
+  await test('חתימה בזמן טעינה ומסירה מאוחרת מתחנה קודמת אינן נרשמות או מצוירות', async () => {
+    const writesBefore = await delayed.page.evaluate(() => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')).length);
+    await delayed.page.evaluate(() => { window.__SMOKE_LAG_PLAN = [220]; });
+    await tap(delayed.page.locator('#tabShift'));
+    await delayed.page.waitForFunction(() => (window.__DATA_PATHS || [])
+      .some(path => path.endsWith('/handovers')));
+    await tap(delayed.page.locator('#btnAccept'));
+    assert.equal(await delayed.page.evaluate(() => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')).length), writesBefore);
+    await delayed.page.evaluate(() => window.__SMOKE_EMIT_AUTH('commander', 'other-user', {
+      stationId:'other_station', shift:'B', email:'other@example.invalid'
+    }));
+    await delayed.page.waitForTimeout(280);
+    assert.equal(await delayed.page.getByText('לוג מסירות').count(), 0);
+    assert.equal(await delayed.page.evaluate(() => (window.__FIRESTORE_WRITES || [])
+      .filter(row => row.path.includes('/handovers/')).length), writesBefore);
+  });
+  assert.deepEqual(delayed.errors, []);
+  await delayed.context.close();
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
-console.log('Faults browser: ' + passed + '/10 passed.');
+console.log('Faults browser: ' + passed + '/16 passed.');

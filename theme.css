@@ -481,3 +481,27 @@ body[data-resq-shell="v1"] .ui-status[data-tone="danger"]{
   body[data-resq-shell="v1"] .ui-section{padding:var(--space-4);border-radius:var(--radius-md)}
   body[data-resq-shell="v1"] .ui-actions>:where(button,a){flex:1 1 140px}
 }
+
+/* Operational workspaces use the desktop viewport instead of a phone-sized
+   centered column. This is an explicit page allowlist: login, consent, legal
+   documents and focused single-purpose forms keep their readable width. */
+@media (min-width:1024px){
+  body[data-resq-shell="v1"]:is(
+    [data-resq-page="access"], [data-resq-page="admin"],
+    [data-resq-page="alerts"], [data-resq-page="attendance"],
+    [data-resq-page="attendance-shadow"], [data-resq-page="board"],
+    [data-resq-page="callout"], [data-resq-page="check"],
+    [data-resq-page="cost-usage"], [data-resq-page="faults"],
+    [data-resq-page="forms"], [data-resq-page="guards"],
+    [data-resq-page="hr"], [data-resq-page="hr-documents"],
+    [data-resq-page="hr-requests"], [data-resq-page="import"],
+    [data-resq-page="maintenance"], [data-resq-page="metrics"],
+    [data-resq-page="people"], [data-resq-page="quals"],
+    [data-resq-page="saas-admin"], [data-resq-page="schedule-management"],
+    [data-resq-page="sign"], [data-resq-page="stats"],
+    [data-resq-page="swaps"], [data-resq-page="vehicle"]
+  ) > :is(.wrap,.shell,#main,.hr-workspace,.requests,.documents,
+          .cu-shell,.metrics-shell,.maintenance-shell){
+    width:100%;max-width:none;margin-inline:auto;min-width:0;
+  }
+}

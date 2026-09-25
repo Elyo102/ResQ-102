@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h38">
+<link rel="stylesheet" href="./theme.css?v=42h39">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -441,13 +441,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h38';
-import { renderNav, renderStuckNav } from './nav.js?v=42h38';
-import { errorText, logError } from './error-text.js?v=42h38';
-import { MEMBER_ROLES } from './roles.js?v=42h38';
-import { initPWA } from './pwa.js?v=42h38';
-import { watchCallouts } from './callout.js?v=42h38';
-import { CREW_HE, plural } from './rotation.js?v=42h38';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h39';
+import { renderNav, renderStuckNav } from './nav.js?v=42h39';
+import { errorText, logError } from './error-text.js?v=42h39';
+import { MEMBER_ROLES } from './roles.js?v=42h39';
+import { initPWA } from './pwa.js?v=42h39';
+import { watchCallouts } from './callout.js?v=42h39';
+import { CREW_HE, plural } from './rotation.js?v=42h39';
 import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -455,19 +455,19 @@ import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevCol
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage, createPhotoQueue } from './faults.js?v=42h38';
+         shrinkImage, createPhotoQueue } from './faults.js?v=42h39';
 import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
-         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h38';
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h39';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, addDoc,
          deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h38';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h39';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h38';
+import { initAppCheck } from './appcheck.js?v=42h39';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -491,6 +491,7 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
 let faults = [], fleet = [], anchors = [], shots = {}, shotsInflight = {}, handovers = {};
+let handoversStatus = 'not_loaded', handoversPending = null, handoversLoadedAt = 0;
 let FAULT_ATTEMPT = null;
 const PHOTO_QUEUE = createPhotoQueue(3);
 function renderPhotoQueue(){
@@ -541,6 +542,7 @@ function bumpIdentity(){
   vehEditing = null;
   boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
   faults = []; handovers = {}; shots = {}; shotsInflight = {};
+  handoversStatus = 'not_loaded'; handoversPending = null; handoversLoadedAt = 0;
   FAULT_ATTEMPT = null;
   $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = ''; $('nGallery').value = '';
   PHOTO_QUEUE.clear();
@@ -719,17 +721,16 @@ async function loadAll(){
   // מסך ריק מטלפון סלולרי.
   const origin = { gen: AUTH_GEN, uid: ME && ME.uid, sid: SID };
   try { assertFence(origin); } catch (ignore) { return; }
-  faults = []; anchors = []; anchorDocs = []; handovers = {};
+  faults = []; anchors = []; anchorDocs = [];
   boardDoc = null;
   let boardVehicles = [];
 
   const safe = p => p.catch(function () { return null; });
 
-  const [fs_, bd, vs, hs] = await Promise.all([
+  const [fs_, bd, vs] = await Promise.all([
     safe(getDocs(collection(db, 'stations', origin.sid, 'faults'))),
     safe(getDoc(doc(db, 'stations', origin.sid, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', origin.sid, 'handovers')))
+    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles')))
   ]);
 
   /* התשובה חזרה — אבל למי? אם הזהות התחלפה בזמן שחיכינו, הנתונים
@@ -753,14 +754,12 @@ async function loadAll(){
   // `mergeFleet` מסנן מושבתים בעצמו; `anchors` נשאר הרשימה הפעילה
   // שכל שאר המסך מסתמך עליה.
   anchors = anchorDocs.filter(v => v.active !== false);
-  if (hs) hs.forEach(d => {
-    handovers[d.id] = Object.assign({ id: d.id }, d.data() || {});
-  });
-
   fleet = mergeFleet(boardVehicles, anchors);
 
+  if (!$('viewShift').classList.contains('hide')) handoversStatus = 'loading';
   renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
   $('anchorCard').classList.toggle('hide', !CAN_FLEET);
+  if (!$('viewShift').classList.contains('hide')) await loadHandovers(true);
 }
 
 // ---------- לשוניות ----------
@@ -773,8 +772,42 @@ VIEWS.forEach(function (v) {
       $(x[0]).classList.toggle('on', x[0] === v[0]);
       $(x[1]).classList.toggle('hide', x[1] !== v[1]);
     });
+    if (v[1] === 'viewShift') void loadHandovers();
   };
 });
+
+// A full handover history is only needed for the handover tab and signing.
+// Never interpret a failed read as "no prior handover".
+function loadHandovers(force = false){
+  if (!ME || !SID) return Promise.resolve(false);
+  if (handoversPending) return handoversPending;
+  if (!force && handoversStatus === 'ready' && Date.now() - handoversLoadedAt < 30000)
+    return Promise.resolve(true);
+  const origin = { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+  handoversStatus = 'loading';
+  renderSign(toKey(new Date()));
+  const pending = getDocsFromServer(collection(db, 'stations', origin.sid, 'handovers'))
+    .then(snapshot => {
+      assertFence(origin);
+      const current = {};
+      snapshot.forEach(d => { current[d.id] = Object.assign({ id:d.id }, d.data() || {}); });
+      handovers = current;
+      handoversStatus = 'ready';
+      handoversLoadedAt = Date.now();
+      renderSign(toKey(new Date()));
+      return true;
+    }).catch(error => {
+      try { assertFence(origin); } catch (ignore) { return false; }
+      handoversStatus = 'error';
+      handoversLoadedAt = 0;
+      renderSign(toKey(new Date()));
+      return false;
+    }).finally(() => {
+      if (handoversPending === pending) handoversPending = null;
+    });
+  handoversPending = pending;
+  return pending;
+}
 
 // ---------- טופס ----------
 
@@ -1565,6 +1598,27 @@ function renderSign(today){
   const h = handovers[id];
   const box = $('hoState');
 
+  if (handoversStatus !== 'ready') {
+    $('hoAcceptWrap').classList.add('hide');
+    $('btnAccept').disabled = true;
+    $('hoLog').replaceChildren();
+    box.replaceChildren();
+    const note = document.createElement('div');
+    note.className = handoversStatus === 'error' ? 'msg err' : 'note';
+    note.textContent = handoversStatus === 'error'
+      ? 'לא ניתן לאמת את היסטוריית המסירות. חתימה חסומה עד טעינה מחדש.'
+      : 'טוען את היסטוריית המסירות לפני אישור החפיפה…';
+    box.appendChild(note);
+    if (handoversStatus === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'btn sm'; retry.textContent = 'נסה שוב';
+      retry.onclick = () => { void loadHandovers(true); };
+      box.appendChild(retry);
+    }
+    return;
+  }
+  $('btnAccept').disabled = false;
+
   // רק מפקד או סגנו מקבל אחריות. כבאי רואה את הרישום ולא
   // יכול לחתום עליו.
   const canSign = CAN_MANAGE && !!ME.crew;
@@ -1602,11 +1656,20 @@ function renderSign(today){
 }
 
 $('btnAccept') && ($('btnAccept').onclick = async () => {
+  if (handoversStatus !== 'ready' || !ME || !CAN_MANAGE || !ME.crew) return;
+  const origin = { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+  // Read once more immediately before a signed write; a stale or failed
+  // history must never be reported as a missing predecessor.
+  if (!(await loadHandovers(true))) return;
+  try { assertFence(origin); } catch (ignore) { return; }
   const today = toKey(new Date());
   const id = handoverId(ME.crew, today);
+  if (handovers[id] && handovers[id].accepted_key) return;
   if (!window.confirm('לאשר קבלת אחריות על המשמרת?\n\n' +
       'הפעולה נרשמת עם השם והשעה ומהווה חתימה רשמית. ' +
       'אי אפשר לשנות אותה אחר כך.')) return;
+  if (handoversStatus !== 'ready') return;
+  try { assertFence(origin); } catch (ignore) { return; }
 
   // מי מסר: המפקד שחתם על החפיפה הקודמת. אם אין — נרשם
   // במפורש שלא נמצאה מסירה קודמת, ולא מומצא שם.
@@ -1617,19 +1680,32 @@ $('btnAccept') && ($('btnAccept').onclick = async () => {
   const b = $('btnAccept'); b.disabled = true;
   try {
     const now = new Date();
+    const acceptedKey = now.toISOString();
     await setDoc(doc(db, 'stations', SID, 'handovers', id), {
       crew: ME.crew, date: today,
       from_uid: prev ? prev.to_uid : '',
       from_name: prev ? prev.to_name : 'לא נרשמה מסירה קודמת',
       to_uid: ME.uid, to_name: ME.full_name || '',
       assessment: $('hoMsg').value.trim(),
-      accepted_key: now.toISOString(),
+      accepted_key: acceptedKey,
       accepted_at: serverTimestamp()
     });
-    msg('האחריות נרשמה על שמך.', 'ok', 'hoSignMsg');
-    $('hoMsg').value = '';
-    await loadAll();
+    assertFence(origin);
+    // A handover write changes only this collection. Re-reading every fault,
+    // vehicle and board document here would add three unrelated reads.
+    await loadHandovers(true);
+    assertFence(origin);
+    const recorded = handovers[id];
+    if (handoversStatus === 'ready' && recorded && recorded.to_uid === origin.uid
+        && recorded.accepted_key === acceptedKey) {
+      $('hoMsg').value = '';
+      msg('האחריות נרשמה על שמך.', 'ok', 'hoSignMsg');
+    } else {
+      msg('החתימה נשלחה, אך לא ניתן לאמת את לוג המסירות המעודכן. אין לחתום שוב לפני בדיקה.', 'err', 'hoSignMsg');
+      b.disabled = true;
+    }
   } catch (e) {
+    try { assertFence(origin); } catch (ignore) { return; }
     b.disabled = false;
     msg('הרישום נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
         'err', 'hoSignMsg');

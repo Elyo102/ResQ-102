@@ -2092,6 +2092,7 @@ try {
   };
   const importedDisplayRange = {
     mode:'off', active:true, source:'imported-display', display_only:true,
+    draft_id:offImportedDraft.draft_id, display_generation:1,
     publication_id:null, revision:null, from:offDates[0], to:offDates[offDates.length - 1], days:importedDisplayDays
   };
   const displayOff = { month:offMonth, enabled:false, generation:0, draft_id:null,
@@ -2189,6 +2190,8 @@ try {
     importScheduleSheet:[{ data:offImportedDraft }],
     getScheduleDraftPreview:[{ data:offImportedPreview }],
     setScheduleDisplay:[{ data:displayShown }, { data:displayCleared }],
+    // The manager deep link does not fetch an unused board. Showing/clearing
+    // the imported draft produces the first and second signed range reads.
     getStationScheduleRange:[{ data:importedDisplayRange }, { data:legacyRange('off') }]
   });
   const offImportPage = await offImport.newPage();
@@ -2335,7 +2338,8 @@ try {
       'the personal-date filter is always on and cannot be accidentally disabled');
     const calls = await offImportPage.evaluate(() => window.__CALLABLE_CALLS || []);
     const rangeCalls = calls.filter((entry) => entry.name === 'getStationScheduleRange');
-    assert.equal(rangeCalls.length, 1, 'station and mine share one cached imported-display range');
+    assert.equal(rangeCalls.length, 1,
+      'the manager deep link skips the unused board; station and mine share the refreshed range');
     assert.deepEqual(rangeCalls.map((entry) => entry.payload.display_imported), [true]);
     assert.equal(calls.filter((entry) => entry.name === 'getMyScheduleV2').length, 0,
       'the personal tab must not mix an operational daily card with imported-display data');
@@ -2383,6 +2387,39 @@ try {
       ['show', 'clear']);
   });
   await offImport.close();
+
+  const wrongDisplay = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(wrongDisplay, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:Object.assign({}, statusOffManager, { configured:true }) }],
+    getScheduleManagerSetup:[{ data:offSetup }],
+    getScheduleDisplayStatus:[{ data:displayOff }],
+    previewScheduleImport:[{ data:offImportReport }],
+    importScheduleSheet:[{ data:offImportedDraft }],
+    getScheduleDraftPreview:[{ data:offImportedPreview }],
+    setScheduleDisplay:[{ data:displayShown }, { data:displayCleared, delay:50 }],
+    getStationScheduleRange:[{ data:legacyRange('off') }, { data:importedDisplayRange }]
+  });
+  const wrongDisplayPage = await wrongDisplay.newPage();
+  await wrongDisplayPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await wrongDisplayPage.locator('#manageView').waitFor({ state:'visible' });
+  await test('a successful display mutation does not claim the import is visible when the refreshed board has another source', async () => {
+    await wrongDisplayPage.locator('#importPasteOption > summary').click();
+    await wrongDisplayPage.fill('#importPaste', '\t1/9\t2/9\t3/9\nאילת\tא\tב\tג\n');
+    await wrongDisplayPage.locator('#importCheck').click();
+    await wrongDisplayPage.locator('#importMessage .ok').waitFor();
+    await wrongDisplayPage.locator('#importRun').click();
+    await wrongDisplayPage.locator('#previewMessage .ok').waitFor();
+    await wrongDisplayPage.locator('#importShow').evaluate((button) => button.click());
+    await wrongDisplayPage.locator('#importMessage .warn').waitFor();
+    assert.doesNotMatch(await wrongDisplayPage.locator('#importMessage').textContent(), /הסידור מוצג עכשיו בלוח/);
+  });
+  await test('a successful clear mutation does not claim removal while the refreshed board still shows an import', async () => {
+    await wrongDisplayPage.locator('#importClear').evaluate((button) => button.click());
+    await wrongDisplayPage.locator('#importMessage .info').waitFor();
+    await wrongDisplayPage.locator('#importMessage .warn').waitFor();
+    assert.doesNotMatch(await wrongDisplayPage.locator('#importMessage').textContent(), /הסידור המיובא הוסר מהלוח/);
+  });
+  await wrongDisplay.close();
 
   const staleMonth = shiftMonthValue(offMonth, 1);
   const finalMonth = shiftMonthValue(offMonth, 2);
@@ -3391,8 +3428,8 @@ try {
       return document.getElementById('appMain').classList.contains('hide');
     });
     assert.equal(hiddenImmediately, true);
-    await managerScopePage.locator('#appMain:not(.hide)').waitFor();
-    assert.equal(await managerScopePage.locator('#availabilityView').isVisible(), true);
+    await managerScopePage.locator('#managerSetupRetry').waitFor({ state:'visible' });
+    assert.equal(await managerScopePage.locator('#availabilityView').isVisible(), false);
     assert.equal(await managerScopePage.locator('#manageView').isVisible(), false);
     assert.equal(await managerScopePage.getByText('מדיניות סודית של תחנה א').count(), 0);
     assert.equal(await managerScopePage.getByText('עובד סודי של תחנה א').count(), 0);
@@ -3426,9 +3463,9 @@ try {
     await qualRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'manager-b', {
       email:'manager-b@example.invalid', stationId:'station_b'
     }));
-    await qualRacePage.locator('#appMain:not(.hide)').waitFor();
+    await qualRacePage.locator('#managerSetupRetry').waitFor({ state:'visible' });
     await qualRacePage.waitForTimeout(260);
-    assert.equal(await qualRacePage.locator('#availabilityView').isVisible(), true);
+    assert.equal(await qualRacePage.locator('#availabilityView').isVisible(), false);
     assert.equal(await qualRacePage.locator('#qualsView').isVisible(), false);
     assert.equal(await qualRacePage.getByText('כשירות סודית של תחנה א').count(), 0);
     assert.equal(await qualRacePage.getByText('עובד סודי מכשירויות תחנה א').count(), 0);
@@ -3647,10 +3684,119 @@ try {
       'no current day in this month — the button stays out of the way');
   });
   await otherMonthCtx.close();
+
+  const slowManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(slowManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup, delay:600 }],
+    getScheduleModeOptions:[{ data:{ may_change:false }, delay:1200 }],
+    getScheduleDisplayStatus:[{ data:displayOff, delay:1200 }],
+    getStationScheduleRange:[{ data:stationRange, delay:20 }]
+  });
+  const slowManagerPage = await slowManager.newPage();
+  await slowManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await test('manager deep link waits for setup without an unnecessary full-range read', async () => {
+    await slowManagerPage.locator('#managerSetupNotice').waitFor({ state:'visible' });
+    assert.equal(await slowManagerPage.locator('#manageTab').isVisible(), false);
+    assert.equal(await slowManagerPage.locator('#stationView').isVisible(), false);
+    await slowManagerPage.locator('#savePolicy').evaluate(button => button.click());
+    const pendingCalls = await slowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(pendingCalls.some(call => call.name === 'saveSchedulePolicy'), false);
+    assert.equal(pendingCalls.some(call => call.name === 'getStationScheduleRange'), false);
+    await slowManagerPage.locator('#manageView').waitFor({ state:'visible' });
+    assert.equal(await slowManagerPage.evaluate(() => window.__CALLABLE_INFLIGHT > 0), true,
+      'manager setup should not wait for independent command/display status');
+    const calls = await slowManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter(call => call.name === 'getStationScheduleRange').length, 0);
+  });
+  await slowManager.close();
+
+  const refreshedSetup = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(refreshedSetup, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup, delay:600 }, { data:setup }]
+  });
+  const refreshedSetupPage = await refreshedSetup.newPage();
+  await refreshedSetupPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await test('same-scope token refresh resumes manager setup without painting an old response or reading the board', async () => {
+    await refreshedSetupPage.locator('#managerSetupNotice').waitFor({ state:'visible' });
+    await refreshedSetupPage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid'));
+    await refreshedSetupPage.locator('#manageView').waitFor({ state:'visible' });
+    const calls = await refreshedSetupPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter(call => call.name === 'getScheduleManagerSetup').length, 2);
+    assert.equal(calls.filter(call => call.name === 'getStationScheduleRange').length, 0);
+    assert.equal(await refreshedSetupPage.locator('#managerSetupNotice').isVisible(), false);
+  });
+  await refreshedSetup.close();
+
+  const failedOldSetup = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(failedOldSetup, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }, { data:statusManager }],
+    getScheduleManagerSetup:[
+      { reject:true, code:'functions/unavailable', message:'old request failed', delay:600 },
+      { data:setup }
+    ],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const failedOldPage = await failedOldSetup.newPage();
+  await failedOldPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await test('an old setup failure cannot strand the refreshed manager and a tab chosen while waiting is preserved', async () => {
+    await failedOldPage.locator('#managerSetupNotice').waitFor({ state:'visible' });
+    await failedOldPage.evaluate(() => window.__SMOKE_EMIT_ID_TOKEN('firefighter', 'stub-uid'));
+    await failedOldPage.locator('[data-tab="station"]').click();
+    await failedOldPage.locator('#manageTab').waitFor({ state:'visible' });
+    assert.equal(await failedOldPage.locator('#stationView').isVisible(), true);
+    assert.equal(await failedOldPage.locator('#managerSetupNotice').isVisible(), false);
+    const calls = await failedOldPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter(call => call.name === 'getScheduleManagerSetup').length, 2);
+    assert.equal(calls.filter(call => call.name === 'getStationScheduleRange').length, 1);
+  });
+  await failedOldSetup.close();
+
+  const slowBoardManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(slowBoardManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup, delay:600 }],
+    getStationScheduleRange:[{ data:stationRange, delay:20 }]
+  });
+  const slowBoardPage = await slowBoardManager.newPage();
+  await slowBoardPage.goto(base + '?tab=station', { waitUntil:'load' });
+  await test('manager station board renders before slow setup with exactly one range read', async () => {
+    await slowBoardPage.locator('#stationBoard .hcell').first().waitFor();
+    assert.equal(await slowBoardPage.locator('#manageTab').isVisible(), false);
+    const callsBeforeSetup = await slowBoardPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(callsBeforeSetup.filter(call => call.name === 'getStationScheduleRange').length, 1);
+    await slowBoardPage.locator('#manageTab').waitFor({ state:'visible' });
+    const callsAfterSetup = await slowBoardPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(callsAfterSetup.filter(call => call.name === 'getStationScheduleRange').length, 1);
+  });
+  await slowBoardManager.close();
+
+  const failedManager = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(failedManager, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ reject:true, code:'functions/resource-exhausted', message:'429' }, { data:setup }],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const failedManagerPage = await failedManager.newPage();
+  await failedManagerPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await test('failed manager setup keeps the deep link read-free and retry opens management', async () => {
+    await failedManagerPage.locator('#managerSetupRetry').waitFor({ state:'visible' });
+    assert.equal(await failedManagerPage.locator('#stationView').isVisible(), false);
+    assert.equal(await failedManagerPage.locator('#manageTab').isVisible(), false);
+    let calls = await failedManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter(call => call.name === 'getStationScheduleRange').length, 0);
+    await failedManagerPage.locator('#managerSetupRetry').click();
+    await failedManagerPage.locator('#manageView').waitFor({ state:'visible' });
+    calls = await failedManagerPage.evaluate(() => window.__CALLABLE_CALLS || []);
+    assert.equal(calls.filter(call => call.name === 'getScheduleManagerSetup').length, 2);
+    assert.equal(calls.filter(call => call.name === 'getStationScheduleRange').length, 0);
+  });
+  await failedManager.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 94);
+assert.equal(passed, 101);
 console.log('\n' + passed + ' schedule management browser checks passed.');

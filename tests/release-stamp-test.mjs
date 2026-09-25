@@ -84,17 +84,19 @@ test('stampFiles genuinely bumps the release: a fake manifest produces files tha
 
 test('hosting-only release changes the PWA identity without touching any Functions source', () => {
   const hotfixVersion = '99Z.99.1';
+  const sourceServerVersion = MANIFEST.scope === 'hosting' ? MANIFEST.server_version : MANIFEST.version;
+  const sourceTelemetryVersion = MANIFEST.scope === 'hosting' ? MANIFEST.telemetry_version : MANIFEST.version;
   const hotfix = {
     version: hotfixVersion, date: '1.1.2099', asset_query: releaseKey(hotfixVersion),
     sw_cache_key: 'resq-v' + releaseKey(hotfixVersion) + '-release1',
-    scope: 'hosting', server_version: MANIFEST.version, telemetry_version: MANIFEST.version
+    scope: 'hosting', server_version: sourceServerVersion, telemetry_version: sourceTelemetryVersion
   };
   const { files: stamped } = stampFiles(files, hotfix);
   for (const name of ['functions/index.js', 'functions/maintenance-service.js', 'functions/ops-telemetry-contract.js']) {
     assert.equal(stamped.get(name), files.get(name), name + ' remains byte-identical');
   }
   assert.deepEqual(audit(stamped, hotfix).errors, []);
-  assert.ok(stamped.get('incident-client.js').includes("HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '99Z.99.1', server: '" + MANIFEST.version + "' });"));
+  assert.ok(stamped.get('incident-client.js').includes("HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '99Z.99.1', server: '" + sourceTelemetryVersion + "' });"));
 });
 
 test('bumping the release does not change how many static references exist, only their value', () => {
