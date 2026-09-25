@@ -49,3 +49,10 @@
 
 ## Owner console (H2) — not performed by agent
 Staging IP-hop; PDF path; seed `config/station_jobs`; `config/on_call`; Auth/App Check console switches.
+
+
+## SHA appendix
+- Tip source: 157b1d7c37d0f0492bd6052a47122344cf461912
+- Content tip: d149e18e7b3214f4786e70977ea7f399fbf298df
+- Freeze commit / package HEAD before this note: 6a394e4512b39dde1be19eea39a418f0541686df
+
