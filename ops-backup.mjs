@@ -20,9 +20,11 @@ function noLinks(root, target) {
   }
 }
 export function parseArgs(argv) {
-  const args = { out: '_גיבוי', keep: 14, dryRun: false };
+  const DEFAULT_DRY_RUN = true; // L6: dry-run by default; pass --execute to write
+const args = { out: '_גיבוי', keep: 14, dryRun: DEFAULT_DRY_RUN };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--dry-run') args.dryRun = true;
+  else if (argv[i] === '--execute') args.dryRun = false;
     else if (argv[i] === '--out' && argv[i + 1]) args.out = argv[++i];
     else if (argv[i] === '--keep' && argv[i + 1]) args.keep = Number(argv[++i]);
     else throw new Error('Unknown or incomplete argument: ' + argv[i]);

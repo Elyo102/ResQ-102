@@ -1,0 +1,211 @@
+/**
+ * Production-readiness hardening — adversarial Firestore rules suite.
+ *
+ * Every "ATTACK" case below was first executed against the base rules
+ * (e5dc929) where it SUCCEEDED, and is expected to be BLOCKED after the
+ * hardening.  Every "LEGIT" case is the real client write shape copied from
+ * the screen that performs it, so a hardening rule that breaks the product
+ * fails here too.  Emulator (demo-*) only.
+ */
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import { readFileSync } from 'fs';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+
+const SID = 'eilat_102';
+const SID_B = 'station_b_201';
+let pass = 0, fail = 0;
+const failures = [];
+const head = (t) => console.log('\n--- ' + t);
+async function ok(name, p) {
+  try { await assertSucceeds(p); console.log('  ✓ LEGIT ' + name); pass++; }
+  catch (e) { console.log('  ✗ LEGIT ' + name + '  <- blocked, must be allowed'); failures.push('LEGIT ' + name); fail++; }
+}
+async function blocked(name, p) {
+  try { await assertFails(p); console.log('  ✓ ATTACK-BLOCKED ' + name); pass++; }
+  catch (e) { console.log('  ✗ ATTACK-OPEN ' + name + '  <- succeeded, must be blocked'); failures.push('ATTACK-OPEN ' + name); fail++; }
+}
+
+const endpoint = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+if (!/^(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('loopback emulator only');
+const [host, portText] = endpoint.split(':');
+const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'demo-resq';
+if (!/^demo-[a-z0-9-]+$/.test(projectId)) throw new Error('demo emulator project only');
+const env = await initializeTestEnvironment({
+  projectId,
+  firestore: { rules: readFileSync('../firestore.rules', 'utf8'), host, port: Number(portText) }
+});
+await env.clearFirestore();
+
+const who = (uid, email, claims) => env.authenticatedContext(uid, { email, ...claims }).firestore();
+const ff     = who('h_ff',   'hff@x.com',   { emp: '1101', role: 'firefighter', stationId: SID, shift: 'א', districtId: 'south' });
+const ff2    = who('h_ff2',  'hff2@x.com',  { emp: '1102', role: 'firefighter', stationId: SID, shift: 'ב', districtId: 'south' });
+const cmdA   = who('h_cmda', 'hcmda@x.com', { emp: '1201', role: 'commander', stationId: SID, shift: 'א', districtId: 'south' });
+const cmdB   = who('h_cmdb', 'hcmdb@x.com', { emp: '1202', role: 'commander', stationId: SID, shift: 'ב', districtId: 'south' });
+const depA   = who('h_dep',  'hdep@x.com',  { emp: '1203', role: 'deputy', stationId: SID, shift: 'א', districtId: 'south' });
+const stCmd  = who('h_st',   'hst@x.com',   { emp: '1301', role: 'station_commander', stationId: SID, shift: '', districtId: 'south' });
+const hrU    = who('h_hr',   'hhr@x.com',   { emp: '1401', role: 'hr_coordinator', stationId: SID, shift: '', districtId: 'south' });
+const tl     = who('h_tl',   'htl@x.com',   { emp: '1111', role: 'team_leader', stationId: SID, shift: 'א', districtId: 'south' });
+const ffB    = who('h_ffb',  'hffb@x.com',  { emp: '2101', role: 'firefighter', stationId: SID_B, shift: 'א', districtId: 'north' });
+const superU = who('h_sup',  'hsup@x.com',  { super: true });
+const pending = who('h_pend', 'hpend@x.com', {});
+const pending2 = who('h_pend2', 'hpend2@x.com', {});
+const pending3 = who('h_pend3', 'hpend3@x.com', {});
+
+await env.withSecurityRulesDisabled(async (c) => {
+  const d = c.firestore();
+  const u = (sid, uid, role, crew, emp, name) => setDoc(doc(d, `stations/${sid}/users/${uid}`),
+    { role, crew, employee_number: emp, is_active: true, full_name: name, phone: '050-0000000', email: uid + '@x.com' });
+  await setDoc(doc(d, `stations/${SID}`), { name: 'אילת', districtId: 'south' });
+  await setDoc(doc(d, `stations/${SID_B}`), { name: 'תחנה ב', districtId: 'north' });
+  await u(SID, 'h_ff', 'firefighter', 'א', '1101', 'כבאי אמיתי');
+  await u(SID, 'h_ff2', 'firefighter', 'ב', '1102', 'כבאי שני');
+  await u(SID, 'h_cmda', 'commander', 'א', '1201', 'מפקד א');
+  await u(SID, 'h_cmdb', 'commander', 'ב', '1202', 'מפקד ב');
+  await u(SID, 'h_dep', 'deputy', 'א', '1203', 'סגן א');
+  await u(SID, 'h_st', 'station_commander', '', '1301', 'מפקד תחנה');
+  await u(SID, 'h_hr', 'hr_coordinator', '', '1401', 'רכזת');
+  await u(SID, 'h_tl', 'team_leader', 'א', '1111', 'מפקד צוות');
+  await u(SID_B, 'h_ffb', 'firefighter', 'א', '2101', 'כבאי תחנה ב');
+  await setDoc(doc(d, `stations/${SID}/config/hr`), { email: 'hr@station.example', name: 'רכזת', hour_limit: 100 });
+  await setDoc(doc(d, `stations/${SID}/config/redline`), { min_headcount: 4 });
+  await setDoc(doc(d, `stations/${SID}/config/mode`), { mode: 'pilot', since: 'x' });
+  await setDoc(doc(d, `stations/${SID_B}/config/mode`), { mode: 'pilot', since: 'x' });
+  await setDoc(doc(d, `config/mode`), { mode: 'pilot', since: 'x' });
+  const swap = (id, extra) => setDoc(doc(d, `stations/${SID}/swaps/${id}`), Object.assign({
+    from_uid: 'h_ff', from_name: 'כבאי אמיתי', from_crew: 'א', from_date: '2026-10-10',
+    to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12',
+    note: '', status: 'cmd_from', created_key: '2026-09-25T00:00:00.000Z'
+  }, extra || {}));
+  await swap('s_stage1');
+  await swap('s_stage1_forge');
+  await swap('s_self', { from_uid: 'h_cmda', from_name: 'מפקד א', to_uid: 'h_ff2' });
+  await swap('s_stage2_same', { status: 'cmd_to', from_appr_uid: 'h_st', from_appr_name: 'מפקד תחנה' });
+  await swap('s_stage2_legit', { status: 'cmd_to', from_appr_uid: 'h_cmda', from_appr_name: 'מפקד א' });
+  await swap('s_stage2_forge', { status: 'cmd_to', from_appr_uid: 'h_cmda', from_appr_name: 'מפקד א' });
+  await swap('s_stage2_party', { status: 'cmd_to', from_appr_uid: 'h_cmda', from_appr_name: 'מפקד א', to_uid: 'h_cmdb', to_name: 'מפקד ב' });
+  await swap('s_peer', { status: 'peer' });
+  await swap('s_peer_forge', { status: 'peer' });
+  await swap('s_open', { status: 'open', to_uid: '', to_name: '', to_crew: '', to_date: '', want_crew: 'ב' });
+  await swap('s_open_forge', { status: 'open', to_uid: '', to_name: '', to_crew: '', to_date: '', want_crew: 'ב' });
+  await swap('s_cancel', { status: 'peer' });
+  await setDoc(doc(d, `stations/${SID}/redline_waivers/w1`), { crew: 'א', date: '2026-09-25', status: 'pending', by_uid: 'h_cmda', by_name: 'מפקד א', created_key: 'x' });
+  await setDoc(doc(d, `stations/${SID}/redline_waivers/w1b`), { crew: 'א', date: '2026-09-25', status: 'pending', by_uid: 'h_cmda', by_name: 'מפקד א', created_key: 'x' });
+  await setDoc(doc(d, `stations/${SID}/redline_waivers/w2`), { crew: 'א', date: '2026-09-25', status: 'pending', by_uid: 'h_cmda', by_name: 'מפקד א', created_key: 'x' });
+  await setDoc(doc(d, `stations/${SID}/security_events/e1`), { kind: 'x' });
+  await setDoc(doc(d, `stations/${SID}/broadcasts/b1`), { by_uid: 'h_cmda', text: 'x' });
+});
+
+const big = (n) => 'x'.repeat(n);
+
+head('H1 — config/hr super-only (HR mail target)');
+await blocked('H1 deputy deletes config/hr', deleteDoc(doc(depA, `stations/${SID}/config/hr`)));
+await blocked('H1 deputy redirects HR mail (update email)', setDoc(doc(depA, `stations/${SID}/config/hr`), { email: 'attacker@evil.example', name: 'x', hour_limit: 100 }));
+await blocked('H1 commander redirects HR mail', updateDoc(doc(cmdA, `stations/${SID}/config/hr`), { email: 'attacker@evil.example' }));
+await blocked('H1 HR coordinator redirects HR mail (direct write, super callable only)', updateDoc(doc(hrU, `stations/${SID}/config/hr`), { email: 'attacker@evil.example' }));
+await blocked('H1 deputy deletes config/push', deleteDoc(doc(depA, `stations/${SID}/config/push`)));
+await ok('H1 super sets config/hr', setDoc(doc(superU, `stations/${SID}/config/hr`), { email: 'hr@station.example', name: 'רכזת', hour_limit: 120 }));
+await ok('H1 station staff still reads config/hr', getDoc(doc(depA, `stations/${SID}/config/hr`)));
+await ok('H1 staff still edits config/redline (unchanged, owner decision)', setDoc(doc(depA, `stations/${SID}/config/redline`), { min_headcount: 5 }));
+
+head('H1 — new top-level switches have no client access');
+for (const id of ['app_check_gate', 'callout_escalation', 'station_jobs', 'on_call', 'auth_mail_budget']) {
+  await blocked('H1 super cannot write config/' + id + ' directly (callable+audit only)', setDoc(doc(superU, `config/${id}`), { mode: 'enforce' }));
+  await blocked('H1 member cannot read config/' + id, getDoc(doc(ff, `config/${id}`)));
+}
+
+head('UI — config/mode readable by own-station members');
+await ok('MODE member of another station reads its tag', getDoc(doc(ffB, `config/mode`)));
+await ok('MODE eilat member reads', getDoc(doc(ff, `config/mode`)));
+await ok('MODE super reads', getDoc(doc(superU, `config/mode`)));
+await blocked('MODE pending user without claim denied', getDoc(doc(pending, `config/mode`)));
+
+head('H5 — users self-update');
+await blocked('H5 firefighter renames self to "מפקד התחנה"', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { full_name: 'מפקד התחנה' }));
+await blocked('H5 photo_url javascript:', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { photo_url: 'javascript:alert(1)' }));
+await blocked('H5 photo_url http off-domain', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { photo_url: 'https://evil.example/x.png' }));
+await blocked('H5 phone 20k chars', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { phone: big(20000) }));
+await blocked('H5 email not an email', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { email: '<img src=x onerror=alert(1)>' }));
+await ok('H5 firefighter updates own phone', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { phone: '052-1234567' }));
+await ok('H5 firefighter updates own email', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { email: 'me.new@x.com' }));
+await ok('H5 firefighter clears photo_url', updateDoc(doc(ff, `stations/${SID}/users/h_ff`), { photo_url: '' }));
+await ok('H5 HR still edits a full_name (their job)', updateDoc(doc(hrU, `stations/${SID}/users/h_dep`), { full_name: 'סגן א מתוקן' }));
+await blocked('H5 HR writes a 20k phone', updateDoc(doc(hrU, `stations/${SID}/users/h_ff2`), { phone: big(20000) }));
+
+head('L2 — presence binds name and crew');
+await blocked('L2 presence with another person\'s name', setDoc(doc(ff, `stations/${SID}/presence/h_ff`), { last_login: serverTimestamp(), emp: '1101', full_name: 'מפקד התחנה', crew: 'א' }, { merge: true }));
+await blocked('L2 presence with forged crew', setDoc(doc(ff, `stations/${SID}/presence/h_ff`), { last_login: serverTimestamp(), emp: '1101', full_name: 'כבאי אמיתי', crew: 'ג' }, { merge: true }));
+await ok('L2 presence real markLogin shape', setDoc(doc(ff, `stations/${SID}/presence/h_ff`), { last_login: serverTimestamp(), emp: '1101', full_name: 'כבאי אמיתי', crew: 'א' }, { merge: true }));
+await ok('L2 presence markLogin without profile (empty name)', setDoc(doc(ff, `stations/${SID}/presence/h_ff`), { last_login: serverTimestamp(), emp: '1101', full_name: '', crew: 'א' }, { merge: true }));
+
+head('M2 — swap approvals');
+await blocked('M2 commander forges from_appr_uid of someone else', setDoc(doc(cmdA, `stations/${SID}/swaps/s_stage1_forge`), { status: 'cmd_to', from_appr_name: 'מפקד א', from_appr_uid: 'h_cmdb', from_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 commander approves own swap (from_uid)', setDoc(doc(cmdA, `stations/${SID}/swaps/s_self`), { status: 'cmd_to', from_appr_name: 'מפקד א', from_appr_uid: 'h_cmda', from_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 same station commander approves stage 2 after stage 1', setDoc(doc(stCmd, `stations/${SID}/swaps/s_stage2_same`), { status: 'approved', to_appr_name: 'מפקד תחנה', to_appr_uid: 'h_st', to_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 swap party (to_uid) approves stage 2', setDoc(doc(cmdB, `stations/${SID}/swaps/s_stage2_party`), { status: 'approved', to_appr_name: 'מפקד ב', to_appr_uid: 'h_cmdb', to_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 stage-2 approver forges to_appr_uid', setDoc(doc(cmdB, `stations/${SID}/swaps/s_stage2_forge`), { status: 'approved', to_appr_name: 'מפקד ב', to_appr_uid: 'h_st', to_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 peer consent smuggles from_appr_uid', setDoc(doc(ff2, `stations/${SID}/swaps/s_peer_forge`), { status: 'cmd_from', peer_name: 'כבאי שני', peer_at: serverTimestamp(), from_appr_uid: 'h_cmda', updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 taking open swap smuggles to_appr fields', setDoc(doc(ff2, `stations/${SID}/swaps/s_open_forge`), { to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', peer_name: 'כבאי שני', peer_at: serverTimestamp(), status: 'cmd_from', to_appr_uid: 'h_cmdb', updated_at: serverTimestamp() }, { merge: true }));
+await blocked('M2 create with forged from_name', addDoc(collection(ff, `stations/${SID}/swaps`), { from_uid: 'h_ff', from_name: 'מפקד התחנה', from_crew: 'א', from_date: '2026-10-10', to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', note: '', status: 'peer', created_key: 'k', created_at: serverTimestamp() }));
+await blocked('M2 create with 50k note', addDoc(collection(ff, `stations/${SID}/swaps`), { from_uid: 'h_ff', from_name: 'כבאי אמיתי', from_crew: 'א', from_date: '2026-10-10', to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', note: big(50000), status: 'peer', created_key: 'k', created_at: serverTimestamp() }));
+await blocked('M2 create pre-approved fields', addDoc(collection(ff, `stations/${SID}/swaps`), { from_uid: 'h_ff', from_name: 'כבאי אמיתי', from_crew: 'א', from_date: '2026-10-10', to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', note: '', status: 'peer', from_appr_uid: 'h_cmda', created_key: 'k', created_at: serverTimestamp() }));
+await ok('M2 legit peer create (swaps.html shape)', addDoc(collection(ff, `stations/${SID}/swaps`), { from_uid: 'h_ff', from_name: 'כבאי אמיתי', from_crew: 'א', from_date: '2026-10-10', to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', note: 'תודה', status: 'peer', created_key: 'k', created_at: serverTimestamp() }));
+await ok('M2 legit open create', addDoc(collection(ff, `stations/${SID}/swaps`), { from_uid: 'h_ff', from_name: 'כבאי אמיתי', from_crew: 'א', from_date: '2026-10-10', to_uid: '', to_name: '', to_crew: '', to_date: '', want_crew: 'ב', note: '', status: 'open', created_key: 'k', created_at: serverTimestamp() }));
+await ok('M2 legit peer consent', setDoc(doc(ff2, `stations/${SID}/swaps/s_peer`), { status: 'cmd_from', peer_name: 'כבאי שני', peer_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await ok('M2 legit take open', setDoc(doc(ff2, `stations/${SID}/swaps/s_open`), { to_uid: 'h_ff2', to_name: 'כבאי שני', to_crew: 'ב', to_date: '2026-10-12', peer_name: 'כבאי שני', peer_at: serverTimestamp(), status: 'cmd_from', updated_at: serverTimestamp() }, { merge: true }));
+await ok('M2 legit stage 1 by from-shift commander', setDoc(doc(cmdA, `stations/${SID}/swaps/s_stage1`), { status: 'cmd_to', from_appr_name: 'מפקד א', from_appr_uid: 'h_cmda', from_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await ok('M2 legit stage 2 by a second, different commander', setDoc(doc(cmdB, `stations/${SID}/swaps/s_stage1`), { status: 'approved', to_appr_name: 'מפקד ב', to_appr_uid: 'h_cmdb', to_appr_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await ok('M2 legit cancel by requester', setDoc(doc(ff, `stations/${SID}/swaps/s_cancel`), { status: 'cancelled', reject_name: 'כבאי אמיתי', reject_reason: 'בוטלה על ידי המבקש', reject_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+await ok('M2 legit stage-2 reject by second commander', setDoc(doc(cmdB, `stations/${SID}/swaps/s_stage2_legit`), { status: 'rejected', reject_name: 'מפקד ב', reject_uid: 'h_cmdb', reject_reason: 'אין כוח אדם', reject_at: serverTimestamp(), updated_at: serverTimestamp() }, { merge: true }));
+
+head('M3 — broadcasts are server-written only');
+await blocked('M3 member forges broadcast history', addDoc(collection(ff, `stations/${SID}/broadcasts`), { by_uid: 'h_ff', text: 'הודעה מזויפת', by_name: 'מפקד התחנה' }));
+await blocked('M3 commander forges broadcast history', addDoc(collection(cmdA, `stations/${SID}/broadcasts`), { by_uid: 'h_cmda', text: 'x' }));
+await ok('M3 member still reads history', getDoc(doc(ff, `stations/${SID}/broadcasts/b1`)));
+
+head('L1 — push_tokens');
+await blocked('L1 pending user (no station) writes a station push token', setDoc(doc(pending, `stations/${SID}/push_tokens/h_pend`), { uid: 'h_pend', tokens: [], updated_at: serverTimestamp() }));
+await blocked('L1 other-station user writes a token under eilat', setDoc(doc(ffB, `stations/${SID}/push_tokens/h_ffb`), { uid: 'h_ffb', tokens: [], updated_at: serverTimestamp() }));
+await blocked('L1 junk field / oversized token list', setDoc(doc(ff, `stations/${SID}/push_tokens/h_ff`), { uid: 'h_ff', tokens: Array.from({ length: 60 }, (_, i) => ({ token: 't' + i, label: 'x', added: 'y' })), junk: big(1000), updated_at: serverTimestamp() }));
+await ok('L1 alerts.html shape', setDoc(doc(ff, `stations/${SID}/push_tokens/h_ff`), { uid: 'h_ff', emp: '1101', crew: 'א', role: 'firefighter', full_name: 'כבאי אמיתי', tokens: [{ token: 'tok-abc', label: 'Chrome', added: '2026-09-25T00:00:00.000Z' }], prefs: { callout: true }, updated_at: serverTimestamp() }, { merge: true }));
+await ok('L1 device-readiness shape', setDoc(doc(ff, `stations/${SID}/push_tokens/h_ff`), { uid: 'h_ff', tokens: [{ token: 'tok-abc', label: 'Chrome', added: '2026-09-25T00:00:00.000Z' }], updated_at: serverTimestamp() }, { merge: true }));
+await ok('L1 owner reads own tokens', getDoc(doc(ff, `stations/${SID}/push_tokens/h_ff`)));
+
+head('L2 — registration_requests shape');
+await blocked('L2 registration with 30k full_name', setDoc(doc(pending, `registration_requests/h_pend`), { full_name: big(30000), email: 'hpend@x.com', phone: '050', districtId: 'south', stationId: SID, shift: 'א', status: 'pending', created_at: serverTimestamp() }));
+await blocked('L2 registration with non-string phone map', setDoc(doc(pending2, `registration_requests/h_pend2`), { full_name: 'חדש', email: 'hpend2@x.com', phone: { a: big(900) }, districtId: 'south', stationId: SID, shift: 'א', status: 'pending', created_at: serverTimestamp() }));
+await ok('L2 legit registration', setDoc(doc(pending3, `registration_requests/h_pend3`), { full_name: 'עובד חדש', email: 'hpend3@x.com', phone: '050-1234567', districtId: 'south', stationId: SID, shift: 'א', status: 'pending', created_at: serverTimestamp() }));
+
+head('L2 — redline waiver decision fields');
+await blocked('L2 station commander rewrites requester name while approving', setDoc(doc(stCmd, `stations/${SID}/redline_waivers/w1`), { status: 'approved', approved_by: 'h_st', approved_by_name: 'מפקד תחנה', approved_key: 'k', by_name: 'מישהו אחר' }, { merge: true }));
+await blocked('L2 station commander forges approved_by', setDoc(doc(stCmd, `stations/${SID}/redline_waivers/w1b`), { status: 'approved', approved_by: 'h_cmda', approved_by_name: 'מפקד תחנה', approved_key: 'k' }, { merge: true }));
+await ok('L2 legit waiver decision (board.html shape)', setDoc(doc(stCmd, `stations/${SID}/redline_waivers/w2`), { status: 'approved', approved_by: 'h_st', approved_by_name: 'מפקד תחנה', approved_key: 'k' }, { merge: true }));
+await blocked('L2 waiver request with forged by_name', setDoc(doc(cmdA, `stations/${SID}/redline_waivers/w3`), { crew: 'א', date: '2026-09-26', status: 'pending', by_uid: 'h_cmda', by_name: 'מפקד התחנה', created_key: 'k', created_at: serverTimestamp() }));
+await ok('L2 legit waiver request', setDoc(doc(cmdA, `stations/${SID}/redline_waivers/w4`), { crew: 'א', date: '2026-09-26', status: 'pending', by_uid: 'h_cmda', by_name: 'מפקד א', created_key: 'k', created_at: serverTimestamp() }));
+
+head('L2 — shift_log');
+const logDoc = (name, extra) => Object.assign({ text: 'הודעה', kind: 'chat', by_uid: 'h_tl', by_name: name, by_role: 'team_leader', by_crew: 'א', by_vehicle: '', hidden: false, created_key: '2026-09-25T00:00:00.000Z', created_at: serverTimestamp() }, extra || {});
+await blocked('L2 shift_log with forged by_name', addDoc(collection(tl, `stations/${SID}/shift_log`), logDoc('מפקד התחנה')));
+await blocked('L2 shift_log with forged by_role', addDoc(collection(tl, `stations/${SID}/shift_log`), logDoc('מפקד צוות', { by_role: 'station_commander' })));
+await blocked('L2 shift_log pre-hidden / extra field', addDoc(collection(tl, `stations/${SID}/shift_log`), logDoc('מפקד צוות', { hidden: true, junk: big(5000) })));
+await ok('L2 legit shift_log (messageDoc shape)', addDoc(collection(tl, `stations/${SID}/shift_log`), logDoc('מפקד צוות')));
+
+head('L2 — handovers (faults.html writer shape, file untouched)');
+const ho = (name, extra) => Object.assign({ crew: 'א', date: '2026-09-25', from_uid: 'h_cmdb', from_name: 'מפקד ב', to_uid: 'h_cmda', to_name: name, assessment: 'תקין', accepted_key: '2026-09-25T06:00:00.000Z', accepted_at: serverTimestamp() }, extra || {});
+await blocked('L2 handover signed under another name', setDoc(doc(cmdA, `stations/${SID}/handovers/ho1`), ho('מפקד התחנה')));
+await blocked('L2 handover with smuggled field', setDoc(doc(cmdA, `stations/${SID}/handovers/ho2`), ho('מפקד א', { approved: true })));
+await ok('L2 legit handover', setDoc(doc(cmdA, `stations/${SID}/handovers/ho3`), ho('מפקד א')));
+
+head('L2 — audit & documents');
+await blocked('L2 staff deletes security_events audit record', deleteDoc(doc(depA, `stations/${SID}/security_events/e1`)));
+await blocked('L2 staff forges security_events', setDoc(doc(depA, `stations/${SID}/security_events/e2`), { kind: 'forged' }));
+await blocked('L2 member writes arbitrary 900KB documents record', setDoc(doc(ff, `stations/${SID}/documents/d1`), { emp_number: '1101', blob: big(900000) }));
+
+head('L2 — shifts assignment shape');
+await blocked('L2 staff writes shifts doc with forged by', setDoc(doc(cmdA, `stations/${SID}/shifts/א`), { assign: {}, updated_at: serverTimestamp(), by: 'h_st' }, { merge: true }));
+await ok('L2 staff still writes a sub-document under shifts/{crew}', setDoc(doc(cmdA, `stations/${SID}/shifts/א/days/2026-09-25`), { note: 'x' }));
+await ok('L2 legit saveAssign shape', setDoc(doc(cmdA, `stations/${SID}/shifts/א`), { assign: { v1: ['h_ff'] }, updated_at: serverTimestamp(), by: 'h_cmda' }, { merge: true }));
+
+await env.cleanup();
+console.log('\n' + (fail === 0 ? '✓ readiness-hardening: all ' + pass + ' passed' : '✗ readiness-hardening: ' + fail + ' failed · ' + pass + ' passed'));
+failures.forEach((f) => console.log('    ' + f));
+process.exit(fail === 0 ? 0 : 1);

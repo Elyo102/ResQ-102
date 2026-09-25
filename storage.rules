@@ -1,0 +1,13 @@
+﻿rules_version = '2';
+// GAP5 — deny-all Storage rules checked into the repo for review ONLY.
+// NOT DEPLOYABLE until live Console Storage rules are captured and a
+// rollback path is verified. First `firebase deploy --only storage`
+// OVERWRITES Console rules permanently without that capture.
+// Capture gate: docs/STORAGE-CAPTURE-GATE.md (must be completed by OWNER).
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
