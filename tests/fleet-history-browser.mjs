@@ -196,7 +196,16 @@ try {
   });
   await scenario('unknown orphan remains read-only even through existing treatment callbacks','vehicle.html?v=missing',async page=>{
     assert.match(await page.locator('#list').innerText(),/Orphan historical fault/);
-    assert.equal(await page.locator('#list .acts button,#list .acts select').count(),0);
+    const details = page.locator('#list .acts button');
+    assert.equal(await details.count(),1, 'an orphan keeps the read-only history detail action');
+    assert.match(await details.innerText(),/הצג פרטים ותמונות/);
+    assert.equal(await page.locator('#list .acts select').count(),0);
+    await tap(details);
+    await page.locator('#ov.on').waitFor();
+    assert.match(await page.locator('#dlgBody').innerText(),/Orphan historical fault/);
+    assert.equal(await page.locator('#dlgBody .acts button,#dlgBody .acts select').count(),0,
+      'the detail view offers no grading, close or delete action for an unknown vehicle');
+    await noNewWrites(page);
     await page.evaluate(async()=>{
       const a=window.__HISTORY_ACTIONS;
       const f=window.__HISTORY_FIXTURE.faults.find(f=>f.id==='orphan-history');
