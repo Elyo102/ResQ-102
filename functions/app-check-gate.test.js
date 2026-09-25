@@ -67,13 +67,33 @@ check('evaluateExit ready only after 14d + ratio', () => {
     const snap = g._bufferSnapshot();
     assert.strictEqual(snap.totals.missing, 1);
   });
-  await checkAsync('enforce rejects missing token', async () => {
+  await checkAsync('partial monitoring never enables enforcement from config alone', async () => {
     const db = memDb({ 'config/app_check_gate': { mode: 'enforce', monitor_since_ms: 1 } });
+    const logs = [];
     const g = gateMod.createAppCheckGate({
-      db, FV: { increment: (n) => ({ _inc: n }) }, HttpsError, log: () => {}, now: () => 1_700_000_000_000
+      db, FV: { increment: (n) => ({ _inc: n }) }, HttpsError, log: (event) => logs.push(event), now: () => 1_700_000_000_000
     });
     const handler = g.gated('loginWithEmployeeNumber', async () => 'ok');
-    await assert.rejects(() => handler({}), e => e instanceof HttpsError && e.code === 'failed-precondition');
+    assert.strictEqual(await handler({}), 'ok');
+    assert.ok(logs.includes('app_check_gate_enforce_unavailable'));
+    const status = await g.status();
+    assert.strictEqual(status.coverage, 'partial_in_memory');
+    assert.strictEqual(status.exit.ready, false);
+  });
+  await checkAsync('day rollover flushes captured previous day, not new buffer', async () => {
+    let clock = Date.UTC(2026, 8, 24, 23, 59, 59);
+    const db = memDb({});
+    const g = gateMod.createAppCheckGate({
+      db, FV: { increment: (n) => ({ _inc: n }) }, HttpsError,
+      now: () => clock, log: () => {}
+    });
+    const handler = g.gated('loginWithEmployeeNumber', async () => 'ok');
+    await handler({});
+    clock += 2000;
+    await handler({});
+    await g._flush();
+    assert.ok(db._docs.has('app_check_gate_stats/2026-09-24'));
+    assert.ok(db._docs.has('app_check_gate_stats/2026-09-25'));
   });
   console.log(fail ? ('FAIL ' + fail) : ('PASS ' + pass));
   process.exit(fail ? 1 : 0);

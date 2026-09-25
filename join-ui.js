@@ -87,7 +87,7 @@ function localIntent(payload) {
 /** בונה את הפאנל בתוך `root`. deps — ראו login.html. */
 export function createJoinPanel(root, deps) {
   const d = deps || {};
-  for (const name of ['inspect', 'redeem', 'currentUser', 'createAccount', 'signIn', 'sendVerification', 'refreshUser',
+  for (const name of ['inspect', 'redeem', 'currentUser', 'createAccount', 'signIn', 'requestPasswordReset', 'sendVerification', 'refreshUser',
     'hasAssignment', 'onRedeemed', 'pwOk', 'claims']) {
     if (typeof d[name] !== 'function') throw new TypeError('join panel dependency is required: ' + name);
   }
@@ -154,6 +154,7 @@ export function createJoinPanel(root, deps) {
       const row = el('div', { class: 'join-row' });
       row.append(button('יצירת חשבון', '', () => account('create')), button('כניסה לחשבון קיים', 'ghost', () => account('signin')));
       acct.appendChild(row);
+      acct.appendChild(button('החשבון כבר קיים? בחר/י סיסמה במייל', 'ghost', () => choosePassword()));
     } else {
       acct.appendChild(el('p', { id: 'joinWho' }, 'מחובר/ת: ' + (user.email || '')));
       if (!user.emailVerified) {
@@ -289,6 +290,16 @@ export function createJoinPanel(root, deps) {
       else { await d.signIn(email, password); message('מחובר/ת.'); }
     } catch (error) { message('הפעולה לא הושלמה. ' + friendly(error), true); }
     finally { state.busy = false; renderForm(); }
+  }
+  async function choosePassword() {
+    if (state.busy) return; state.busy = true; controls(); message('');
+    try {
+      const email = String(fields.joinEmail.value || '').trim().toLowerCase();
+      if (!email) throw new Error('יש להזין את המייל שאליו נשלח הקישור.');
+      await d.requestPasswordReset(email);
+      message('אם החשבון קיים, נשלח למייל קישור לבחירת סיסמה. לאחר הבחירה חזור/י לקישור והיכנס/י לחשבון הקיים.');
+    } catch (error) { message('לא ניתן לשלוח כעת את הבקשה. בדוק/י חיבור ונסה/י שוב.', true); }
+    finally { state.busy = false; controls(); }
   }
   async function verify() {
     if (state.busy) return; state.busy = true; controls();

@@ -63,6 +63,13 @@ function createStationJobs(deps) {
         return Object.freeze({ job: jobName, ran: 0, failed: 0, ids: [], usedFallback: false });
       }
     }
+    // During migration the legacy station must keep receiving reminders even
+    // if an enrollment document accidentally lists only new stations.
+    if (fallbackStationId && ID_RE.test(fallbackStationId) && !ids.includes(fallbackStationId)) {
+      ids.unshift(fallbackStationId);
+      usedFallback = true;
+      alert('station_jobs_legacy_station_added', { job: jobName, sid: fallbackStationId });
+    }
     let ran = 0, failed = 0;
     for (let i = 0; i < ids.length; i += batchSize) {
       const batch = ids.slice(i, i + batchSize);
@@ -81,6 +88,10 @@ function createStationJobs(deps) {
           }
         }
       }));
+    }
+    if (failed > 0) {
+      alert('station_jobs_failed', { job: jobName, failed, ran });
+      throw new Error(jobName + ': ' + failed + ' station job(s) failed');
     }
     return Object.freeze({ job: jobName, ran, failed, ids, usedFallback });
   }

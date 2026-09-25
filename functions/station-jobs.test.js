@@ -1,5 +1,7 @@
 'use strict';
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { createStationJobs, DEFAULT_FALLBACK_STATION_ID } = require('./station-jobs');
 class HttpsError extends Error { constructor(c, m) { super(m); this.code = c; } }
 let pass = 0, fail = 0;
@@ -45,20 +47,17 @@ console.log('station-jobs');
     assert.strictEqual(r.ran, 0);
     assert.strictEqual(r.usedFallback, false);
   });
-  await check('runs enrolled stations and isolates failures', async () => {
+  await check('enrollment preserves Eilat and scheduler sees station failures', async () => {
     const jobs = createStationJobs({
       db: memDb({ 'config/station_jobs': { enabled_station_ids: ['a_1', 'b_2', 'c_3'] } }),
       log: () => {}, alert: () => {}, HttpsError, batchSize: 2
     });
     const ran = [];
-    const r = await jobs.forEachEnabled('hoursReminder', async (sid) => {
+    await assert.rejects(() => jobs.forEachEnabled('hoursReminder', async (sid) => {
       if (sid === 'b_2') throw new Error('boom');
       ran.push(sid);
-    });
-    assert.deepStrictEqual(ran.sort(), ['a_1', 'c_3']);
-    assert.strictEqual(r.ran, 2);
-    assert.strictEqual(r.failed, 1);
-    assert.strictEqual(r.usedFallback, false);
+    }), /station job\(s\) failed/);
+    assert.deepStrictEqual(ran.sort(), ['a_1', 'c_3', 'eilat_102']);
   });
   await check('setEnrollment rejects bad ids and writes clean list', async () => {
     const db = memDb({});
@@ -70,6 +69,15 @@ console.log('station-jobs');
     await assert.rejects(() => set({ data: { enabled_station_ids: ['BAD ID'] } }), e => e instanceof HttpsError);
     const out = await set({ data: { enabled_station_ids: ['eilat_102', 'eilat_102', 'north_7'] } });
     assert.strictEqual(out.count, 2);
+  });
+  await check('multi-station routing remains inactive for the Eilat pilot', async () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
+    for (const name of ['hoursReminder', 'guardReminder', 'signReminder']) {
+      const section = source.split('exports.' + name + ' =')[1];
+      assert.ok(section, name + ' export exists');
+      assert.match(section.slice(0, 2500), /const sid = PUSH_STATION;/);
+    }
+    assert.doesNotMatch(source, /stationJobs\.forEachEnabled/);
   });
   console.log(fail ? ('FAIL ' + fail) : ('PASS ' + pass));
   process.exit(fail ? 1 : 0);

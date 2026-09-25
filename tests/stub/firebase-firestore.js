@@ -715,7 +715,9 @@ function getDoc0(ref){
       return Promise.resolve({ exists:() => false, data:() => undefined,
                                id:p.split('/').pop() || 'stub' });
     }
-    return Promise.resolve(docSnap({ status:'pending' }, p.split('/').pop()));
+    const status = typeof window !== 'undefined' && window.__REGISTRATION_REQUEST_STATUS
+      ? String(window.__REGISTRATION_REQUEST_STATUS) : 'pending';
+    return Promise.resolve(docSnap({ status }, p.split('/').pop()));
   }
   if (p.indexOf('config/redline') !== -1) return Promise.resolve(docSnap(REDLINE, 'redline'));
   if (p.indexOf('config/board') !== -1) {

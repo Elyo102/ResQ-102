@@ -70,7 +70,7 @@ try {
     await page.waitForFunction(() => !!window.JoinUI);
     await page.evaluate((catalog) => {
       window.calls = []; window.inspectView = { state: 'active', station_name: 'אילת <b>x</b>', allowed_shifts: ['A', 'C'], qualification_catalog: catalog };
-      window.inspectFail = false; window.redeemError = null; window.verified = false; window.user = null; window.verifySent = 0; window.routed = 0;
+      window.inspectFail = false; window.redeemError = null; window.verified = false; window.user = null; window.verifySent = 0; window.routed = 0; window.passwordReset = 0;
       const token = 'AAAAAAAAAAAAAAAA.' + 'B'.repeat(43);
       window.panel = JoinUI.createJoinPanel(document.getElementById('joinPanel'), {
         token,
@@ -79,6 +79,7 @@ try {
         currentUser: () => user,
         createAccount: async (email) => { user = { uid: 'w1', email, emailVerified: false }; },
         signIn: async (email) => { user = { uid: 'w1', email, emailVerified: false }; },
+        requestPasswordReset: async (email) => { passwordReset++; calls.push(['passwordReset', email]); },
         sendVerification: async () => { verifySent++; },
         refreshUser: async () => { if (user) user.emailVerified = verified; },
         claims: async () => ({}),
@@ -106,6 +107,10 @@ try {
     check('no horizontal overflow at 390', await noOverflow(page));
     await shots(page, 'login-join-form', '#joinPanel');
     check('all controls are at least 44px tall', await minTouch(page, '#joinPanel button, #joinPanel input:not([type=checkbox]):not([type=radio])'));
+    await page.locator('#joinEmail').fill('worker@example.test');
+    await page.locator('#joinPanel button', { hasText: 'בחר/י סיסמה במייל' }).click();
+    check('existing invited account can request a password without duplicate Auth creation',
+      await page.evaluate(() => passwordReset === 1 && user === null && calls.some(c => c[0] === 'passwordReset' && c[1] === 'worker@example.test')));
     // חשבון
     await page.locator('#joinEmail').fill('worker@example.test'); await page.locator('#joinPassword').fill('Password123');
     await page.locator('#joinPanel button', { hasText: 'יצירת חשבון' }).click();

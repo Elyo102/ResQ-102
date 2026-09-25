@@ -67,9 +67,16 @@ try {
     const { context, page } = await open(browser, { __SMOKE_ROLE:'super',
       __CALLABLE_PLAN:{ registrationTermsConsent:[
         { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:false, status:'approved' } },
         { data:{ ok:true, accepted:true, replayed:false } },
         { data:{ ok:true, accepted:true, status:'approved' } }
       ] } });
+    await page.waitForFunction(() => (window.__AUTH_CALLS || []).some(x => x.name === 'signOut'));
+    check(await page.locator('#homeView').isHidden(),
+      'restored pre-cutover super session is signed out before terms acceptance');
+    await page.locator('#loginEmp').fill('owner@example.com');
+    await page.locator('#loginPass').fill('StrongPass1');
+    await page.locator('#btnLogin').click();
     await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
     check(await page.locator('#homeView').isHidden(),
       'already approved super cannot enter home before current terms');
@@ -79,6 +86,9 @@ try {
     check(calls.some(x => x.name === 'registrationTermsConsent' &&
       x.payload?.action === 'accept' && x.payload?.marketing_opt_in === false),
       'approved user explicitly accepts without marketing');
+    check(calls.filter(x => x.name === 'registrationTermsConsent' &&
+      x.payload?.action === 'accept').length === 1,
+      'approved user consent is recorded once');
     await context.close();
   }
   {
@@ -92,6 +102,76 @@ try {
       'terms status network failure is fail-closed');
     await page.locator('#btnRetryTerms').click();
     await page.locator('#homeView').waitFor({ state:'visible' });
+    await context.close();
+  }
+  // בקשה שכבר אושרה בשרת וטוקן ישן בדפדפן: רענון זהות, לא בקשה חדשה.
+  {
+    const { context, page } = await open(browser, {
+      __SMOKE_ROLE:'pending', __REGISTRATION_REQUEST_STATUS:'approved',
+      __SMOKE_REFRESH_CLAIMS:{ emp:'17', role:'firefighter', stationId:'eilat_102' },
+      __CALLABLE_PLAN:{ registrationTermsConsent:[
+        { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:true, replayed:false } },
+        { data:{ ok:true, accepted:true, status:'approved' } }
+      ] }
+    });
+    await page.waitForFunction(() => (window.__AUTH_CALLS || []).some(x =>
+      x.name === 'getIdToken' && x.detail?.force === true));
+    await page.waitForFunction(() => (window.__AUTH_CALLS || []).some(x => x.name === 'signOut'));
+    check(await page.locator('#homeView').isHidden(),
+      'approved request with stale token refreshes and still cannot bypass terms');
+    await page.locator('#loginEmp').fill('existing@example.com');
+    await page.locator('#loginPass').fill('StrongPass1');
+    await page.locator('#btnLogin').click();
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    await page.locator('#pendingTermsNoMarketing').click();
+    await page.locator('#homeView').waitFor({ state:'visible' });
+    const state = await page.evaluate(() => ({
+      writes:window.__FIRESTORE_WRITES || [], calls:window.__CALLABLE_CALLS || []
+    }));
+    check(!state.writes.some(x => String(x.path || '').includes('registration_requests')) &&
+      !state.calls.some(x => x.name === 'submitRegistration'),
+      'stale-token recovery records consent without creating a second request');
+    await context.close();
+  }
+  // כניסה טרייה משני סוגי הזמנות אינה סשן משוחזר: אישור פעם אחת, בלי סיסמה שנייה.
+  for (const kind of ['personal', 'group']) {
+    const joinToken = 'A'.repeat(16) + '.' + 'B'.repeat(43);
+    const setup = { __SMOKE_ROLE:'super', __SMOKE_SIGNED_OUT:true,
+      __CALLABLE_PLAN:{
+        registrationTermsConsent:[
+          { data:{ ok:true, accepted:false, status:'approved' } },
+          { data:{ ok:true, accepted:false, status:'approved' } },
+          { data:{ ok:true, accepted:true, replayed:false } },
+          { data:{ ok:true, accepted:true, status:'approved' } }
+        ],
+        inspectJoinCampaign:[{ data:{ state:'active', station_name:'אילת',
+          allowed_shifts:['A'], qualification_catalog:[] } }]
+      }
+    };
+    const { context, page } = await open(browser, setup,
+      kind === 'group' ? '/login.html?join=' + joinToken : '/login.html');
+    if (kind === 'personal') {
+      await page.locator('#invitationPanel > summary').click();
+      await page.locator('#invitationEmail').fill('existing@example.com');
+      await page.locator('#invitationPassword').fill('StrongPass1');
+      await page.locator('#invitationSignIn').click();
+    } else {
+      await page.locator('#joinEmail').fill('existing@example.com');
+      await page.locator('#joinPassword').fill('StrongPass1');
+      await page.locator('#joinPanel button', { hasText:'כניסה לחשבון קיים' }).click();
+    }
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    check(await page.evaluate(() => (window.__AUTH_CALLS || []).filter(x =>
+      x.name === 'signInWithEmailAndPassword').length === 1 &&
+      !(window.__AUTH_CALLS || []).some(x => x.name === 'signOut')),
+      kind + ' invite first sign-in reaches Terms without a second login');
+    await page.locator('#pendingTermsNoMarketing').click();
+    await page.locator('#homeView').waitFor({ state:'visible' });
+    check(await page.evaluate(() => (window.__CALLABLE_CALLS || []).filter(x =>
+      x.name === 'registrationTermsConsent' && x.payload?.action === 'accept').length === 1),
+      kind + ' invite records Terms consent exactly once');
     await context.close();
   }
   // חשבון שנדחה נשאר קיים ב-Auth, אבל מסמך הבקשה נמחק.

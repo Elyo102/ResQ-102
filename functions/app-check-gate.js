@@ -91,6 +91,12 @@ function createAppCheckGate(deps) {
       const snap = await ref.get();
       const data = snap && snap.exists ? (snap.data() || {}) : {};
       if (MODES.includes(data.mode)) mode = data.mode;
+      if (mode === 'enforce') {
+        // The in-memory counters are explicitly partial. A console edit must
+        // not silently turn this pilot monitor into a login blocker.
+        log('app_check_gate_enforce_unavailable', { reason: 'partial-monitoring' });
+        mode = 'monitor';
+      }
       since = Number(data.monitor_since_ms) || 0;
       if (!snap || !snap.exists) {
         since = t;
@@ -108,7 +114,8 @@ function createAppCheckGate(deps) {
   function buffer(name, category) {
     const day = dayKey(now());
     if (buf.day && buf.day !== day) {
-      scheduleFlush(true);
+      // Capture the previous day before replacing the mutable buffer.
+      scheduleFlush(true, buf);
       buf = { day, totals: Object.create(null), byFn: Object.create(null), lastFlushMs: buf.lastFlushMs };
     }
     if (!buf.day) buf.day = day;
@@ -117,20 +124,21 @@ function createAppCheckGate(deps) {
     buf.byFn[name][category] = (buf.byFn[name][category] || 0) + 1;
   }
 
-  async function flushNow(force) {
+  async function flushNow(force, captured) {
     if (!increment) return;
     const t = now();
+    const source = captured || buf;
     // First observation opens the flush window without writing (GAP2: no
     // per-attempt Firestore write). Subsequent flushes are hourly-bounded.
-    if (!force && !buf.lastFlushMs) { buf.lastFlushMs = t; return; }
-    if (!force && (t - buf.lastFlushMs) < FLUSH_INTERVAL_MS) return;
-    const day = buf.day;
-    const totals = buf.totals;
-    const byFn = buf.byFn;
+    if (!force && !source.lastFlushMs) { source.lastFlushMs = t; return; }
+    if (!force && (t - source.lastFlushMs) < FLUSH_INTERVAL_MS) return;
+    const day = source.day;
+    const totals = source.totals;
+    const byFn = source.byFn;
     if (!day || Object.keys(totals).length === 0) return;
-    buf.totals = Object.create(null);
-    buf.byFn = Object.create(null);
-    buf.lastFlushMs = t;
+    source.totals = Object.create(null);
+    source.byFn = Object.create(null);
+    source.lastFlushMs = t;
     const payload = {};
     for (const cat of Object.keys(totals)) payload[cat] = increment(totals[cat]);
     for (const fn of Object.keys(byFn)) {
@@ -144,8 +152,8 @@ function createAppCheckGate(deps) {
     } catch (ignore) {}
   }
 
-  function scheduleFlush(force) {
-    flushChain = flushChain.then(() => flushNow(!!force)).catch(() => {});
+  function scheduleFlush(force, captured) {
+    flushChain = flushChain.then(() => flushNow(!!force, captured)).catch(() => {});
     return flushChain;
   }
 
@@ -186,7 +194,10 @@ function createAppCheckGate(deps) {
         if (snap && snap.exists) days.push(snap.data() || {});
       }
     } catch (ignore) {}
-    return Object.freeze({ mode: state.mode, exit: evaluateExit(days, t, state.monitorSinceMs) });
+    // Instance-local counters can be lost when Cloud Run scales down. They
+    // are useful diagnostics, never evidence sufficient to enable enforcement.
+    return Object.freeze({ mode: state.mode, coverage: 'partial_in_memory',
+      exit: Object.freeze({ ...evaluateExit(days, t, state.monitorSinceMs), ready: false }) });
   }
 
   function createSetModeHandler(h) {
@@ -198,7 +209,7 @@ function createAppCheckGate(deps) {
       const current = await status();
       if (mode === 'enforce' && !current.exit.ready) {
         throw new d.HttpsError('failed-precondition',
-          'תנאי היציאה ממצב ניטור לא התקיימו: נדרשים 14 ימים ולפחות 99.5% בקשות תקינות.');
+          'מדדי הניטור חלקיים ואינם הוכחה לאכיפה. נדרש מקור ניטור מלא ואישור שחרור נפרד.');
       }
       const ref = await h.audit(actor, 'app_check_gate_mode', {
         from: current.mode, to: mode, ratio: current.exit.ratio, days: current.exit.monitoredDays

@@ -1,7 +1,7 @@
-import { MEMBER_ROLES } from './roles.js?v=42h36';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h36';
-import { retroLabel } from './hours.js?v=42h36';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h36';
+import { MEMBER_ROLES } from './roles.js?v=42h37';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h37';
+import { retroLabel } from './hours.js?v=42h37';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h37';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 /* אוצר הסוגים זהה לזה שבשרת. המסך אינו ממציא סוג משלו

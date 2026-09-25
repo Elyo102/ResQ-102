@@ -1,24 +1,28 @@
 ﻿# Station jobs migration + rollback (GAP3)
 
-## Current behavior (this package)
-`functions/station-jobs.js` reads `config/station_jobs.enabled_station_ids`.
+## Current pilot behavior
+The scheduled Functions in `functions/index.js` still use the existing
+`PUSH_STATION` Eilat path. `functions/station-jobs.js` is an inactive candidate:
+it is not imported or called by those Functions. Editing `config/station_jobs`
+therefore has **no effect** on live reminders. Eilat remains the first-station
+template for shared rules; a station's own schedule and substations are data,
+not a separate copy of the scheduling code.
 
-If the doc is **missing or empty**, scheduled reminders still run for the
-legacy Eilat station id `eilat_102` (`DEFAULT_FALLBACK_STATION_ID` /
-`fallbackStationId`). This preserves today's single-station behavior.
-
-## Migration (multi-station)
-1. Dry-run: write `config/station_jobs` with `enabled_station_ids: ["eilat_102"]`.
-2. Observe one hoursReminder / guardReminder / signReminder cycle.
-3. Add additional station ids one at a time.
-4. After ≥7 days stable multi-station, OWNER may set `fallbackStationId: ''`
-   in a follow-up PR to remove the Eilat auto-fallback.
+## Future migration (not included in this pilot release)
+1. Add a persistent per-station/day job claim and explicit failure state before
+   fan-out, so a partial push cannot be silently marked successful or blindly
+   replayed to every recipient.
+2. Test retries, overlap, time-zone boundaries and two stations in an isolated
+   environment. Keep Eilat enrolled during the first multi-station cycle.
+3. Review the final source and deploy the routing change separately. Then add
+   station ids one at a time and observe each complete reminder cycle.
 
 ## Rollback
-1. Clear `enabled_station_ids` to `[]` or delete `config/station_jobs`.
-2. Fallback immediately returns to `eilat_102` — reminders continue.
-3. No Cloud Functions redeploy required for enrollment rollback.
+Before routing is wired, there is no enrollment rollback to perform. After a
+future routing release, rollback must restore the last known good Functions
+revision; clearing enrollment alone is not a substitute for that rollback.
 
-## Tip behavior NOT ported
-The readiness tip treated empty enrollment as **0 runs**. That is rejected here
-(would silence Eilat). Do not re-introduce tip empty=0 semantics.
+## Candidate behavior
+The unused module keeps Eilat when enrollment is empty. It is retained for
+development tests only and must not be described as deployed multi-station
+coverage.

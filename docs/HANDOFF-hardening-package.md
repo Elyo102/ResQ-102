@@ -1,5 +1,14 @@
 ﻿# HANDOFF — hardening package (pilot 42H.36 base)
 
+## Codex integration note · candidate 42H.37
+This file records Grok's source package, not a deployment. In the unified
+candidate the App Check gate is monitor-only with partial-coverage reporting
+and no limited-use token consumption. `station-jobs.js` is **not wired**:
+Eilat scheduled reminders still use the legacy `PUSH_STATION` path. The
+multi-station performance branch `00d6d03` is excluded after two independent
+reviews found stale attendance data and identity/timing races. The visible
+version has been advanced to 42H.37, pending release validation and rollout.
+
 ## Identity
 - Branch: `grok/pilot-42h35-hardening-package`
 - Worktree: `...\work\resq-grok-hardening-package`
@@ -11,8 +20,8 @@
 - `functions/app-check-gate.js` (+test) — MONITOR default; **zero Firestore writes per login/reset**; hourly-bounded flush
 - `functions/auth-hardening.js` (+test) — progressive backoff helpers (base login lockout body untouched)
 - `functions/fresh-admin.js`, `swap-safety.js`, `structured-log.js`, `on-call.js` (+tests)
-- `functions/station-jobs.js` (+test) — **empty enrollment → still runs `eilat_102`** (tip empty=0 NOT ported)
-- `functions/index.js` — monitor gate on `loginWithEmployeeNumber` / `requestPasswordReset` / `unlockAccount` with `enforceAppCheck:false`; reminders use `forEachEnabled`
+- `functions/station-jobs.js` (+test) — inactive candidate; Eilat reminders retain the existing `PUSH_STATION` path
+- `functions/index.js` — monitor gate on `loginWithEmployeeNumber` / `requestPasswordReset` / `unlockAccount` with `enforceAppCheck:false`; no `consumeAppCheckToken` until the client implements limited-use tokens
 - `firebase.json` — CSP **Report-Only** + XFO DENY (no enforced CSP)
 - `storage.rules` deny-all + `docs/STORAGE-CAPTURE-GATE.md` (**not deployable** until capture)
 - `ops-backup.mjs` dry-run default (`--execute` to write)
@@ -21,11 +30,11 @@
 ## Explicitly OUT / not done
 - **israel-time** — no file; OUT of candidate
 - No wholesale login.html / faults / SW / firestore.rules replace
-- Version remains **42H.36** (no asset bump)
+- Original Grok package remained **42H.36**; unified Codex candidate is **42H.37**
 - **No push / merge / Firebase deploy**
 
 ## OPEN (must stay explicit)
-1. **H2** OPEN — monitor only; OWNER console still required (cannot close via callable App Check alone)
+1. **H2** OPEN — monitor only; in-memory coverage is partial and cannot authorize enforcement; OWNER console still required
 2. **H1 address-change notice** OPEN — do not call H1 closed
 3. **israel-time** OUT of candidate
 4. **Storage capture** — deny-all not deployable until Console capture + rollback drill
@@ -48,7 +57,8 @@
   - Full `npm test` chain may still be running remaining suites at freeze time; firestore.rules unchanged from base so regressions unexpected. Record final exit in FROZEN-TIP if available.
 
 ## Owner console (H2) — not performed by agent
-Staging IP-hop; PDF path; seed `config/station_jobs`; `config/on_call`; Auth/App Check console switches.
+Staging IP-hop; PDF path; `config/on_call`; Auth/App Check console switches.
+Do not seed `config/station_jobs` for the pilot: routing is inactive by design.
 
 
 ## SHA appendix

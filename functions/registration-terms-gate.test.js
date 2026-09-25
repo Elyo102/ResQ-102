@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { createRegistrationTermsGate, createPreApprovalOnCall, validMarker } = require('./registration-terms-gate');
 
 class HttpsError extends Error {
@@ -11,6 +13,11 @@ const marker = { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3', priva
   receipt_path: 'registration_consents/member1/events/receipt1' };
 
 async function main() {
+  const indexSource = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
+  assert.match(indexSource, /exports\.whoAmI\s*=\s*preApprovalOnCall\(\{\},\s*async/);
+  assert.match(indexSource, /exports\.inspectJoinCampaign\s*=\s*firebaseOnCall\(\{\s*enforceAppCheck:\s*true\s*\}/);
+  assert.match(indexSource, /exports\.redeemJoinCampaign\s*=\s*preApprovalOnCall\(/);
+  assert.match(indexSource, /exports\.getMyJoinStatus\s*=\s*preApprovalOnCall\(/);
   let reads = 0;
   let current = null;
   const firebaseOnCall = (...args) => args.at(-1);
@@ -48,6 +55,6 @@ async function main() {
   assert.equal(await pendingHandler(authenticated), 'pending-ok');
   failRead = true;
   await assert.rejects(pendingHandler(authenticated), e => e.message === 'offline');
-  console.log('registration-terms-gate: 12 PASS');
+  console.log('registration-terms-gate: 15 PASS');
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });

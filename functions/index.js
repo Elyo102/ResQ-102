@@ -92,7 +92,6 @@ const { createRegistrationTermsGate, createPreApprovalOnCall } = require('./regi
 // Hardening package (pilot) — surgical port. israel-time intentionally OUT of candidate.
 const structuredLog = require('./structured-log');
 const appCheckGateModule = require('./app-check-gate');
-const stationJobsModule = require('./station-jobs');
 const freshAdminModule = require('./fresh-admin');
 const authHardeningModule = require('./auth-hardening');
 const swapSafety = require('./swap-safety');
@@ -218,19 +217,14 @@ const appCheckGate = appCheckGateModule.createAppCheckGate({
   db, HttpsError, FV,
   log: (event, fields) => structuredLog.info(event, fields || {})
 });
-// GAP3: empty config/station_jobs still runs Eilat (eilat_102) until migration+rollback complete.
-const stationJobs = stationJobsModule.createStationJobs({
-  db, HttpsError,
-  fallbackStationId: 'eilat_102',
-  log: (event, fields) => structuredLog.info(event, fields || {}),
-  alert: (event, fields) => structuredLog.alert(event, fields || {})
-});
 const freshAdmin = freshAdminModule.createFreshAdmin({ auth: admin.auth(), HttpsError });
 const authHardening = authHardeningModule.createAuthHardening({
   log: (event, fields) => structuredLog.warn('auth_guard', Object.assign({ event }, fields || {}))
 });
 const AUTH_CALLABLE_OPTIONS = Object.freeze({
-  enforceAppCheck: false, consumeAppCheckToken: true,
+  // Monitor regular client tokens. Replay protection needs a separate
+  // limited-use-token client rollout before it can be enabled safely.
+  enforceAppCheck: false,
   maxInstances: 5, concurrency: 40, timeoutSeconds: 30
 });
 const runtimeModeService = runtimeModeModule.createRuntimeModeService({
@@ -562,7 +556,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.36',
+  monthAuthorityReleaseId: '42H.37',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -702,7 +696,9 @@ exports.setJoinCampaignStatus = onCall({ enforceAppCheck: true }, req => joinCam
 exports.listJoinCampaigns = onCall({ enforceAppCheck: true }, req => joinCampaignService.listJoinCampaigns(req));
 exports.getJoinCampaignRegistrants = onCall({ enforceAppCheck: true, memory: '512MiB' }, req => joinCampaignService.getJoinCampaignRegistrants(req));
 exports.reviewJoinRegistrant = onCall({ enforceAppCheck: true }, req => joinCampaignService.reviewJoinRegistrant(req));
-exports.inspectJoinCampaign = onCall({ enforceAppCheck: true }, req => joinCampaignService.inspectJoinCampaign(req));
+// Public token-scoped preview: an invited account must be able to inspect the
+// link before its one-time Terms receipt exists. Redemption stays gated.
+exports.inspectJoinCampaign = firebaseOnCall({ enforceAppCheck: true }, req => joinCampaignService.inspectJoinCampaign(req));
 exports.redeemJoinCampaign = preApprovalOnCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.redeemJoinCampaign(req));
 exports.getMyJoinStatus = preApprovalOnCall({ enforceAppCheck: true }, req => joinCampaignService.getMyJoinStatus(req));
 exports.verifyQualificationDeclaration = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, req => joinCampaignService.verifyQualificationDeclaration(req));
@@ -3438,7 +3434,9 @@ exports.listUsersWithClaims = onCall(async (req) => {
 //  7. מי אני — לאבחון
 // ---------------------------------------------------------------------
 
-exports.whoAmI = firebaseOnCall(async (req) => {
+// Pending applicants may inspect live claims for safe resubmission; approved
+// accounts cannot use diagnostics to bypass the current Terms marker.
+exports.whoAmI = preApprovalOnCall({}, async (req) => {
   if (!req.auth) return { signedIn: false };
 
   const user = await admin.auth().getUser(req.auth.uid);
@@ -5148,7 +5146,7 @@ exports.hoursReminder = onSchedule({
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   if (last - now.getDate() !== 3) return;
 
-  await stationJobs.forEachEnabled('hoursReminder', async (sid) => {
+  const sid = PUSH_STATION;
   const uids = await uidsInCrew(sid, '');
   // שתי פעולות ולא אחת: לדווח את מה שחסר, **ולאשר** את הדוח.
   // דוח שלא אושר אינו מגיע לרכז כוח אדם, וכבאי שדיווח הכל
@@ -5160,7 +5158,6 @@ exports.hoursReminder = onSchedule({
     './attendance.html');
   console.log('hoursReminder: ' + res.people + ' people, ' +
               res.devices + ' devices');
-  });
 });
 
 // ---------- שליחה ידנית ----------
@@ -5860,7 +5857,7 @@ exports.guardReminder = onSchedule(
   timeoutSeconds: 300, schedule: '0 19 * * *', timeZone: 'Asia/Jerusalem',
     region: 'europe-west1' },
   async () => {
-    await stationJobs.forEachEnabled('guardReminder', async (sid) => {
+    const sid = PUSH_STATION;
     const t = new Date(Date.now() + 24 * 3600 * 1000);
     const key = t.toISOString().slice(0, 10);
 
@@ -5894,7 +5891,6 @@ exports.guardReminder = onSchedule(
           (v.place ? ' · ' + v.place : ''),
         './guards.html', true);
     }
-    });
   });
 
 
@@ -6526,7 +6522,7 @@ exports.signReminder = onSchedule({
   timeZone: 'Asia/Jerusalem',
   region: 'europe-west1'
 }, async () => {
-  await stationJobs.forEachEnabled('signReminder', async (sid) => {
+  const sid = PUSH_STATION;
   const now = new Date();
   const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = last - now.getDate();
@@ -6614,7 +6610,6 @@ exports.signReminder = onSchedule({
       console.warn('signReminder · מפקדים נכשל: ' + (e && e.message));
     }
   }
-  });
 });
 
 
@@ -6899,7 +6894,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.36', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.37', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

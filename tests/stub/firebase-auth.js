@@ -35,7 +35,7 @@ const SIGNED_OUT = WHO === 'none' ||
   (typeof window !== 'undefined' && window.__SMOKE_SIGNED_OUT === true);
 
 function makeUser(roleName, uid, extraClaims){
-  const claims = Object.assign({
+  let claims = Object.assign({
     email: 'eldad50@gmail.com',
     email_verified: true,
     firebase: { sign_in_provider: 'password' }
@@ -59,6 +59,9 @@ function makeUser(roleName, uid, extraClaims){
     },
     getIdToken: force => {
       markAuth('getIdToken', { force:force === true });
+      if (force === true && typeof window !== 'undefined' && window.__SMOKE_REFRESH_CLAIMS) {
+        claims = Object.assign({}, claims, window.__SMOKE_REFRESH_CLAIMS);
+      }
       if (typeof window !== 'undefined' && window.__AUTH_HOLD_TOKEN === true) {
         return new Promise(() => {});
       }

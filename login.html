@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h36">
-<link rel="stylesheet" href="./bulletin.css?v=42h36">
+<link rel="stylesheet" href="./theme.css?v=42h37">
+<link rel="stylesheet" href="./bulletin.css?v=42h37">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -308,6 +308,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <p>לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.</p>
       <button type="button" id="invitationSignIn">כניסה לחשבון קיים</button>
       <button type="button" id="invitationCreate">יצירת חשבון למימוש הזמנה</button>
+      <button type="button" class="back" id="invitationChoosePassword">החשבון כבר קיים? בחר/י סיסמה במייל</button>
     </div>
     <div id="invitationVerified" class="hide">
       <p id="invitationWho"></p>
@@ -323,6 +324,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div class="wait">
       <div class="icon">⏳</div>
       <div class="ttl">רגע…</div>
+      <p class="note">אפשר לקרוא את <a href="terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a> בזמן שהמערכת נטענת.</p>
     </div>
   </div>
 
@@ -338,6 +340,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <input type="text" id="loginEmp" inputmode="numeric" autocomplete="username">
       <label for="loginPass">סיסמה</label>
       <input type="password" id="loginPass" autocomplete="current-password">
+      <p class="note" id="loginTermsNotice">
+        הכניסה לשירות מותנית באישור <a href="terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a>
+        ו<a href="privacy.html" target="_blank" rel="noopener">הודעת הפרטיות</a>.
+        לאחר אימות הזהות, מי שטרם אישר יעבור למסך אישור בלבד ולא יוכל להשתמש ב־ResQ עד שהסכמתו תישמר בשרת.
+      </p>
       <button id="btnLogin">כניסה</button>
       <button class="link" id="btnForgot">שכחתי סיסמה</button>
       <div class="note">
@@ -652,25 +659,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h36';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h37';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h36';
+         subStationsForStation } from './stations.js?v=42h37';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h36';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h36';
+  from './nav.js?v=42h37';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h37';
 import {
   initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h36';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h36';
-import { watchCallouts } from './callout.js?v=42h36';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h36';
-import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h36';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h36';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h36';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h36';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h36';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h36';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h36';
+} from './pwa.js?v=42h37';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h37';
+import { watchCallouts } from './callout.js?v=42h37';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h37';
+import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h37';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h37';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h37';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h37';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h37';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h37';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h37';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -681,11 +688,11 @@ import { getFirestore, doc, getDoc, getDocFromServer, setDoc, writeBatch, collec
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h36';
+  from './monitored-functions.js?v=42h37';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h36';
+import { initAppCheck } from './appcheck.js?v=42h37';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -757,7 +764,20 @@ function ensureJoinPanel(){
     redeem: async data => (await callRedeemJoin(data)).data,
     currentUser: () => auth.currentUser,
     createAccount: async (email, password) => { onboarding = true; try { const c = await createUserWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
-    signIn: async (email, password) => { onboarding = true; try { const c = await signInWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    signIn: async (email, password) => {
+      onboarding = true; loginTransitionPending = true;
+      let credential;
+      try { credential = await signInWithEmailAndPassword(auth, email, password); }
+      catch (error) { loginTransitionPending = false; throw error; }
+      finally { onboarding = false; }
+      invitationUid = credential.user.uid;
+      let claims = {};
+      try { claims = (await credential.user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+      if (claims.super === true || hasCompleteServerAssignment(claims)) joinRegistered = true;
+      await startRoute(credential.user);
+      return credential;
+    },
+    requestPasswordReset: async email => (await callReset({ id: email })).data,
     sendVerification: () => sendEmailVerification(auth.currentUser),
     refreshUser: async () => { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } },
     claims: async () => auth.currentUser ? ((await auth.currentUser.getIdTokenResult()).claims || {}) : {},
@@ -871,7 +891,7 @@ function clearInvitation(){
   invitationControls();
 }
 function invitationControls(){
-  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationRedeemMarketing','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  ['invitationSignIn','invitationCreate','invitationChoosePassword','invitationVerify','invitationRedeem','invitationRedeemMarketing','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
   if(invitationIntent){
     $('invitationRedeem').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in===true;
     $('invitationRedeemMarketing').disabled=invitationBusy||invitationIntent.ack.marketing_opt_in!==true;
@@ -888,12 +908,18 @@ async function invitationAction(action, marketingOptIn){
   const current=()=>epoch===invitationEpoch && (auth.currentUser?.uid||'')===expectedUid;
   invitationBusy=true; invitationControls();
   try{
-    if(action==='create'||action==='signin'){
+    if(action==='choose-password'){
+      const email=$('invitationEmail').value.trim().toLowerCase();
+      if(!email)throw new Error('יש להזין את המייל שאליו נשלחה ההזמנה.');
+      await callReset({ id:email });
+      if(current())invitationMessage('אם החשבון קיים, נשלח למייל קישור לבחירת סיסמה. לאחר מכן חזור/י להזמנה והיכנס/י לחשבון הקיים.');
+    }else if(action==='create'||action==='signin'){
       if(auth.currentUser)throw new Error('כבר מחובר חשבון. התנתק כדי להשתמש בחשבון אחר.');
       const email=$('invitationEmail').value.trim().toLowerCase(), password=$('invitationPassword').value;
       if(!email||!password)throw new Error('יש להזין מייל וסיסמה.');
       if(action==='create'&&!pwOk(password))throw new Error('הסיסמה אינה עומדת בכללים המוצגים.');
       onboarding=true;
+      if(action==='signin')loginTransitionPending=true;
       const credential=await (action==='create'?createUserWithEmailAndPassword(auth,email,password):signInWithEmailAndPassword(auth,email,password));
       expectedUid=credential.user.uid;
       if(!current())return;
@@ -929,7 +955,7 @@ async function invitationAction(action, marketingOptIn){
         await startRoute(user);
       }
     }
-  }catch(error){if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
+  }catch(error){if(action==='signin')loginTransitionPending=false;if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
   finally{
     if(action==='create'||action==='signin')onboarding=false;
     if(current()){invitationBusy=false;invitationControls();if(action==='create'||action==='signin'){if(auth.currentUser)await startRoute(auth.currentUser);}}
@@ -937,6 +963,7 @@ async function invitationAction(action, marketingOptIn){
 }
 $('invitationSignIn').onclick=()=>invitationAction('signin');
 $('invitationCreate').onclick=()=>invitationAction('create');
+$('invitationChoosePassword').onclick=()=>invitationAction('choose-password');
 $('invitationVerify').onclick=()=>invitationAction('verify');
 $('invitationRedeem').onclick=()=>invitationAction('redeem',false);
 $('invitationRedeemMarketing').onclick=()=>invitationAction('redeem',true);
@@ -1343,8 +1370,12 @@ let nativeBackArrival = (function () {
   } catch (ignore) { return false; }
 })();
 let nativeBackRecoveryAttempted = false;
+let approvedClaimRefreshUid = '';
 
 onIdTokenChanged(auth, user => {
+  if (!user || (approvedClaimRefreshUid && approvedClaimRefreshUid !== user.uid)) {
+    approvedClaimRefreshUid = '';
+  }
   if(invitationUid && invitationUid!==(user?.uid||''))clearInvitation();
   invitationUid=user?.uid||'';
   authSettled = true;
@@ -1403,6 +1434,17 @@ async function route(user, epoch){
       const response = await callRegistrationTerms({action:'status'});
       if (!routeIsCurrent(user, epoch)) return;
       if (!response.data?.ok || !response.data.accepted) {
+        // A restored pre-cutover session must authenticate again once before
+        // recording the new consent. A fresh login stays on the consent view.
+        if (!loginTransitionPending) {
+          try {
+            await signOut(auth);
+            show('נדרש אישור תקנון 1.3. התחבר/י מחדש כדי לקרוא ולאשר אותו.', 'ok');
+          } catch (error) {
+            if (routeIsCurrent(user, epoch)) showApprovedTerms(user, true);
+          }
+          return;
+        }
         showApprovedTerms(user, false);
         return;
       }
@@ -1440,7 +1482,25 @@ async function route(user, epoch){
     catch (ignore) {}
     if (!routeIsCurrent(user, epoch)) return;
 
-    if (req && req.exists()) { showWaiting(user, req.data() || {}); return; }
+    if (req && req.exists()) {
+      const request = req.data() || {};
+      if (request.status === 'approved') {
+        if (approvedClaimRefreshUid !== user.uid) {
+          approvedClaimRefreshUid = user.uid;
+          try {
+            await user.getIdToken(true);
+            if (routeIsCurrent(user, epoch)) startRoute(user);
+          } catch (error) {
+            if (routeIsCurrent(user, epoch)) showRegistrationRecovery(user);
+          }
+        } else {
+          showAssignmentRecovery(user);
+        }
+        return;
+      }
+      showWaiting(user, request);
+      return;
+    }
     if (!requestChecked) { showRegistrationRecovery(user); return; }
     showNotLinked(user);
     return;
@@ -1650,7 +1710,9 @@ function showWaiting(user, request){
 
 let approvedTermsUserUid = '';
 function showApprovedTerms(user, failed){
-  loginTransitionPending = false;
+  // Keep the fresh-login marker until consent is recorded or the identity
+  // changes. Auth and invitation routing can race; a second status response
+  // must not mistake this same sign-in for a restored old session.
   approvedTermsUserUid = user.uid;
   clearNav();
   document.body.classList.remove('with-nav');
