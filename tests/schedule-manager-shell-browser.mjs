@@ -138,17 +138,20 @@ try {
     }
   });
 
-  await test('advanced station setup is collapsed by default and remains user controlled', async () => {
+  await test('staffing counts are primary while source controls remain user-controlled', async () => {
     const advanced = desktop.page.locator('#managerAdvanced');
     assert.equal(await advanced.evaluate((node) => node.tagName), 'DETAILS');
     assert.equal(await advanced.getAttribute('open'), null);
+    assert.equal(await desktop.page.locator('#policyCard').isVisible(), true);
+    assert.equal(await desktop.page.locator('#policySteps .step').count() > 0, true);
+    assert.equal(await desktop.page.locator('#sourceCard').isVisible(), false);
     const summary = advanced.locator(':scope > summary');
-    assert.match((await summary.textContent()).trim(), /הגדרות אופציונליות.*טיוטה אוטומטית/);
+    assert.match((await summary.textContent()).trim(), /מקור כוח האדם והגדרות מתקדמות/);
     await summary.click();
     assert.equal(await advanced.getAttribute('open'), '');
-    assert.equal(await advanced.locator('#policyCard').count(), 1);
+    assert.equal(await advanced.locator('#policyCard').count(), 0);
     assert.equal(await advanced.locator('#sourceCard').count(), 1);
-    assert.match(await advanced.locator('#policyCard h2').textContent(), /תקינה ותפקידים לטיוטה אוטומטית/);
+    assert.match(await desktop.page.locator('#policyCard h2').textContent(), /כמה אנשים צריך/);
     assert.match(await advanced.locator('#sourceCard h2').textContent(), /רשימת עובדים לטיוטה אוטומטית/);
     await summary.click();
     assert.equal(await advanced.getAttribute('open'), null);

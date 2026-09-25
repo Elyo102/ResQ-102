@@ -81,7 +81,7 @@ try {
     check(await page.locator('#homeView').isHidden(),
       'already approved super cannot enter home before current terms');
     check(await page.locator('#pendingTermsPanel button').count() === 1 &&
-      await page.locator('#pendingTermsNoMarketing').textContent() === 'אני מסכים/ה לתקנון',
+      await page.locator('#pendingTermsNoMarketing').textContent() === 'אני מסכים לתקנון',
       'approved account sees one terms action and no marketing choice');
     await page.locator('#pendingTermsNoMarketing').click();
     await page.locator('#homeView').waitFor({ state:'visible' });

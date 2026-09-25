@@ -4566,6 +4566,16 @@ async function boot(user, generation, knownClaims, knownStatus) {
     if (!$('importMonth').value) $('importMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
+    // A viewer's board does not depend on the command/cutover options. Keep
+    // that authoritative request (commanders may lack the manager appointment),
+    // but do not hold the board behind its network latency. loadModeOptions
+    // checks authGeneration before it can paint a late response.
+    if (!canManageSchedule()) {
+      void loadModeOptions(generation);
+      chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
+      $('appMain').classList.remove('hide');
+      return;
+    }
     const [setupLoaded] = await Promise.all([loadSetup(generation), loadModeOptions(generation),
       loadImportDisplayStatus($('importMonth').value, generation)]);
     if (generation !== state.authGeneration || state.user !== user) return;

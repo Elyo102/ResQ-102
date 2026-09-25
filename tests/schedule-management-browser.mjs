@@ -280,6 +280,13 @@ try {
   await managerPage.goto(base + '?tab=manage', { waitUntil:'load' });
   await managerPage.locator('#appMain:not(.hide)').waitFor();
 
+  await test('manager sees staffing counts without opening advanced source controls', async () => {
+    await managerPage.locator('#managerAdvanced').evaluate((details) => { details.open = false; });
+    assert.equal(await managerPage.locator('#policyCard').isVisible(), true);
+    assert.equal(await managerPage.locator('#policySteps .step').count(), 4);
+    assert.equal(await managerPage.locator('#sourceCard').isVisible(), false);
+    await managerPage.locator('#managerAdvanced').evaluate((details) => { details.open = true; });
+  });
   await test('manager sees the management panel and signed policy', async () => {
     assert.equal(await managerPage.locator('#manageTab').isVisible(), true);
     assert.equal(await managerPage.locator('#manageView').isVisible(), true);
@@ -1421,6 +1428,33 @@ try {
     assert.ok(String(saved.payload.request_id || '').startsWith('source_'));
   });
   await importer.close();
+
+  const fastViewer = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  await prepare(fastViewer, 'commander', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getScheduleModeOptions:[
+      { data:{ may_change:true, current:'off', targets:[], ready:false, marker:'old-station' }, delay:3000 },
+      { data:{ may_change:true, current:'new', targets:[], ready:true, marker:'new-station' }, delay:20 }
+    ],
+    getStationScheduleRange:[{ data:stationRange }, { data:stationRange }]
+  });
+  const fastViewerPage = await fastViewer.newPage();
+  await fastViewerPage.goto(base, { waitUntil:'load' });
+  await test('station board appears before slow command options and commander keeps mode access', async () => {
+    await fastViewerPage.locator('#appMain:not(.hide)').waitFor({ timeout:2500 });
+    assert.equal(await fastViewerPage.locator('#stationView').isVisible(), true);
+    assert.equal(await fastViewerPage.locator('#modeCard').isVisible(), false);
+  });
+  await test('late command options from the prior station cannot replace the new commander view', async () => {
+    await fastViewerPage.evaluate(() => window.__SMOKE_EMIT_AUTH('commander', 'fast-viewer-b', {
+      email:'fast-viewer-b@example.invalid', stationId:'station_b'
+    }));
+    await fastViewerPage.locator('#modeCard:not([hidden])').waitFor();
+    assert.equal(await fastViewerPage.locator('#modeNow').textContent(), 'פעיל');
+    await fastViewerPage.waitForTimeout(3100);
+    assert.equal(await fastViewerPage.locator('#modeNow').textContent(), 'פעיל');
+  });
+  await fastViewer.close();
 
   const commander = await browser.newContext({ viewport:{ width:1280, height:900 }, locale:'he-IL' });
   await prepare(commander, 'commander', {
@@ -3618,5 +3652,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 91);
+assert.equal(passed, 94);
 console.log('\n' + passed + ' schedule management browser checks passed.');
