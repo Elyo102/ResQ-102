@@ -1,0 +1,8 @@
+d149e18e7b3214f4786e70977ea7f399fbf298df
+
+branch=grok/pilot-42h35-hardening-package
+
+base=5c4276fadda64383af34aa9d961df23287bf014c
+
+note=tip-of-hardening-package-before-freeze-commit; handoff above describes this SHA
+
