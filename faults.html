@@ -463,7 +463,7 @@ import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h37';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
@@ -490,7 +490,7 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
-let faults = [], fleet = [], anchors = [], shots = {}, handovers = {};
+let faults = [], fleet = [], anchors = [], shots = {}, shotsInflight = {}, handovers = {};
 let FAULT_ATTEMPT = null;
 const PHOTO_QUEUE = createPhotoQueue(3);
 function renderPhotoQueue(){
@@ -540,7 +540,7 @@ function bumpIdentity(){
   ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
   vehEditing = null;
   boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
-  faults = []; handovers = {}; shots = {};
+  faults = []; handovers = {}; shots = {}; shotsInflight = {};
   FAULT_ATTEMPT = null;
   $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = ''; $('nGallery').value = '';
   PHOTO_QUEUE.clear();
@@ -1253,14 +1253,43 @@ function actBtn(text, cls, fn){
 // התמונות נטענות רק כשהתקלה מצוירת, ולא בטעינה הראשונה.
 // מסך עם עשרים תקלות היה מוריד עשרים תמונות שאיש לא הסתכל בהן.
 async function loadShots(f, box){
-  if (shots[f.id]) { paintShots(shots[f.id], box); return; }
+  // Key includes SID so station A / station B never share inflight or cache.
+  const reqSid = SID;
+  const reqGen = AUTH_GEN;
+  const key = String(reqSid || '') + ':' + String(f.id || '');
+  if (shots[key]) { paintShots(shots[key], box); return; }
+  // Coalesce concurrent gets for the same station+fault (dialog can paint
+  // multiple cards / re-enter before the first getDocs resolves). Preserves
+  // cache, photo queue, and atomic createFaultReport writes.
+  if (!shotsInflight[key]) {
+    const request = getDocs(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'))
+      .then(function (s) {
+        const list = [];
+        s.forEach(d => list.push(d.data() || {}));
+        // Late response after station/user switch: discard — do not poison cache.
+        if (SID !== reqSid || AUTH_GEN !== reqGen) {
+          return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
+        }
+        shots[key] = list;
+        return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
+      })
+      .finally(function () {
+        // An old request may settle after an identity switch created a new
+        // request with the same key; never remove that newer entry.
+        if (shotsInflight[key] === request) delete shotsInflight[key];
+      });
+    shotsInflight[key] = request;
+  }
   try {
-    const s = await getDocs(collection(db, 'stations', SID, 'faults', f.id, 'photos'));
-    const list = [];
-    s.forEach(d => list.push(d.data() || {}));
-    shots[f.id] = list;
-    paintShots(list, box);
+    const result = await shotsInflight[key];
+    // Guard paint: only apply if this screen's identity still matches the request.
+    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen ||
+        result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
+      return;
+    }
+    paintShots(result.list, box);
   } catch (e) {
+    if (SID !== reqSid || AUTH_GEN !== reqGen) return;
     box.innerHTML = '<span class="ld">התמונות לא נטענו.</span>';
   }
 }
@@ -1296,7 +1325,7 @@ async function wipeDamage(f){
       }
     } catch (ignore) {}
     await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
-    delete shots[f.id];
+    delete shots[String(SID || '') + ':' + String(f.id || '')];
     msg('הפגיעה נמחקה.', 'ok');
     await loadAll();
   } catch (e) {

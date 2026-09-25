@@ -2263,17 +2263,49 @@ async function respond(itemId, answer, reasonCode) {
   }
 }
 
+// Coalesce getMyScheduleV2 by uid|stationId|date — never one global Promise
+// (User A→B / today↔month must not share an in-flight result).
+const mineInflight = new Map(); // key -> { generation, principal, promise }
+
+function mineInflightKey(date) {
+  const uid = rangePrincipal();
+  const claims = state.claims || {};
+  const stationId = String(claims.stationId || claims.station_id || '');
+  return uid + '|' + stationId + '|' + String(date || localDate());
+}
+
+function clearMineInflight() { mineInflight.clear(); }
+
 async function loadMine(generation = state.authGeneration) {
   if (!canViewSchedule()) return;
   const principal = rangePrincipal();
-  let mine;
+  const date = localDate();
+  const key = mineInflightKey(date);
+  const existing = mineInflight.get(key);
+  if (existing
+      && existing.generation === generation
+      && existing.principal === principal) {
+    return existing.promise;
+  }
+  const promise = (async () => {
+    let mine;
+    try {
+      // App Check remains on httpsCallable getMyScheduleV2 (call.mine).
+      mine = (await call.mine({ date: date })).data;
+    } catch (error) { mine = { active: false, error: errorText(error) }; }
+    // Do not apply after auth bump / principal change; drop sticky error for retry.
+    if (generation !== state.authGeneration || rangePrincipal() !== principal) return false;
+    state.mine = mine;
+    renderMineToday();
+    return true;
+  })();
+  mineInflight.set(key, { generation: generation, principal: principal, promise: promise });
   try {
-    mine = (await call.mine({ date: localDate() })).data;
-  } catch (error) { mine = { active: false, error: errorText(error) }; }
-  if (generation !== state.authGeneration || rangePrincipal() !== principal) return false;
-  state.mine = mine;
-  renderMineToday();
-  return true;
+    return await promise;
+  } finally {
+    const cur = mineInflight.get(key);
+    if (cur && cur.promise === promise) mineInflight.delete(key);
+  }
 }
 
 function daysWithMe(days) {
@@ -2291,6 +2323,12 @@ async function loadMineRange(ym) {
   const box = $('mineContent');
   clear(box); box.appendChild(node('div', 'loader'));
   $('mineNote').textContent = '';
+  // Keep today card hidden until THIS authGeneration's mine load succeeds.
+  $('mineToday').hidden = true;
+  // OFF may be an imported-display month: wait for the range source before
+  // making an operational-today call. In active modes, fetch today in parallel.
+  const sourceMayBeImported = state.status && state.status.mode === 'off';
+  const minePromise = sourceMayBeImported ? null : loadMine(generation);
   try {
     // „הסידור שלי" הוא מסנן תצוגה על אותו לוח חודשי מורשה של
     // התחנה. כך הוא מציג גם טיוטת אימון שנבחרה להצגה בזמן שהמנוע
@@ -2302,12 +2340,13 @@ async function loadMineRange(ym) {
     // עד שגם תשובת היום של הדור הנוכחי הושלמה, ולא רק עד שהלוח
     // החודשי החדש הגיע. אחרת תשובת טווח מהירה ותשובת יום איטית
     // עלולות לחשוף לרגע את הכרטיס של הזהות הקודמת.
-    $('mineToday').hidden = true;
     if (displayOnly) {
+      if (minePromise) await minePromise.catch(function () { return false; });
+      if (generation !== state.authGeneration || state.month !== requestedMonth) return;
       state.mine = null;
       renderMineToday();
     } else {
-      if (await loadMine(generation) === false) return;
+      if (await (minePromise || loadMine(generation)) === false) return;
       if (generation !== state.authGeneration || state.month !== requestedMonth) return;
       $('mineToday').hidden = false;
     }
@@ -2332,6 +2371,12 @@ async function loadMineRange(ym) {
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
         || state.month !== requestedMonth) return;
+    // A failed month request must not indefinitely hide a valid daily card.
+    // In OFF mode the range source is unknown, so fail closed on the daily card.
+    if (minePromise && await minePromise !== false &&
+        generation === state.authGeneration && state.month === requestedMonth) {
+      $('mineToday').hidden = false;
+    }
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
     const retry = node('button', 'btn sm', 'נסה שוב');
@@ -3438,7 +3483,9 @@ async function publishDraft() {
       if (!authTaskCurrent(task)) return;
       state.status = status;
       setMode(state.status); setRollbackAvailability(); updateEditAvailability();
-      await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+      // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
       if (!authTaskCurrent(task)) return;
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
@@ -3545,7 +3592,9 @@ async function rollbackSchedule() {
     state.status = status;
     setMode(state.status); setRollbackAvailability(); updateEditAvailability();
     invalidateRange();
-    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
@@ -4199,7 +4248,9 @@ async function applyEdit() {
     await refreshStatusAfterEdit(task);
     if (!authTaskCurrent(task)) return;
     invalidateRange();
-    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
@@ -4804,6 +4855,7 @@ async function handleIdToken(user) {
   state.authResolving = true;
   state.authGeneration += 1;
   const generation = state.authGeneration;
+  clearMineInflight();
   invalidateRange();
   state.status = null;
   state.mine = null;

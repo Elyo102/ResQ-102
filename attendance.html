@@ -434,7 +434,7 @@ import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDocsFromServer, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
@@ -489,6 +489,26 @@ let SUBJ = null, CAN_EDIT_OTHERS = false;
 let PEOPLE = [];
 let subjectGeneration = 0;
 let staticLoadGeneration = 0;
+// Station-level Firestore reads (swaps/sites/board+shift) do not depend on
+// viewMonth. Cache them across prev/next month so month navigation only
+// re-fetches month-scoped callables (effective workdays / legacy compat).
+// Short TTL (90s): month-nav still skips board/swaps/sites gets, but
+// crew moves / site reassignment cannot stick across a long session.
+// Month-scoped effective workdays are NEVER served from this cache.
+const STATIC_CACHE_TTL_MS = 90 * 1000;
+let staticStationCache = null; // { sid, swaps, sites, at }
+let staticBoardCache = null;   // { key: sid|uid|crew, mySite, at }
+function clearAttendanceStaticCache(){ staticStationCache = null; staticBoardCache = null; }
+function staticCacheFresh(entry){
+  return !!(entry && Number.isFinite(entry.at) && (Date.now() - entry.at) < STATIC_CACHE_TTL_MS);
+}
+// Editing and automatic fill need server-confirmed board, swaps and site hours.
+// A failed refresh must stop the write, never silently replace a site with ''.
+async function ensureFreshAttendanceForWrite(){
+  clearAttendanceStaticCache();
+  return loadStatic(true);
+}
+
 let monthLoadGeneration = 0;
 let authGeneration = 0;
 let lifecycleGeneration = 0;
@@ -761,6 +781,7 @@ onAuthStateChanged(auth, async user => {
   const authEpoch = ++authGeneration;
   lifecycleGeneration++;
   SID = ''; ME = null; SUBJ = null; PEOPLE = []; records = {}; report = null;
+  clearAttendanceStaticCache();
   correctionContext = null; pendingCorrectionOperation = null;
   correctionAuditCursor = null; correctionAuditItems = [];
   monthDataReady = false; subjectGeneration++; monthLoadGeneration++;
@@ -872,7 +893,7 @@ onAuthStateChanged(auth, async user => {
 
 // ---------- טעינה ----------
 
-async function loadStatic(){
+async function loadStatic(forceServer = false){
   const generation = ++staticLoadGeneration;
   const snapshot = {
     sid: SID,
@@ -885,6 +906,7 @@ async function loadStatic(){
   };
   const next = {};
   let compatibilityFailure = null;
+  let sourceFailure = null;
 
   // ארבעת המקורות והקשר הסידור אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
@@ -923,9 +945,9 @@ async function loadStatic(){
   const loadBoardSite = async function () {
     try {
       const pair = await Promise.all([
-        getDoc(doc(db, 'stations', snapshot.sid, 'config', 'board')),
+        (forceServer ? getDocFromServer : getDoc)(doc(db, 'stations', snapshot.sid, 'config', 'board')),
         snapshot.crew
-          ? getDoc(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
+          ? (forceServer ? getDocFromServer : getDoc)(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
           : Promise.resolve(null)
       ]);
       const b = pair[0], s = pair[1];
@@ -933,7 +955,8 @@ async function loadStatic(){
       const assign = (s && s.exists() && (s.data() || {}).assign) || {};
 
       const mine = Object.keys(assign).filter(k => assign[k] === snapshot.uid);
-      let found = snapshot.mySite;
+      // Never retain a prior mySite when the live board has no active slot.
+      let found = '';
       // משבצת של רכב מושבת אינה מקור לתחנת המשנה שלי: הרכב ירד
       // מהצי, והשיבוץ הישן נשאר שמור רק כדי ששחזור יהיה מלא.
       (board.vehicles || []).forEach(function (v) {
@@ -943,7 +966,7 @@ async function loadStatic(){
         });
       });
       next.mySite = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
   // החלפות מאושרות. אדם שהחליף לא עובד ביום שלו, וכן עובד
@@ -951,19 +974,19 @@ async function loadStatic(){
   // במילוי מראש, אחרת הדוח מתחיל שגוי.
   const loadSwaps = async function () {
     try {
-      const sw = await getDocs(collection(db, 'stations', snapshot.sid, 'swaps'));
+      const sw = await (forceServer ? getDocsFromServer : getDocs)(collection(db, 'stations', snapshot.sid, 'swaps'));
       const found = [];
       sw.forEach(d => {
         const v = d.data() || {};
         if (v.status === 'approved') found.push(v);
       });
       next.swaps = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
   const loadSites = async function () {
     try {
-      const ss = await getDocs(collection(db, 'stations', snapshot.sid, 'sub_stations'));
+      const ss = await (forceServer ? getDocsFromServer : getDocs)(collection(db, 'stations', snapshot.sid, 'sub_stations'));
       const found = [];
       ss.forEach(d => {
         const v = d.data() || {};
@@ -974,19 +997,34 @@ async function loadStatic(){
       });
       found.sort((a, b) => a.order - b.order);
       next.sites = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
-  await Promise.all([
-    loadLegacyCompatibility(),
-    loadBoardSite(), loadSwaps(), loadSites()
-  ]);
+  const stationHit = !forceServer && staticCacheFresh(staticStationCache) && staticStationCache.sid === snapshot.sid;
+  const boardKey = snapshot.sid + '|' + snapshot.uid + '|' + String(snapshot.crew || '');
+  const boardHit = !forceServer && staticCacheFresh(staticBoardCache) && staticBoardCache.key === boardKey;
+
+  const tasks = [loadLegacyCompatibility()];
+  if (!boardHit) tasks.push(loadBoardSite());
+  else next.mySite = staticBoardCache.mySite;
+  if (!stationHit) {
+    tasks.push(loadSwaps(), loadSites());
+  } else {
+    next.swaps = staticStationCache.swaps;
+    next.sites = staticStationCache.sites;
+  }
+  await Promise.all(tasks);
 
   const current = generation === staticLoadGeneration &&
     SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
     String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew &&
     viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
+
+  if (sourceFailure) {
+    msg('לא ניתן לאמת כעת את השיבוץ ותחנות המשנה מול השרת. הדיווח לא נשמר; נסה שוב כשיש חיבור.', 'err');
+    return false;
+  }
 
   if (compatibilityFailure || !next.compatibility || !next.effective) {
     showLegacyCompatibilityFailure();
@@ -1005,6 +1043,14 @@ async function loadStatic(){
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
   if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;
+
+  if (Object.prototype.hasOwnProperty.call(next, 'swaps') &&
+      Object.prototype.hasOwnProperty.call(next, 'sites')) {
+    staticStationCache = { sid: snapshot.sid, swaps: next.swaps, sites: next.sites, at: Date.now() };
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'mySite')) {
+    staticBoardCache = { key: boardKey, mySite: next.mySite, at: Date.now() };
+  }
   return true;
 }
 
@@ -1363,7 +1409,7 @@ function renderRows(sug){
       b.textContent = isSug ? 'שמור' : 'ערוך';
       b.setAttribute('aria-label', (isSug ? 'שמירת' : 'עריכת') +
         ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
-      b.onclick = () => editDay(key, rec);
+      b.onclick = () => void editDay(key, rec);
       td.appendChild(b);
     }
     tr.appendChild(td);
@@ -1473,6 +1519,7 @@ async function createMissingDays(target, entries){
 }
 async function refreshAfterCreation(target, result){
   if (!sameMonthWrite(target)) return false;
+  clearAttendanceStaticCache();
   const expected = monthLoadGeneration + 1;
   const loaded = await loadMonth();
   const owns = expected === monthLoadGeneration && SID === target.sid && SUBJ && ME &&
@@ -1488,10 +1535,12 @@ $('btnFill').onclick = async () => {
   if (!monthDataReady) return;
   if (onOther()) { msg('מילוי אוטומטי זמין לעובד עצמו בלבד.', 'err'); return; }
   const target = captureMonthWrite();
-  const sug = suggestedDays();
-  if (!sug.length) return;
   const b = $('btnFill'); b.disabled = true;
   try {
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(target)) return;
+    const sug = suggestedDays();
+    if (!sug.length) return;
     const bt = baseTimes();
     const entries = sug.map(function (key) {
       const rec = newRecord(key, { day_type: 'regular', start: bt.start,
@@ -1548,7 +1597,7 @@ $('btnStop').onclick = async () => {
 $('btnManual').onclick = () => {
   if (onOther()) { msg('דיווח ידני יש לפתוח דרך שורת היום המתועדת.', 'err'); return; }
   const now = new Date();
-  editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
+  void editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
           records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
 };
 
@@ -1571,8 +1620,9 @@ $('btnSync').onclick = async () => {
     // הסידור והאבטחות האישיות נטענים מחדש — שניהם יכולים היו
     // להשתנות מאז שהמסך נפתח. האבטחות נשארות אישיות גם בזמן
     // שרכזת כוח אדם פותחת דוח של עובד אחר.
+    // Explicit refresh: drop TTL caches so board/swaps/sites re-fetch.
     const guardRequest = beginMyGuardAttendance(action);
-    const loaded = await Promise.all([loadStatic(), guardRequest]);
+    const loaded = await Promise.all([ensureFreshAttendanceForWrite(), guardRequest]);
     const fresh = loaded[0];
     const freshGuards = loaded[1];
     const sameTarget = action.subject === subjectGeneration &&
@@ -1709,7 +1759,7 @@ document.addEventListener('keydown', function (e) {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
-window.addEventListener('pagehide', function () { lifecycleGeneration++; });
+window.addEventListener('pagehide', function () { lifecycleGeneration++; clearAttendanceStaticCache(); });
 window.addEventListener('pageshow', function (event) {
   if (event.persisted) location.reload();
 });
@@ -1729,10 +1779,13 @@ function dayOptions(sel){
   }).join('');
 }
 
-function editDay(key, rec){
+async function editDay(key, rec){
   if (locked()) return;
   const editTarget = captureMonthWrite();
   if (key.slice(0, 7) !== editTarget.month) return;
+  // Form defaults and selectable site hours must be current before editing.
+  if (!(await ensureFreshAttendanceForWrite())) return;
+  if (!sameMonthWrite(editTarget)) return;
   const bt = baseTimes();
 
   // אבטחה ביום הזה. אם הכבאי משובץ לאבטחה ביום שאינו יום
@@ -1907,6 +1960,15 @@ function editDay(key, rec){
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
     }
 
+    // The form may have stayed open while site hours or the assignment changed.
+    // Validate against the server again immediately before deriving the patch.
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(editTarget)) return;
+    if (cur.sub_station && !sites.some(site => site.id === cur.sub_station)) {
+      msg('תחנת המשנה שנבחרה השתנתה. בחר תחנה עדכנית ונסה שוב.', 'err');
+      return;
+    }
+
     const fixed = siteHoursOf(cur.sub_station);
     const h = calcHours(cur, fixed);
     if (needsTimes(t) && h == null) {
@@ -1953,10 +2015,12 @@ function editDay(key, rec){
       closeOv(false);
       if (outcome && outcome.corrected) {
         msg('התיקון נרשם ביומן הביקורת.', 'ok');
+        clearAttendanceStaticCache();
         const refreshed = await loadMonth();
         if (!refreshed) msg('התיקון נרשם, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       } else if (outcome && outcome.selfSaved) {
         msg('היום נשמר.', 'ok');
+        clearAttendanceStaticCache();
         const refreshed = await loadMonth();
         if (!refreshed) msg('היום נשמר, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
         else focusAfterRender(key);
@@ -2020,6 +2084,7 @@ async function writeReport(status){
   requireMonthWrite(target);
   await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
   requireMonthWrite(target);
+  clearAttendanceStaticCache();
   await loadMonth();
 }
 
@@ -2341,6 +2406,8 @@ async function switchTo(p){
     // ברירת מחדל ריקה בטוחה יותר מהצגת אתר או אבטחה של אדם אחר.
     mySite = '';
     myGuards = [];
+    // Subject switch must not reuse prior board mySite (or TTL residue).
+    clearAttendanceStaticCache();
   }
   const generation = ++subjectGeneration;
   monthLoadGeneration++;
@@ -2455,7 +2522,7 @@ async function jumpToDate(key) {
   }
   const row = document.querySelector('[data-date="' + key + '"]');
   if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' });
-  editDay(key, records[key]);
+  void editDay(key, records[key]);
 }
 $('jumpGo').onclick = () => { void jumpToDate($('jumpDate').value); };
 $('jumpDate').onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); void jumpToDate($('jumpDate').value); } };

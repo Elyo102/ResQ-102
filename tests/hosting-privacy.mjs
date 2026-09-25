@@ -102,6 +102,10 @@ const wiringScript = path.join(root, 'apply-wiring.py');
 check(fs.existsSync(wiringScript), 'apply-wiring.py is present in the tree (otherwise the 404 proves nothing)');
 check(hostingIgnores('apply-wiring.py'), 'the hosting ignore rules match apply-wiring.py');
 check(hostingIgnores('tools/nested/apply-wiring.py'), 'the hosting ignore rules match a nested .py as well');
+for (const name of ['docs/FROZEN-TIP', 'docs/HANDOFF-hardening-package.md',
+                    'archive/README-firestore_1.md', 'scripts/staging-auth-rest-bypass-probe.mjs']) {
+  check(hostingIgnores(name), 'Firebase Hosting excludes private workspace file ' + name);
+}
 
 /* ⭐ והשער הרחב: אף קובץ שאינו מסומן פרטי אינו רשאי לשאת סיומת
  * שאינה ברשימת ההיתר. זה מה שהיה תופס את .py מלכתחילה. */
@@ -143,7 +147,8 @@ const server = http.createServer((req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   for (const name of ['roster-import.js', 'firebase.attendance-test.json', 'firebase.emulator.42h11.json',
-                      'apply-wiring.py']) {
+                      'apply-wiring.py', 'docs/FROZEN-TIP', 'docs/HANDOFF-hardening-package.md',
+                      'archive/README-firestore_1.md', 'scripts/staging-auth-rest-bypass-probe.mjs']) {
     const response = await fetch('http://127.0.0.1:' + server.address().port + '/' + name);
     check(response.status === 404, 'a local hosting probe returns 404 for ' + name);
   }

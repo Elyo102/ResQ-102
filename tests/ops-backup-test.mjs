@@ -15,7 +15,7 @@ try {
   fs.writeFileSync(path.join(root, 'source.js'), 'export const marker = 42;\n');
   git('add', '.'); git('commit', '-m', 'fixture');
   fs.mkdirSync(path.join(root, '_ניטור')); fs.writeFileSync(path.join(root, '_ניטור', 'feedback.md'), 'Private fixture שלום');
-  const args = parseArgs(['--keep', '2']);
+  const args = parseArgs(['--keep', '2', '--execute']);
   const run = options => runBackup(args, { root, ...options });
   check('dry-run writes nothing', () => { assert.equal(runBackup({ ...args, dryRun: true }, { root }).documents, 1); assert.equal(fs.existsSync(path.join(root, '_גיבוי')), false); });
   let first;

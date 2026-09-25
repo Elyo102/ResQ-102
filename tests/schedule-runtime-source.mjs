@@ -457,7 +457,8 @@ check('personal schedule reads only the requested day', () => {
   // הפאנל האישי נשאר יומי גם אחרי שהלוח הפך חודשי: האישור נשלח
   // עם publication_id ו-item_id של יום, ואין קריאה שמחזירה את כל
   // מה שממתין לתשובה לאורך חודש.
-  assert.ok(ui.includes("call.mine({ date: localDate() })"));
+  assert.ok(ui.includes('const date = localDate();'));
+  assert.ok(ui.includes('call.mine({ date: date })'));
 });
 
 /* ------------------------------------------------------------------ *

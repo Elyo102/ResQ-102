@@ -33,7 +33,7 @@ try {
   fs.writeFileSync(path.join(root, '_ניטור', 'feedback.md'), 'Private restore-drill fixture תוכן');
   fs.writeFileSync(path.join(root, '_ניטור', 'second.md'), 'שני קבצים, לא רק אחד, כדי שספירת המסמכים תיבדק גם היא');
 
-  const backupArgs = parseBackupArgs(['--keep', '5']);
+  const backupArgs = parseBackupArgs(['--keep', '5', '--execute']);
   const backup = runBackup(backupArgs, { root });
 
   let result;
