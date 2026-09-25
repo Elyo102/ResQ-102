@@ -80,6 +80,10 @@ function instrumentFirestore(body) {
   }
   body = body.replace('export function getDoc(ref){', `export function getDoc(ref){
     const hp = String(ref && ref.path || '');
+    if (window.__F01_FAIL_READ_PATH && hp.endsWith(window.__F01_FAIL_READ_PATH)) {
+      window.__F01_FAIL_READ_PATH = '';
+      return Promise.reject(new Error('fixture read failure'));
+    }
     if (hp.endsWith('/config/board')) {
       return Promise.resolve(docSnap({ vehicles: (window.__F01_FIXTURE && window.__F01_FIXTURE.vehicles) || [], command: [] }, 'board'));
     }
@@ -87,10 +91,18 @@ function instrumentFirestore(body) {
   `);
   body = body.replace('export function getDocs(q){', `export function getDocs(q){
     const hp = String(q && q.path || '');
+    if (window.__F01_FAIL_READ_PATH && hp.endsWith(window.__F01_FAIL_READ_PATH)) {
+      window.__F01_FAIL_READ_PATH = '';
+      return Promise.reject(new Error('fixture read failure'));
+    }
     window.__F01_GETDOCS = window.__F01_GETDOCS || [];
     window.__F01_GETDOCS.push({ path: hp, t: Date.now() });
     if (/\\/photos$/.test(hp)) {
       window.__F01_PHOTO_GETS = (window.__F01_PHOTO_GETS || 0) + 1;
+      if (window.__F01_FAIL_NEXT_PHOTO) {
+        window.__F01_FAIL_NEXT_PHOTO = false;
+        return Promise.reject(new Error('fixture photo failure'));
+      }
       const parts = hp.split('/');
       const faultId = parts[parts.length - 2];
       const sid = parts[1];
@@ -140,7 +152,7 @@ function exposeModuleHooks(html, page) {
   const expose =
     'window.__F01_HOOKS = { get bump(){ return bumpIdentity; }, get shots(){ return shots; }, ' +
     'get inflight(){ return shotsInflight; }, get gen(){ return AUTH_GEN; }, get sid(){ return SID; }, ' +
-    'setSid(v){ SID = v; }' + extra + ' };\n' + anchor;
+    'setSid(v){ SID = v; }, loadAll, get faultsCount(){ return faults.length; }' + extra + ' };\n' + anchor;
   return html.replace(anchor, expose);
 }
 
@@ -348,6 +360,80 @@ try {
     assert.ok(afterBump.gen >= 2);
     assert.ok(afterBump.keys.every(k => /:/.test(k)));
     console.log('✓ vehicle.html list: 0 photo getDocs; openFault: 1; cache+AUTH_GEN ok');
+  });
+
+  await withPage('faults.html', async page => {
+    const originalCount = await page.evaluate(() => window.__F01_HOOKS.faultsCount);
+    await tap(page.locator('#vehicleIssues button').filter({ hasText: 'רכב בדיקה F01' }).first());
+    await page.locator('#rep.on').waitFor();
+    for (const suffix of ['/faults', '/config/board', '/vehicles']) {
+      await page.evaluate(value => { window.__F01_FAIL_READ_PATH = value; }, suffix);
+      await page.evaluate(() => window.__F01_HOOKS.loadAll());
+      await page.locator('#loadError:not(.hide)').waitFor();
+      assert.equal(await page.locator('#work.hide').count(), 1, suffix + ' must hide unverified data');
+      assert.equal(await page.locator('#rep.on, #veh.on, #lb.on').count(), 0,
+        suffix + ' must close stale dialogs outside work');
+      assert.equal(await page.evaluate(() => window.__F01_HOOKS.faultsCount), originalCount,
+        suffix + ' must retain the last complete snapshot');
+      await page.locator('#retryLoad').click();
+      await page.locator('#work:not(.hide)').waitFor();
+      assert.equal(await page.locator('#loadError.hide').count(), 1);
+    }
+    await page.evaluate(() => { window.__F01_FAIL_NEXT_PHOTO = true; });
+    await tap(page.locator('#vehicleIssues button').filter({ hasText: 'רכב בדיקה F01' }).first());
+    await page.locator('#dlgBody .shots button').first().click();
+    await page.locator('#dlgBody .shots button').filter({ hasText: 'נסה שוב' }).first().waitFor();
+    await page.locator('#dlgBody .shots button').filter({ hasText: 'נסה שוב' }).first().click();
+    await page.locator('#dlgBody .shots img').first().waitFor();
+    assert.equal(await page.locator('#dlgBody .shots img').count(), 2);
+    await page.evaluate(() => {
+      window.__F01_FIXTURE.faults = [];
+      document.getElementById('repX').click();
+      return window.__F01_HOOKS.loadAll();
+    });
+    assert.equal(await page.locator('#loadError.hide').count(), 1,
+      'a successful empty snapshot is not a read failure');
+    assert.equal(await page.evaluate(() => window.__F01_HOOKS.faultsCount), 0);
+    console.log('✓ faults rejects each required read and recovers; photo retry is manual');
+  });
+
+  await withPage('vehicle.html?v=v1', async page => {
+    const originalCount = await page.evaluate(() => window.__F01_HOOKS.faultsCount);
+    await page.evaluate(() => {
+      const f = window.__F01_HOOKS.faultsRef.find(x => Number(x.photos || 0) > 0);
+      window.__F01_HOOKS.openFault(f, 1);
+    });
+    await page.locator('#ov.on').waitFor();
+    for (const suffix of ['/faults', '/config/board', '/vehicles', '/vehicle_views']) {
+      await page.evaluate(value => { window.__F01_FAIL_READ_PATH = value; }, suffix);
+      await page.evaluate(() => window.__F01_HOOKS.loadAll());
+      await page.locator('#loadError:not(.hide)').waitFor();
+      assert.equal(await page.locator('#work.hide').count(), 1, suffix + ' must hide unverified data');
+      assert.equal(await page.locator('#ov.on, #lb.on').count(), 0,
+        suffix + ' must close stale dialogs outside work');
+      assert.equal(await page.evaluate(() => window.__F01_HOOKS.faultsCount), originalCount);
+      await page.locator('#retryLoad').click();
+      await page.locator('#work:not(.hide)').waitFor();
+      assert.equal(await page.locator('#loadError.hide').count(), 1);
+    }
+    await page.evaluate(() => {
+      window.__F01_FAIL_NEXT_PHOTO = true;
+      const f = window.__F01_HOOKS.faultsRef.find(x => x.id === 'f2');
+      window.__F01_HOOKS.openFault(f, 1);
+    });
+    await page.locator('#ov.on .shots button').filter({ hasText: 'נסה שוב' }).waitFor();
+    await page.locator('#ov.on .shots button').filter({ hasText: 'נסה שוב' }).click();
+    await page.locator('#ov.on .shots img').first().waitFor();
+    assert.equal(await page.locator('#ov.on .shots img').count(), 2);
+    await page.evaluate(() => {
+      window.__F01_FIXTURE.faults = [];
+      document.getElementById('dlgX').click();
+      return window.__F01_HOOKS.loadAll();
+    });
+    assert.equal(await page.locator('#loadError.hide').count(), 1,
+      'a successful empty vehicle-fault snapshot is not a read failure');
+    assert.equal(await page.evaluate(() => window.__F01_HOOKS.faultsCount), 0);
+    console.log('✓ vehicle rejects each required read and recovers; photo retry is manual');
   });
 
   const pct = (arr, p) => {

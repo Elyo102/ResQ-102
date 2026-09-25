@@ -161,12 +161,18 @@ async function computeBoardSlotKeys(stationId) {
     [station.id, await importStationKey(scoped, station.label)]));
   return new Map(entries);
 }
-async function refreshBoardSlotKeys(claims) {
+async function refreshBoardSlotKeys(claims, user, generation) {
   const stationId = claims && (claims.stationId || claims.station_id);
   const scoped = typeof stationId === 'string' ? stationId.trim() : '';
-  if (state.boardSlotStation === scoped && state.boardSlotKeys) return;
-  state.boardSlotKeys = await computeBoardSlotKeys(scoped);
+  const stillCurrent = () => generation === state.authGeneration &&
+    state.user === user && auth.currentUser?.uid === user?.uid;
+  if (!stillCurrent()) return false;
+  if (state.boardSlotStation === scoped && state.boardSlotKeys) return true;
+  const keys = await computeBoardSlotKeys(scoped);
+  if (!stillCurrent()) return false;
+  state.boardSlotKeys = keys;
   state.boardSlotStation = scoped;
+  return true;
 }
 
 function localDate() {
@@ -4573,13 +4579,14 @@ async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration || state.user !== user) return;
   applyPageRoleView(user, claims);
   state.claims = claims;
-  await refreshBoardSlotKeys(claims);
+  if (!await refreshBoardSlotKeys(claims, user, generation)) return;
+  if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
   state.authScope = authScopeKey(user, claims);
   renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
   try {
     const status = knownStatus === undefined ? (await call.status({})).data : knownStatus;
-    if (generation !== state.authGeneration || state.user !== user) return;
+    if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
     state.status = status;
     setMode(state.status || {});
 
@@ -4629,7 +4636,7 @@ async function boot(user, generation, knownClaims, knownStatus) {
     void loadModeOptions(generation);
     void loadImportDisplayStatus($('importMonth').value, generation);
     const setupLoaded = await loadManagerSetup(generation);
-    if (generation !== state.authGeneration || state.user !== user) return;
+    if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
     if (setupLoaded === true) finishManagerSetup(requestedTab, tabRevision);
     else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
   } catch (error) {
@@ -5034,7 +5041,8 @@ async function handleIdToken(user) {
   if (interruptedOperation) {
     state.user = user;
     state.claims = claims;
-    await refreshBoardSlotKeys(claims);
+    if (!await refreshBoardSlotKeys(claims, user, generation)) return;
+    if (generation !== state.authGeneration || state.user !== user) return;
     state.authScope = nextScope;
     state.status = status;
     renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);

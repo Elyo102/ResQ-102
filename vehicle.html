@@ -140,6 +140,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <body data-resq-shell="v1" data-resq-page="vehicle">
 <div id="errBar" role="alert" aria-live="assertive"></div>
 <div class="wrap">
+  <div class="card hide" id="loadError" role="alert">
+    <p>לא ניתן לטעון את נתוני הרכב והתקלות. אין להסתמך על תצוגה חלקית.</p>
+    <button class="btn" id="retryLoad" type="button">נסה שוב</button>
+  </div>
 
   <div id="denyCard" class="card hide">
     <h2>אין הרשאה</h2>
@@ -242,6 +246,7 @@ function bumpIdentity(){
   faults = []; views = []; fleet = [];
   shots = {}; shotsInflight = {};
   $('work').classList.add('hide');
+  $('loadError').classList.add('hide');
   $('ov').classList.remove('on');
   $('dlgBody').replaceChildren();
   $('lb').classList.remove('on');
@@ -325,24 +330,34 @@ async function loadAll(){
   if (!reqSid) return;
   const nextFaults = [], nextViews = [];
   let boardVehicles = [], anchors = [];
-  const safe = p => p.catch(() => null);
-
-  const [fs_, bd, vs, vw] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', reqSid, 'faults'))),
-    safe(getDoc(doc(db, 'stations', reqSid, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', reqSid, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', reqSid, 'vehicle_views')))
-  ]);
+  $('retryLoad').disabled = true;
+  let fs_, bd, vs, vw;
+  try {
+    [fs_, bd, vs, vw] = await Promise.all([
+      getDocs(collection(db, 'stations', reqSid, 'faults')),
+      getDoc(doc(db, 'stations', reqSid, 'config', 'board')),
+      getDocs(collection(db, 'stations', reqSid, 'vehicles')),
+      getDocs(collection(db, 'stations', reqSid, 'vehicle_views'))
+    ]);
+  } catch (error) {
+    if (reqSid !== SID || reqGen !== AUTH_GEN || reqLoad !== LOAD_GEN) return false;
+    close();
+    $('lb').classList.remove('on');
+    $('work').classList.add('hide');
+    $('loadError').classList.remove('hide');
+    $('retryLoad').disabled = false;
+    return false;
+  }
   if (reqSid !== SID || reqGen !== AUTH_GEN || reqLoad !== LOAD_GEN) return;
 
-  if (fs_) fs_.forEach(d => nextFaults.push(Object.assign({ id:d.id }, d.data() || {})));
+  fs_.forEach(d => nextFaults.push(Object.assign({ id:d.id }, d.data() || {})));
   if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
-  if (vs) vs.forEach(d => {
+  vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
     anchors.push(Object.assign({ id:d.id }, v));
   });
-  if (vw) vw.forEach(d => nextViews.push(Object.assign({ id:d.id }, d.data() || {})));
+  vw.forEach(d => nextViews.push(Object.assign({ id:d.id }, d.data() || {})));
 
   faults = nextFaults; views = nextViews;
   fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
@@ -351,8 +366,13 @@ async function loadAll(){
   if (!vid && !vehicleRequested) vid = (fleet.find(v => v.active !== false) || {}).id || '';
 
   render();
+  $('loadError').classList.add('hide');
+  $('retryLoad').disabled = false;
   $('work').classList.remove('hide');
+  return true;
 }
+
+$('retryLoad').onclick = () => { void loadAll(); };
 
 // ---------- ציור ----------
 
@@ -892,7 +912,17 @@ async function loadShots(f, box){
     paint(result.list, box);
   } catch (e) {
     if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
-    box.innerHTML = '<span class="ld">הצילומים לא נטענו.</span>';
+    box.replaceChildren();
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn sm';
+    retry.textContent = 'הצילומים לא נטענו · נסה שוב';
+    retry.onclick = () => {
+      if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+      box.textContent = 'טוען תמונות…';
+      void loadShots(f, box);
+    };
+    box.appendChild(retry);
   }
 }
 

@@ -3206,6 +3206,54 @@ try {
   });
   await authRaceCtx.close();
 
+  const digestRaceCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
+  await prepare(digestRaceCtx, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
+    getStationScheduleRange:[{ data:rangeB }]
+  });
+  await digestRaceCtx.route('**/schedule-management.js*', route => {
+    const source = fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
+    route.fulfill({ status:200, contentType:'text/javascript',
+      body:source + '\nwindow.__QA_SLOT_STATE = () => ({station:state.boardSlotStation, uid:state.user?.uid});\nwindow.__QA_CHECK_CACHED_KEYS = () => refreshBoardSlotKeys(state.claims, state.user, state.authGeneration);\n' });
+  });
+  await digestRaceCtx.addInitScript(() => {
+    const original = crypto.subtle.digest.bind(crypto.subtle);
+    Object.defineProperty(crypto.subtle, 'digest', { configurable:true,
+      value:(algorithm, bytes) => {
+        const input = new TextDecoder().decode(bytes);
+        if (input.includes('alpha_102')) window.__QA_ALPHA_DIGEST_STARTED = true;
+        return new Promise(resolve => setTimeout(() => resolve(original(algorithm, bytes)),
+          input.includes('alpha_102') ? 250 : 0));
+      }
+    });
+    window.__SMOKE_EXTRA_CLAIMS = { stationId:'alpha_102', email:'a@example.invalid' };
+  });
+  const digestRacePage = await digestRaceCtx.newPage();
+  await digestRacePage.goto(base + '?tab=station', { waitUntil:'domcontentloaded' });
+  await digestRacePage.waitForFunction(() => window.__QA_ALPHA_DIGEST_STARTED === true);
+  await test('late station-key digest for user A cannot replace user B mapping or header', async () => {
+    await digestRacePage.evaluate(() => window.__SMOKE_EMIT_AUTH('firefighter', 'user-b', {
+      stationId:'beta_103', email:'b@example.invalid'
+    }));
+    await digestRacePage.waitForFunction(() => window.__QA_SLOT_STATE?.().station === 'beta_103');
+    await digestRacePage.waitForTimeout(300);
+    const current = await digestRacePage.evaluate(() => window.__QA_SLOT_STATE());
+    assert.deepEqual(current, { station:'beta_103', uid:'user-b' });
+    assert.match(await digestRacePage.locator('#who').textContent(), /b@example\.invalid/);
+  });
+  await test('station-key cache hit rejects a stale user before the auth observer runs', async () => {
+    const result = await digestRacePage.evaluate(async () => {
+      window.__SMOKE_SWAP_USER('firefighter', 'user-c', {
+        stationId:'beta_103', email:'c@example.invalid'
+      });
+      return window.__QA_CHECK_CACHED_KEYS();
+    });
+    assert.equal(result, false);
+    assert.deepEqual(await digestRacePage.evaluate(() => window.__QA_SLOT_STATE()),
+      { station:'beta_103', uid:'user-b' });
+  });
+  await digestRaceCtx.close();
+
   const authRejectCtx = await browser.newContext({ viewport:{ width:1200, height:900 }, locale:'he-IL' });
   await prepare(authRejectCtx, 'firefighter', {
     getScheduleRuntimeStatus:[{ data:statusFirefighter }, { data:statusFirefighter }],
@@ -3798,5 +3846,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 101);
+assert.equal(passed, 103);
 console.log('\n' + passed + ' schedule management browser checks passed.');

@@ -91,11 +91,11 @@ const deferred = () => {
   };
   vm.createContext(context);
   vm.runInContext(functionText(body, 'loadShots'), context);
-  const first = context.loadShots({ id: 'fault-1' }, {});
+  const first = context.loadShots({ id: 'fault-1' }, { isConnected:true });
   context.AUTH_GEN = 2;
   context.shots = {};
   context.shotsInflight = {};
-  const second = context.loadShots({ id: 'fault-1' }, {});
+  const second = context.loadShots({ id: 'fault-1' }, { isConnected:true });
   const newRequest = context.shotsInflight['station-a:fault-1'];
   old.resolve({ forEach: fn => fn({ data: () => ({ data: 'old' }) }) });
   await first;

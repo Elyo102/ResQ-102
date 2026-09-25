@@ -247,6 +247,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <h1>תקלות וחפיפת משמרת</h1>
   <div class="sub" id="whoSub">—</div>
   <div class="msg" id="mainMsg" role="alert"></div>
+  <div class="card hide" id="loadError" role="alert">
+    <p>לא ניתן לטעון את נתוני התקלות והצי. אין להסתמך על תצוגה חלקית.</p>
+    <button class="btn" id="retryLoad" type="button">נסה שוב</button>
+  </div>
 
   <div class="card hide" id="denyCard">
     <div class="note" id="denyWho"></div>
@@ -533,10 +537,12 @@ let anchorDocs = [];
  * הדור עולה בכל החלפת זהות. קריאה בודקת אותו כשהיא חוזרת, כתיבה
  * בודקת אותו לפני ואחרי, וחלון העריכה נסגר. */
 let AUTH_GEN = 0;
+let LOAD_GEN = 0;
 let PRIV_SIG = '';
 
 function bumpIdentity(){
   AUTH_GEN += 1;
+  LOAD_GEN += 1;
   PRIV_SIG = '';
   ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
   vehEditing = null;
@@ -550,6 +556,7 @@ function bumpIdentity(){
   $('btnNew').disabled = false;
   msg('', '');
   $('work').classList.add('hide');
+  $('loadError').classList.add('hide');
   $('anchorCard').classList.add('hide');
   $('denyCard').classList.add('hide');
   $('fleetList').replaceChildren();
@@ -650,7 +657,6 @@ onAuthStateChanged(auth, async user => {
   } catch (ignore) {}
   if (stale()) return;
 
-  $('work').classList.remove('hide');
   $('whoSub').textContent = (ME.full_name || user.email) +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'faults.html', user.email || '');
@@ -720,47 +726,72 @@ async function loadAll(){
   // תלויה בקודמת, וההמתנה הסדרתית הייתה כ-800 מילישניות של
   // מסך ריק מטלפון סלולרי.
   const origin = { gen: AUTH_GEN, uid: ME && ME.uid, sid: SID };
+  const loadGen = ++LOAD_GEN;
   try { assertFence(origin); } catch (ignore) { return; }
-  faults = []; anchors = []; anchorDocs = [];
-  boardDoc = null;
+  const nextFaults = [], nextAnchorDocs = [];
+  let nextBoardDoc = null;
   let boardVehicles = [];
-
-  const safe = p => p.catch(function () { return null; });
-
-  const [fs_, bd, vs] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', origin.sid, 'faults'))),
-    safe(getDoc(doc(db, 'stations', origin.sid, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles')))
-  ]);
+  $('retryLoad').disabled = true;
+  let fs_, bd, vs;
+  try {
+    [fs_, bd, vs] = await Promise.all([
+      getDocs(collection(db, 'stations', origin.sid, 'faults')),
+      getDoc(doc(db, 'stations', origin.sid, 'config', 'board')),
+      getDocs(collection(db, 'stations', origin.sid, 'vehicles'))
+    ]);
+  } catch (error) {
+    try { assertFence(origin); } catch (ignore) { return false; }
+    if (loadGen !== LOAD_GEN) return false;
+    $('rep').classList.remove('on');
+    $('veh').classList.remove('on');
+    $('lb').classList.remove('on');
+    $('dlgBody').replaceChildren();
+    vehEditing = null;
+    shotsInflight = {};
+    $('work').classList.add('hide');
+    $('loadError').classList.remove('hide');
+    $('retryLoad').disabled = false;
+    return false;
+  }
 
   /* התשובה חזרה — אבל למי? אם הזהות התחלפה בזמן שחיכינו, הנתונים
    * האלה שייכים למשתמש או לתחנה הקודמים ואסור לצייר אותם. */
   try { assertFence(origin); } catch (ignore) { return; }
+  if (loadGen !== LOAD_GEN) return false;
 
-  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
+  fs_.forEach(d => nextFaults.push(Object.assign({ id: d.id }, d.data() || {})));
   if (bd && bd.exists()) {
     const b = bd.data() || {};
-    boardDoc = {
+    nextBoardDoc = {
       vehicles: Array.isArray(b.vehicles) ? b.vehicles : [],
       command:  Array.isArray(b.command)  ? b.command  : []
     };
-    boardVehicles = boardDoc.vehicles;
+    boardVehicles = nextBoardDoc.vehicles;
   }
-  if (vs) vs.forEach(d => {
+  vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
-    anchorDocs.push(Object.assign({ id: d.id }, v));
+    nextAnchorDocs.push(Object.assign({ id: d.id }, v));
   });
+  faults = nextFaults;
+  boardDoc = nextBoardDoc;
+  anchorDocs = nextAnchorDocs;
   // `mergeFleet` מסנן מושבתים בעצמו; `anchors` נשאר הרשימה הפעילה
   // שכל שאר המסך מסתמך עליה.
   anchors = anchorDocs.filter(v => v.active !== false);
   fleet = mergeFleet(boardVehicles, anchors);
+  $('loadError').classList.add('hide');
+  $('retryLoad').disabled = false;
+  $('work').classList.remove('hide');
 
   if (!$('viewShift').classList.contains('hide')) handoversStatus = 'loading';
   renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
   $('anchorCard').classList.toggle('hide', !CAN_FLEET);
   if (!$('viewShift').classList.contains('hide')) await loadHandovers(true);
+  return true;
 }
+
+$('retryLoad').onclick = () => { void loadAll(); };
 
 // ---------- לשוניות ----------
 
@@ -1330,14 +1361,24 @@ async function loadShots(f, box){
   try {
     const result = await shotsInflight[key];
     // Guard paint: only apply if this screen's identity still matches the request.
-    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen ||
+    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected ||
         result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
       return;
     }
     paintShots(result.list, box);
   } catch (e) {
-    if (SID !== reqSid || AUTH_GEN !== reqGen) return;
-    box.innerHTML = '<span class="ld">התמונות לא נטענו.</span>';
+    if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+    box.replaceChildren();
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'ld';
+    retry.textContent = 'התמונות לא נטענו · נסה שוב';
+    retry.onclick = () => {
+      if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+      box.textContent = 'טוען תמונות…';
+      void loadShots(f, box);
+    };
+    box.appendChild(retry);
   }
 }
 

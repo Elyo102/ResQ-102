@@ -1719,6 +1719,7 @@ function showWaiting(user, request){
   showView('wait');
   void refreshJoinStatus(user);
   $('pendingTermsPanel').classList.add('hide');
+  $('pendingTermsPanel').querySelectorAll('button').forEach(button=>button.disabled=false);
   if (status === 'pending' || status === 'processing' || status === 'needs_recovery') {
     const pendingUid = user && user.uid;
     void callRegistrationTerms({action:'status'}).then(({data})=>{
@@ -1747,6 +1748,7 @@ function showApprovedTerms(user, failed){
   $('btnResubmit').classList.add('hide');
   $('btnRetryTerms').classList.toggle('hide', !failed);
   $('pendingTermsPanel').classList.toggle('hide', !!failed);
+  $('pendingTermsPanel').querySelectorAll('button').forEach(button=>button.disabled=false);
   $('pendingTermsPanel').querySelector('p').innerHTML = 'לפני המשך השימוש יש לקרוא ולאשר את ' +
     '<a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת ' +
     '<a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.';
@@ -1757,20 +1759,24 @@ $('btnRetryTerms').onclick=()=>{ if(auth.currentUser) startRoute(auth.currentUse
 
 async function acceptPendingTerms(marketingOptIn){
   const panel=$('pendingTermsPanel'), status=$('pendingTermsStatus');
+  const user=auth.currentUser, epoch=routeEpoch;
+  if (!routeIsCurrent(user,epoch)) return;
+  const stillCurrent=()=>routeIsCurrent(user,epoch);
   panel.querySelectorAll('button').forEach(button=>button.disabled=true);
   status.textContent='שומר הסכמה…';
   try{
     const response=await callRegistrationTerms({action:'accept',marketing_opt_in:marketingOptIn});
+    if (!stillCurrent()) return;
     if(!response.data?.accepted)throw new Error('לא התקבל אישור מהשרת.');
     status.textContent='ההסכמה נשמרה. הבקשה יכולה לעבור לאישור מנהל המערכת.';
     panel.classList.add('hide');
-    if (approvedTermsUserUid && auth.currentUser?.uid === approvedTermsUserUid) {
+    if (approvedTermsUserUid === user.uid) {
       approvedTermsUserUid = '';
-      startRoute(auth.currentUser);
+      startRoute(user);
     }
   }catch(error){
-    status.textContent='לא ניתן לשמור את ההסכמה: '+(error.message||'נסה שוב.');
-  }finally{panel.querySelectorAll('button').forEach(button=>button.disabled=false);}
+    if (stillCurrent()) status.textContent='לא ניתן לשמור את ההסכמה: '+(error.message||'נסה שוב.');
+  }finally{if (stillCurrent()) panel.querySelectorAll('button').forEach(button=>button.disabled=false);}
 }
 $('pendingTermsNoMarketing').onclick=()=>acceptPendingTerms(false);
 

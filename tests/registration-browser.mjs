@@ -97,6 +97,33 @@ try {
   {
     const { context, page } = await open(browser, { __SMOKE_ROLE:'super',
       __CALLABLE_PLAN:{ registrationTermsConsent:[
+        { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:false, status:'approved' } },
+        { data:{ ok:true, accepted:true, status:'approved' }, delay:250 },
+        { data:{ ok:true, accepted:false, status:'approved' } }
+      ] } });
+    await page.waitForFunction(() => (window.__AUTH_CALLS || []).some(x => x.name === 'signOut'));
+    await page.locator('#loginEmp').fill('owner@example.com');
+    await page.locator('#loginPass').fill('StrongPass1');
+    await page.locator('#btnLogin').click();
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    await page.locator('#pendingTermsNoMarketing').click();
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some(x => x.name === 'registrationTermsConsent' && x.payload?.action === 'accept'));
+    await page.evaluate(() => window.__SMOKE_EMIT_AUTH('super', 'second-user', {
+      email:'second@example.invalid'
+    }));
+    await page.locator('#pendingTermsPanel').waitFor({ state:'visible' });
+    await page.waitForTimeout(300);
+    check(await page.locator('#pendingTermsPanel').isVisible() &&
+      await page.locator('#pendingTermsNoMarketing').isEnabled() &&
+      !(await page.locator('#pendingTermsStatus').textContent()).includes('ההסכמה נשמרה'),
+      'late consent success for user A cannot hide or lock user B terms');
+    await context.close();
+  }
+  {
+    const { context, page } = await open(browser, { __SMOKE_ROLE:'super',
+      __CALLABLE_PLAN:{ registrationTermsConsent:[
         { reject:true, code:'functions/unavailable' },
         { data:{ ok:true, accepted:true, status:'approved' } }
       ] } });
