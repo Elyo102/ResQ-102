@@ -49,8 +49,7 @@ for (const role of ['commander','firefighter']) {
     await pg.click('#coSend');
     await pg.waitForFunction(
       () => !document.getElementById('coWrap')?.classList.contains('on'),
-      { timeout: 6000 }).catch(() => {});
-    await pg.waitForTimeout(300);
+      null, { timeout: 6000 });
   }
 
   console.log('--- '+role);

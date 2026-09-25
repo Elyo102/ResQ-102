@@ -333,6 +333,7 @@ export function watchCallouts(db, sid, uid, opts) {
     stop: function () {},
     dispose: null,
     answered: new Set(),
+    confirmedAnswers: new Set(),
     legacyAnswered: new Set(),
     responseStops: new Map(),
     doneTimer: null,
@@ -361,7 +362,8 @@ export function watchCallouts(db, sid, uid, opts) {
     if (activeOwner !== owner || owner.disposed) return;
     const list = owner.latest.filter(function (row) {
       return row.v.active !== false && fresh(row.v) &&
-        !owner.answered.has(row.id) && !owner.legacyAnswered.has(row.id);
+        !owner.answered.has(row.id) && !owner.confirmedAnswers.has(row.id) &&
+        !owner.legacyAnswered.has(row.id);
     });
     if (!list.length) {
       /* ⭐ המאזין מסיר את הקריאה ברגע שהתשובה נכתבה — מהר מכדי
@@ -427,6 +429,7 @@ export function watchCallouts(db, sid, uid, opts) {
         try { responseStop(); } catch (ignore) {}
         owner.responseStops.delete(id);
         owner.answered.delete(id);
+        owner.confirmedAnswers.delete(id);
         owner.legacyAnswered.delete(id);
       });
       owner.latest = list;
@@ -567,6 +570,10 @@ function show(owner, db, sid, uid, id, v, o, count, advance) {
     ackCallout(db, sid, id, uid, o.name || '', which, why)
       .then(function () {
         if (activeOwner !== owner || owner.disposed) return;
+        // A successful write is authoritative even if its snapshot is delayed.
+        // Keep this separate from answered so an older listener snapshot cannot
+        // reopen the same callout after the confirmation timer expires.
+        owner.confirmedAnswers.add(id);
         succeed(which);
       })
       .catch(function (err) {

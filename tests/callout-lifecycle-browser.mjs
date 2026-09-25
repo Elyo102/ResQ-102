@@ -305,10 +305,10 @@ await page.locator('#coDone').waitFor({ state:'visible' });
 check((await page.locator('#coDone').innerText()).includes('אישרת הגעה'),
       'accepting confirms on screen instead of only closing the dialog',
       await page.locator('#coDone').innerText());
-await page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []));
 await page.waitForTimeout(2100);
 check(!(await page.locator('#coWrap').evaluate(el => el.classList.contains('on'))),
-      'and the dialog releases the screen on its own afterwards');
+      'a server-confirmed answer releases the screen without waiting for a response snapshot');
+await page.evaluate(() => window.__FIRESTORE_DELIVER_CAPTURED('/callouts', []));
 
 /* כשל: המשתמש רואה עברית, ולעולם לא קוד. */
 await page.evaluate(() => {
