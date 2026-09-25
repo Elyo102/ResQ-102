@@ -59,11 +59,12 @@ await check('compare helpers', () => {
   assert.equal(compareChecksums('abc', 'xyz').ok, false);
 });
 
-await check('inventory finds rules and blocked storage.rules', () => {
+await check('inventory finds storage.rules but keeps deployment unconfigured', () => {
   const inv = inventoryRepoArtifacts(ROOT);
   assert.ok(inv.present.includes('firestore.rules'));
   assert.equal(inv.hasStorageRulesInFirebase, false);
-  assert.equal(inv.storageRulesBlocked, true);
+  assert.equal(inv.storageRulesBlocked, false);
+  assert.match(fs.readFileSync(path.join(ROOT, 'storage.rules'), 'utf8'), /allow read, write: if false/);
 });
 
 await check('verify-only drill marks emulator Rules NOT RUN without faking PASS', async () => {
