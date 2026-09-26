@@ -1082,6 +1082,11 @@ async function loadRosterSource() {
   try {
     const result = (await call.sourceRoster({})).data;
     if (!authTaskCurrent(task)) return;
+    if (!result || !Array.isArray(result.rows) || !Array.isArray(result.sub_stations)
+        || !Array.isArray(result.roles) || !result.counts
+        || !Number.isSafeInteger(result.counts.total)) {
+      throw new Error('תשובת סגל התחנה אינה תקינה. לא בוצע שינוי; נסו שוב.');
+    }
     state.rosterSource = result;
     state.rosterRevision += 1;
     state.rosterPlan = null;
