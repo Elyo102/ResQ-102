@@ -18,7 +18,13 @@
     "approveRegistration",
     "resumeIdentityOperation",
     "reportIncident",
-    "recordMetrics"
+    "recordMetrics",
+    "getCostUsageDashboard",
+    "getMaintenanceDashboard",
+    "setMaintenanceMode",
+    "runMaintenanceAnalysis",
+    "prepareMaintenanceHandoff",
+    "systemHeartbeat"
   ],
   "batches": [
     [
@@ -41,12 +47,12 @@
       "approveRegistration",
       "resumeIdentityOperation"
     ],
-    ["reportIncident", "recordMetrics"]
+    ["reportIncident", "recordMetrics"],
+    ["getCostUsageDashboard", "getMaintenanceDashboard", "setMaintenanceMode", "runMaintenanceAnalysis", "prepareMaintenanceHandoff"],
+    ["systemHeartbeat"]
   ],
   "excluded_runtime_changes": [
-    "systemHeartbeat (scheduled version stamp only)",
     "drainCostUsageOutbox (scheduled retention response only)",
-    "getCostUsageDashboard and setCostUsageMeasurementStart (retention labels only)",
-    "maintenance callables (version stamp only)"
+    "setCostUsageMeasurementStart (unchanged method paths)"
   ]
 }

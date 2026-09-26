@@ -15,7 +15,9 @@ const newNames = [
 const existingNames = [
   'activateScheduleMonthAuthority', 'approveRegistration',
   'previewScheduleSource', 'recordMetrics', 'reportIncident',
-  'resumeIdentityOperation', 'saveScheduleSource'
+  'resumeIdentityOperation', 'saveScheduleSource',
+  'getCostUsageDashboard', 'getMaintenanceDashboard', 'setMaintenanceMode',
+  'runMaintenanceAnalysis', 'prepareMaintenanceHandoff', 'systemHeartbeat'
 ];
 const targets = [...newNames, ...existingNames];
 const approvedBatches = [
@@ -25,7 +27,10 @@ const approvedBatches = [
   ['getScheduleSourceRoster', 'previewScheduleSource', 'saveScheduleSource',
     'activateScheduleMonthAuthority'],
   ['approvalMailStatus', 'approveRegistration', 'resumeIdentityOperation'],
-  ['reportIncident', 'recordMetrics']
+  ['reportIncident', 'recordMetrics'],
+  ['getCostUsageDashboard', 'getMaintenanceDashboard', 'setMaintenanceMode',
+    'runMaintenanceAnalysis', 'prepareMaintenanceHandoff'],
+  ['systemHeartbeat']
 ];
 const functions = Array.from({ length:208 }, (_, index) => ({
   id:existingNames[index] || `existing${index}`,
@@ -57,7 +62,8 @@ function fixtures() {
       rules_sha256:'1da8063c8e93a2c7374e7e88fed2220c03b9fc8a5c1fccc0c587bb8497db52e7',
       exports:[...functions.map(fn => fn.id), ...newNames],
       targets, batches:approvedBatches,
-      export_kinds:Object.fromEntries(targets.map(id => [id, 'onCall'])),
+      export_kinds:Object.fromEntries(targets.map(id => [id,
+        id === 'systemHeartbeat' ? 'onSchedule' : 'onCall'])),
       export_options_literal:Object.fromEntries(targets.map(id => [id, true])),
       export_region_safe:Object.fromEntries(targets.map(id => [id, true])),
       export_options_unchanged:Object.fromEntries(targets.map(id => [id, true])),
@@ -70,6 +76,13 @@ function fixtures() {
           ref:'refs/heads/codex/pages-public-42h7' },
         rules:{ ruleset_name:'projects/station-102/rulesets/r1',
           sha256:'611226c86fe5dbb1d33bc1e48b0f716679f813499fc5c5dc6cd441ddeffa1c0b' },
+        scheduler:{ name:'projects/station-102/locations/europe-west1/jobs/firebase-schedule-systemHeartbeat-europe-west1',
+          state:'ENABLED', schedule:'every 5 minutes', time_zone:'Asia/Jerusalem',
+          uri:'https://europe-west1-station-102.cloudfunctions.net/systemHeartbeat', method:'POST',
+          oidc_service_account:'scheduler@example.invalid', oidc_audience:'https://example.invalid',
+          header_keys:['User-Agent'], user_agent:'Google-Cloud-Scheduler',
+          body_present:false, pubsub_present:false, oauth_present:false,
+          target_sha256:'91a01ed01aadefe3b6f04f58cffaacbb3efdcf3aac09f318fc103701007b17ed' },
         unreachable_regions:[], functions, indexes:oldIndexes, field_overrides:[oldField] }
     }
   });
@@ -92,6 +105,22 @@ check('unsafe global options', candidate => { candidate.global_options_safe = fa
 check('stale snapshot', (_, snapshot) => { snapshot.captured_at = '2020-01-01T00:00:00Z'; }, 'snapshot_stale');
 check('SHA drift', (_, snapshot) => { snapshot.candidate_sha = 'c'.repeat(40); }, 'snapshot_candidate_mismatch');
 check('Rules drift', (_, snapshot) => { snapshot.live.rules.sha256 = 'd'.repeat(64); }, 'rules_baseline_drift');
+check('heartbeat scheduler missing', (_, snapshot) => { snapshot.live.scheduler = null; }, 'heartbeat_scheduler_baseline_unproven');
+check('heartbeat target URI drift', (_, snapshot) => {
+  snapshot.live.scheduler.uri = 'https://example.invalid';
+}, 'heartbeat_scheduler_baseline_unproven');
+check('heartbeat HTTP method drift', (_, snapshot) => {
+  snapshot.live.scheduler.method = 'GET';
+}, 'heartbeat_scheduler_baseline_unproven');
+check('heartbeat OIDC removed', (_, snapshot) => {
+  snapshot.live.scheduler.oidc_service_account = null;
+}, 'heartbeat_scheduler_baseline_unproven');
+check('heartbeat frequency drift', (_, snapshot) => {
+  snapshot.live.scheduler.schedule = 'every 1 minute';
+}, 'heartbeat_scheduler_baseline_unproven');
+check('heartbeat target auth drift', (_, snapshot) => {
+  snapshot.live.scheduler.target_sha256 = 'a'.repeat(64);
+}, 'heartbeat_scheduler_baseline_unproven');
 check('Hosting missing', (_, snapshot) => { snapshot.live.hosting.status = 'CREATED'; }, 'hosting_baseline_missing');
 check('Pages missing', (_, snapshot) => { snapshot.live.pages.sha = ''; }, 'pages_baseline_missing');
 check('new function omitted from targets', candidate => {
@@ -106,7 +135,7 @@ check('batches reshuffled', candidate => {
   candidate.batches = [candidate.batches.flat().slice(0, 8), candidate.batches.flat().slice(8)];
 }, 'unapproved_function_batch_order');
 check('existing function removed from source', candidate => {
-  candidate.exports = candidate.exports.filter(id => id !== 'existing11');
+  candidate.exports = candidate.exports.filter(id => id !== 'existing20');
 }, 'candidate_removes_live_function');
 check('old revision unavailable', (_, snapshot) => {
   snapshot.live.functions[0] = { ...snapshot.live.functions[0], latest_ready_revision:'another' };
@@ -146,8 +175,8 @@ check('existing field index changes', candidate => {
 }, 'field_index_changed');
 check('unreachable region', (_, snapshot) => { snapshot.live.unreachable_regions = ['asia-east1']; }, 'unreachable_function_regions');
 check('unapproved old function', candidate => {
-  candidate.targets.push('existing11');
-  candidate.batches.push(['existing11']);
+  candidate.targets.push('existing20');
+  candidate.batches.push(['existing20']);
 }, 'unapproved_function_targets');
 check('candidate changes trigger', candidate => {
   candidate.export_kinds.approveRegistration = 'onSchedule';
@@ -206,7 +235,8 @@ for (const input of [
   "setGlobalOptions({ region:process.env.REGION, maxInstances:10 });"
 ]) assert.equal(globalOptionsSafe(input), false);
 for (const id of targets) {
-  assert.equal(currentMeta[id]?.kind, 'onCall', `${id} must remain callable`);
+  assert.equal(currentMeta[id]?.kind, id === 'systemHeartbeat' ? 'onSchedule' : 'onCall',
+    `${id} trigger kind changed`);
   assert(!/region\s*:\s*['"](?!europe-west1)/.test(currentMeta[id].options), `${id} moved region`);
   if (oldMeta[id]) assert.equal(currentMeta[id].options, oldMeta[id].options, `${id} changed options`);
   passed++;

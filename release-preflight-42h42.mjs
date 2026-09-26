@@ -18,6 +18,7 @@ const BASE_RULES_SHA256 = '611226c86fe5dbb1d33bc1e48b0f716679f813499fc5c5dc6cd44
 const CANDIDATE_RULES_SHA256 = '1da8063c8e93a2c7374e7e88fed2220c03b9fc8a5c1fccc0c587bb8497db52e7';
 const BASE_HOSTING_VERSION = 'e3441d60ea17af77';
 const BASE_PAGES_SHA = '2a5fb043c91b040051e08bfec472f1feecf5571c';
+const BASE_SCHEDULER_TARGET_SHA256 = '91a01ed01aadefe3b6f04f58cffaacbb3efdcf3aac09f318fc103701007b17ed';
 const EXPECTED_NEW = Object.freeze([
   'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
   'listOperationalVehicleStations', 'recordVehicleEquipmentEvent',
@@ -26,8 +27,9 @@ const EXPECTED_NEW = Object.freeze([
 ].sort());
 const APPROVED_TARGETS = Object.freeze([
   ...EXPECTED_NEW, 'activateScheduleMonthAuthority', 'approveRegistration',
-  'previewScheduleSource', 'recordMetrics', 'reportIncident',
-  'resumeIdentityOperation', 'saveScheduleSource'
+  'getCostUsageDashboard', 'getMaintenanceDashboard', 'prepareMaintenanceHandoff',
+  'previewScheduleSource', 'recordMetrics', 'reportIncident', 'runMaintenanceAnalysis',
+  'resumeIdentityOperation', 'saveScheduleSource', 'setMaintenanceMode', 'systemHeartbeat'
 ].sort());
 const APPROVED_BATCHES = Object.freeze([
   ['appendFaultPhotos', 'listOperationalVehicleStations', 'recordVehicleEquipmentEvent',
@@ -36,7 +38,10 @@ const APPROVED_BATCHES = Object.freeze([
   ['getScheduleSourceRoster', 'previewScheduleSource', 'saveScheduleSource',
     'activateScheduleMonthAuthority'],
   ['approvalMailStatus', 'approveRegistration', 'resumeIdentityOperation'],
-  ['reportIncident', 'recordMetrics']
+  ['reportIncident', 'recordMetrics'],
+  ['getCostUsageDashboard', 'getMaintenanceDashboard', 'setMaintenanceMode',
+    'runMaintenanceAnalysis', 'prepareMaintenanceHandoff'],
+  ['systemHeartbeat']
 ]);
 const EXPECTED_FIELD_ADDS = Object.freeze([
   'blobs|data', 'fault_photo_quotas|expires_at',
@@ -161,6 +166,21 @@ export function assessSnapshot(snapshot, candidate) {
   if (!String(live.rules?.ruleset_name || '').startsWith(`projects/${PROJECT}/rulesets/`) ||
       live.rules?.sha256 !== BASE_RULES_SHA256) errors.push('rules_baseline_drift');
   if ((live.unreachable_regions || []).length) errors.push('unreachable_function_regions');
+  if (live.scheduler?.name !==
+        `projects/${PROJECT}/locations/europe-west1/jobs/firebase-schedule-systemHeartbeat-europe-west1` ||
+      live.scheduler?.state !== 'ENABLED' ||
+      live.scheduler?.time_zone !== 'Asia/Jerusalem' ||
+      live.scheduler?.schedule !== 'every 5 minutes' ||
+      live.scheduler?.uri !== 'https://europe-west1-station-102.cloudfunctions.net/systemHeartbeat' ||
+      live.scheduler?.method !== 'POST' ||
+      !live.scheduler?.oidc_service_account || !live.scheduler?.oidc_audience ||
+      !live.scheduler?.user_agent ||
+      JSON.stringify(live.scheduler?.header_keys) !== JSON.stringify(['User-Agent']) ||
+      live.scheduler?.body_present !== false || live.scheduler?.pubsub_present !== false ||
+      live.scheduler?.oauth_present !== false ||
+      live.scheduler?.target_sha256 !== BASE_SCHEDULER_TARGET_SHA256) {
+    errors.push('heartbeat_scheduler_baseline_unproven');
+  }
   const functions = new Map((live.functions || []).map(fn => [fn.id, fn]));
   if (functions.size !== 208 || functions.size !== (live.functions || []).length ||
       (live.functions || []).some(fn => fn.region !== 'europe-west1')) {
@@ -176,7 +196,7 @@ export function assessSnapshot(snapshot, candidate) {
   if ((live.functions || []).some(fn => !candidate.exports.includes(fn.id))) errors.push('candidate_removes_live_function');
   if (EXPECTED_NEW.some(id => !expected?.includes(id))) errors.push('new_function_target_omitted');
   for (const id of expected || []) {
-    if (candidate.export_kinds?.[id] !== 'onCall' ||
+    if (candidate.export_kinds?.[id] !== (id === 'systemHeartbeat' ? 'onSchedule' : 'onCall') ||
         candidate.export_options_literal?.[id] !== true ||
         candidate.export_region_safe?.[id] !== true ||
         candidate.export_options_unchanged?.[id] !== true) errors.push(`candidate_trigger_or_options_changed:${id}`);
@@ -316,6 +336,12 @@ async function captureLive(targets) {
     require('./gcp/runv2.js').listServices(PROJECT)
   ]);
   const servicesByName = new Map(services.map(service => [service.name, service]));
+  const schedulerName = `projects/${PROJECT}/locations/europe-west1/jobs/firebase-schedule-systemHeartbeat-europe-west1`;
+  const schedulerResponse = await require('./gcp/cloudscheduler.js').getJob(schedulerName);
+  if (schedulerResponse.status !== 200 || schedulerResponse.body?.name !== schedulerName) {
+    throw new Error('heartbeat Scheduler job unavailable');
+  }
+  const schedulerJob = schedulerResponse.body;
   const revisionClient = new (require('./apiv2.js').Client)({
     urlPrefix:require('./api.js').runOrigin(), auth:true, apiVersion:'v2'
   });
@@ -392,6 +418,31 @@ async function captureLive(targets) {
   }).trim();
   const pagesSha = ref.split(/\s+/)[0];
   return { firebase_tools_version:runtime.version,
+    scheduler:{ name:schedulerName, state:schedulerJob.state,
+      schedule:schedulerJob.schedule, time_zone:schedulerJob.timeZone,
+      uri:schedulerJob.httpTarget?.uri || null,
+      method:schedulerJob.httpTarget?.httpMethod || null,
+      oidc_service_account:schedulerJob.httpTarget?.oidcToken?.serviceAccountEmail || null,
+      oidc_audience:schedulerJob.httpTarget?.oidcToken?.audience || null,
+      header_keys:Object.keys(schedulerJob.httpTarget?.headers || {}).sort(),
+      user_agent:schedulerJob.httpTarget?.headers?.['User-Agent'] || null,
+      body_present:!!schedulerJob.httpTarget?.body,
+      pubsub_present:!!schedulerJob.pubsubTarget,
+      oauth_present:!!schedulerJob.httpTarget?.oauthToken,
+      attempt_deadline:schedulerJob.attemptDeadline || null,
+      retry_config:schedulerJob.retryConfig || null,
+      target_sha256:sha256(JSON.stringify({
+        uri:schedulerJob.httpTarget?.uri || null,
+        method:schedulerJob.httpTarget?.httpMethod || null,
+        service_account:schedulerJob.httpTarget?.oidcToken?.serviceAccountEmail || null,
+        audience:schedulerJob.httpTarget?.oidcToken?.audience || null,
+        headers:schedulerJob.httpTarget?.headers || {},
+        body_present:!!schedulerJob.httpTarget?.body,
+        deadline:schedulerJob.attemptDeadline || null,
+        retry:schedulerJob.retryConfig || null,
+        pubsub_present:!!schedulerJob.pubsubTarget,
+        oauth_present:!!schedulerJob.httpTarget?.oauthToken
+      })) },
     hosting: { version_name:hosting?.release?.version?.name,
       version_id:toId(hosting?.release?.version?.name), status:hosting?.release?.version?.status,
       public_version:publicVersion.v },
