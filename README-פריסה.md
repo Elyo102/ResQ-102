@@ -1,6 +1,18 @@
 # ResQ-102 · הוראות פריסה
 
-עודכן: 3.9.2026
+> **עצירת שחרור 42H.42 (26.9.2026): אין להריץ את פקודות הייצור במסמך זה כפי שהן.**
+> בדיקת מצב חיה מצאה Firebase Hosting ב־`42H.39`, ענף `main` ב־GitHub
+> ב־`42H.30`, ו־GitHub Pages ב־`42H.20`. ה־`origin` של worktree המועמד
+> הוא מאגר מקומי, ואינו מצביע על `main` החי. לכן `$resqRollbackSha`
+> שבסעיף 0 אינו נקודת חזרה מוכחת. לפני פריסה נדרשים צילום מצב חי של
+> Hosting, Rules, כל Function מושפעת ו־Pages; שחזור מבודד של נתוני הרכבים
+> והתמונות; תכנית Functions מדורגת עם חזרה ממוקדת; וסנכרון Pages בדוק.
+> שער בדיקות ירוק או אישור כללי לפריסה אינם מסירים עצירה זו. אין לפרוס
+> `storage.rules` החוסם גישה, ואין להריץ גל מלא של Functions או חזרה
+> אוטומטית עליו אחרי 429. יש להחליף את הנוהל הזה בתכנית ביצוע מאושרת
+> הקשורה ל־SHA ולצילומי המצב החיים לפני פקודת ייצור ראשונה.
+
+עודכן: 26.9.2026
 
 מסמך אחד, מדורג, עם פרויקט מפורש בכל פקודה. מי שמריץ אותו נוגע
 בייצור — קרא עד הסוף לפני שאתה מריץ שורה ראשונה.
@@ -344,37 +356,42 @@ Invoke-ResQDeployWith429Backoff 'firestore:rules,firestore:indexes' 'deploy rule
 חסר אינו שגיאת פריסה — הוא שאילתה שנופלת בזמן אמת, למשתמש, בשדה.
 
 עצור וּודא שהפקודה הסתיימה בהצלחה לפני שאתה ממשיך. לאחר מכן המתן
-בצורה חסומה לשלושת האינדקסים החדשים של קריאת הפתע. הצלחת פקודת
+בצורה חסומה לאינדקסי קריאת הפתע **וגם** לאינדקס תקלות לפי רכב. הצלחת פקודת
 הפריסה אינה אומרת שבניית האינדקס הסתיימה:
 
 ```powershell
 node tests/firebase-release-state.mjs indexes station-102 1800000 15000 `
   'callouts|COLLECTION|by_uid:ASCENDING,created_key:DESCENDING' `
   'callouts|COLLECTION|uids:ARRAY_CONTAINS,created_key:DESCENDING' `
-  'callouts|COLLECTION|uids:ARRAY_CONTAINS,active:ASCENDING,created_key:DESCENDING'
-Assert-ResQNative 'wait for raw Firestore callout index states'
+  'callouts|COLLECTION|uids:ARRAY_CONTAINS,active:ASCENDING,created_key:DESCENDING' `
+  'faults|COLLECTION|vehicle_id:ASCENDING,created_key:DESCENDING'
+Assert-ResQNative 'wait for required Firestore index states'
 ```
 
 ### 2.3 · פונקציות
 
+**עצירה מחייבת ל־42H.42:** הפקודה הישנה להלן מכוונת לכל ה־Functions
+ואינה מותרת להפעלה. לפני החלפתה יש לגזור רשימת פונקציות מושפעות מן
+ה־diff, ללכוד לכל אחת קוד/קונפיגורציה/גרסת Cloud Run פעילה, לתרגל חזרה
+בסביבת בידוד, ולקבוע קבוצות קטנות עם עצירה בכשל חלקי או 429.
+
 ```powershell
 node tests/firebase-release-state.mjs functions station-102
 Assert-ResQNative 'assert no active Cloud Functions rollout'
-$resqFunctionsAttempted = $true
-node release-functions-once.mjs --candidate $resqMergeSha --project station-102 --execute
-Assert-ResQNative 'deploy validated functions once'
+throw '42H.42 Functions deployment is blocked until a scoped, rehearsed plan replaces this step'
 ```
 
 מספר ה־Functions אינו מקובע במסמך: שער המצב הגולמי שלמעלה מונה את כולן
 ודורש שכל אחת תהיה `ACTIVE` לפני הפריסה. סביבת הריצה הנתמכת היא Node 22.
 
-הפקודה מאמתת שוב את קבלת שער האפליקציה ואת אותו Git tree לפני ואחרי
-יצירת ה-config הזמני. היא אינה מריצה את השער המלא פעם שנייה. פקודת
+הסקריפט הישן `release-functions-once.mjs` מאמת קבלה ו־Git tree, אך
+עדיין מכוון לכל ה־Functions ולכן אינו מסלול 42H.42. פקודת
 `firebase deploy` רגילה ממשיכה להריץ `predeploy` מלא ואינה מסלול מקוצר.
-אם ניסיון הפריסה נפל על 429, אפשר להריץ שוב את אותה פקודה כל עוד הקבלה
-בתוקף והעץ לא השתנה; אין צורך להפעיל שוב את כל בדיקות הדפדפן.
+אם ניסיון פריסה חלקי נפל על 429 או על מכסת Cloud Run, עוצרים, בודקים
+איזו פונקציה עודכנה בפועל, וממשיכים רק לפי תכנית קבוצות וחזרה מאושרת.
+אין להריץ שוב גל מלא באופן עיוור.
 
-בפריסה הראשונה של שירות חדש גוגל מבקשת אישור להפעלת API. אשר.
+הפעלת API חדש דורשת החלטת בעלים נפרדת לאחר הצגת שירות, עלות והרשאות.
 
 ### 2.4 · קידום Preview נעול ל-live
 
@@ -475,6 +492,13 @@ if ($resqRollbackFailures.Count -gt 0) {
 ---
 
 ## 3.1 · סנכרון אפליקציית GitHub Pages
+
+**עצירה מחייבת ל־42H.42:** `$resqPagesDir` אינו נוצר בנוהל זה, ואין בו
+שלבי checkout, העתקת ארטיפקט, commit, אימות SHA קודם או rollback בר־ביצוע.
+ה־push המוצג בהמשך אינו שלב שחרור תקף עד שיושלם נוהל כזה וייבדק מול
+הענף הציבורי הנוכחי. במצב שנבדק ב־26.9.2026 הענף הצביע על
+`2a5fb043c91b040051e08bfec472f1feecf5571c`; יש ללכוד אותו מחדש
+לפני כל פעולה כי הוא עשוי להשתנות.
 
 האפליקציה המותקנת אצל חלק מהמשתמשים נטענת גם מן הענף הציבורי
 `codex/pages-public-42h7`. לכן שחרור Hosting אינו שלם עד ששני המארחים
