@@ -118,7 +118,15 @@ const EXPECT = {
 // The personal HR inbox is available to station members, not pending users.
 for (const role of ['super', 'firefighter', 'commander', 'hr', 'deputy', 'stcmd']) {
   EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('נוכחות') + 1, 0, 'פנייה למשאבי אנוש', 'נהלים ומסמכים');
+  // Owner-approved navigation: the old team-up shortcut is removed; the
+  // operational vehicle page is available to every active station member.
+  EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('ציוות'), 1);
+  EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('סידור') + 1, 0, 'רכבים מבצעיים');
 }
+// A firefighter's navigation is limited to My Shift, faults and station
+// reports; direct legacy routes are tested separately from menu visibility.
+EXPECT.firefighter.nav = EXPECT.firefighter.nav.slice(0,
+  EXPECT.firefighter.nav.indexOf('חוות דעת') + 1);
 
 const b = await chromium.launch();
 let bad = 0;

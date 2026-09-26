@@ -392,7 +392,7 @@ try {
     ];
     window.__SHADOW_PEOPLE_PLAN = [
       { reject:true, code:'firestore/unavailable', delay:220 },
-      { data:[['u2', { home_crew:'B', issue_count:1,
+      { data:[['u2', { uid:'u2', home_crew:'B', issue_count:1,
         issues:issues }]], delay:0 }
     ];
     window.__SHADOW_PEOPLE_STARTED = [];
