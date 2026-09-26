@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -47,6 +47,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .btn.sm{ min-height:44px; padding:8px 12px; font-size:13px }
 
   .mo{ display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap }
+  /* קפיצה לתאריך + סימון דיווח רטרואקטיבי */
+  .jump{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 14px }
+  .jump label{ font-weight:700; font-size:14px }
+  .jump input[type="date"]{ min-height:44px; padding:0 10px; border:1px solid var(--line,#dfe5ec);
+    border-radius:8px; font:inherit; background:var(--card,#fff); color:inherit }
+  .jump button{ min-height:44px; padding:0 14px; border-radius:8px; font:inherit; font-weight:700;
+    border:1px solid var(--line,#dfe5ec); background:var(--card,#fff); color:inherit; cursor:pointer }
+  .jump .hint{ flex:1 1 100%; font-size:12.5px; color:var(--muted,#748091) }
+  .retro{ display:inline-block; font-size:12px; font-weight:700; line-height:1.5;
+    padding:1px 8px; border-radius:999px; margin-inline-end:6px;
+    color:var(--warn,#765500); background:var(--warn-bg,#fff7df); border:1px solid var(--warn,#e0a23c) }
+  .retro-note{ display:block; margin:8px 0 0 }
   .mo .lbl{ color:var(--txt); font-size:18px; font-weight:750; min-width:132px;
             text-align:center; margin:0 }
   .mo button{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
@@ -224,7 +236,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="attendance">
 
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
@@ -233,21 +245,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 <script>
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -295,6 +319,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <h2 class="lbl" id="moLabel" aria-live="polite">—</h2>
         <button type="button" id="next" aria-label="החודש הבא">›</button>
         <span class="state" id="state" role="status" aria-live="polite">טיוטה</span>
+      </div>
+
+      <!-- ⭐ קפיצה לתאריך.
+           עד כאן, כדי לדווח על יום מלפני שלושה שבועות היה צריך לנחש
+           באיזה חודש הוא נמצא, לדפדף אליו ואז לאתר את השורה. מי
+           שמדווח באיחור עושה את זה בדיוק כשהוא הכי פחות רוצה לחפש. -->
+      <div class="jump">
+        <label for="jumpDate">דיווח לתאריך</label>
+        <input type="date" id="jumpDate" aria-describedby="jumpNote">
+        <button type="button" id="jumpGo">פתחו את היום</button>
+        <span class="hint" id="jumpNote">אפשר לדווח גם על יום שכבר עבר. דיווח כזה מסומן „רטרואקטיבי".</span>
       </div>
 
       <div class="tot">
@@ -378,34 +413,36 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { subStationAvailable } from './stations.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { subStationAvailable } from './stations.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h20';
+  from './rotation.js?v=42h42';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h20';
-import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
+         workdaysSourceLabel } from './effective-workdays.js?v=42h42';
+import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, configuredDayOffset, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
-         SHAPES, shapeOf, shapeHe }
-  from './hours.js?v=42h20';
+         SHAPES, shapeOf, shapeHe,
+         reportedAtMs, retroDays, retroLabel }
+  from './hours.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDocsFromServer, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -418,6 +455,10 @@ const callCorrectionContext = httpsCallable(fns, 'getAttendanceCorrectionContext
 const callCorrectAttendanceDay = httpsCallable(fns, 'correctAttendanceDay');
 const callCorrectAttendanceMonth = httpsCallable(fns, 'correctAttendanceMonth');
 const callReopenAttendanceMonth = httpsCallable(fns, 'reopenAttendanceMonthForCorrection');
+const callApproveAttendanceMonth = httpsCallable(fns, 'approveAttendanceMonth');
+const callMutateMyAttendanceDay = httpsCallable(fns, 'mutateMyAttendanceDay');
+const callGetMyAttendanceMonth = httpsCallable(fns, 'getMyAttendanceMonth');
+const callMutateMyAttendanceMonth = httpsCallable(fns, 'mutateMyAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
 
@@ -448,6 +489,26 @@ let SUBJ = null, CAN_EDIT_OTHERS = false;
 let PEOPLE = [];
 let subjectGeneration = 0;
 let staticLoadGeneration = 0;
+// Station-level Firestore reads (swaps/sites/board+shift) do not depend on
+// viewMonth. Cache them across prev/next month so month navigation only
+// re-fetches month-scoped callables (effective workdays / legacy compat).
+// Short TTL (90s): month-nav still skips board/swaps/sites gets, but
+// crew moves / site reassignment cannot stick across a long session.
+// Month-scoped effective workdays are NEVER served from this cache.
+const STATIC_CACHE_TTL_MS = 90 * 1000;
+let staticStationCache = null; // { sid, swaps, sites, at }
+let staticBoardCache = null;   // { key: sid|uid|crew, mySite, at }
+function clearAttendanceStaticCache(){ staticStationCache = null; staticBoardCache = null; }
+function staticCacheFresh(entry){
+  return !!(entry && Number.isFinite(entry.at) && (Date.now() - entry.at) < STATIC_CACHE_TTL_MS);
+}
+// Editing and automatic fill need server-confirmed board, swaps and site hours.
+// A failed refresh must stop the write, never silently replace a site with ''.
+async function ensureFreshAttendanceForWrite(){
+  clearAttendanceStaticCache();
+  return loadStatic(true);
+}
+
 let monthLoadGeneration = 0;
 let authGeneration = 0;
 let lifecycleGeneration = 0;
@@ -455,6 +516,7 @@ let monthDataReady = false;
 let guardLoadGeneration = 0;
 let correctionContext = null;
 let pendingCorrectionOperation = null;
+const pendingMonthApprovals = new Map();
 let correctionAuditCursor = null;
 let correctionAuditItems = [];
 
@@ -484,6 +546,11 @@ function validCorrectionReceipt(kind, data){
   if (!data || data.outcome !== 'recorded' || typeof data.duplicate !== 'boolean') return false;
   if (kind === 'reopen') return /^[a-f0-9]{64}$/.test(String(data.reopen_id || ''))
     && Number.isInteger(data.attendance_changed_count) && data.attendance_changed_count >= 0;
+  if (kind === 'self') return /^[a-f0-9]{64}$/.test(String(data.operation_id || ''))
+    && ['save','delete'].includes(data.operation);
+  if (kind === 'self-month') return /^[a-f0-9]{64}$/.test(String(data.operation_id || ''))
+    && ['fill','recalculate','submit','unsubmit'].includes(data.operation)
+    && Number.isInteger(data.changed_count) && data.changed_count >= 0;
   return /^[a-f0-9]{64}$/.test(String(data.correction_id || ''))
     && Number.isInteger(data.changed_count) && data.changed_count >= 0;
 }
@@ -523,7 +590,13 @@ async function callCorrection(callable, intent, kind){
 }
 function correctionErrorText(error, fallback){
   if (error && error.uncertain) return 'לא התקבל אישור סופי מהשרת. הפרטים נעולים; נסה שוב את אותה פעולה בדיוק.';
-  return fallback + ' (' + (error && (error.code || error.message) || 'unknown') + ')';
+  logError('attendance.correction', error);
+  return fallback + ' ' + errorText(error);
+}
+
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
 }
 
 // A verified super account is allowed to manage attendance without owning an
@@ -539,6 +612,14 @@ function setSubjectWorkspaceVisible(visible) {
 // חותמת התיעוד. נדרשת על ידי כללי האבטחה בכל עריכה של רשומה
 // שאינה שלך, ו-edited_by חייב להיות ה-uid האמיתי — הכלל בודק
 // אותו מול request.auth.uid, כך שאי אפשר לערוך בשם אחר.
+/* „היום" לפי שעון ישראל, לא לפי שעון המכשיר. מי שנמצא בחו״ל או
+ * שהשעון שלו מוסט עדיין מדווח על אותו יום שהתחנה מדברת עליו. */
+function localToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 function stamp(body) {
   if (!onOther()) return body;
   return Object.assign({}, body, {
@@ -700,6 +781,7 @@ onAuthStateChanged(auth, async user => {
   const authEpoch = ++authGeneration;
   lifecycleGeneration++;
   SID = ''; ME = null; SUBJ = null; PEOPLE = []; records = {}; report = null;
+  clearAttendanceStaticCache();
   correctionContext = null; pendingCorrectionOperation = null;
   correctionAuditCursor = null; correctionAuditItems = [];
   monthDataReady = false; subjectGeneration++; monthLoadGeneration++;
@@ -785,7 +867,7 @@ onAuthStateChanged(auth, async user => {
       if (!p) { msg('לא מצאתי את האדם הזה.', 'err', 'pickMsg'); return; }
       $('pickGo').disabled = true;
       try { await switchTo(p); msg('', '', 'pickMsg'); }
-      catch (e) { msg('הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', 'pickMsg'); }
+      catch (e) { msg(userError('attendance.pick.switch', e, 'הפתיחה נכשלה.'), 'err', 'pickMsg'); }
       $('pickGo').disabled = false;
     };
     $('pickBack').onclick = async () => {
@@ -811,7 +893,7 @@ onAuthStateChanged(auth, async user => {
 
 // ---------- טעינה ----------
 
-async function loadStatic(){
+async function loadStatic(forceServer = false){
   const generation = ++staticLoadGeneration;
   const snapshot = {
     sid: SID,
@@ -824,6 +906,7 @@ async function loadStatic(){
   };
   const next = {};
   let compatibilityFailure = null;
+  let sourceFailure = null;
 
   // ארבעת המקורות והקשר הסידור אינם תלויים זה בזה. טעינה סדרתית הוסיפה זמן
   // רשת מלא לכל מקור; במקביל אנחנו מחכים רק לאיטי מביניהם.
@@ -862,9 +945,9 @@ async function loadStatic(){
   const loadBoardSite = async function () {
     try {
       const pair = await Promise.all([
-        getDoc(doc(db, 'stations', snapshot.sid, 'config', 'board')),
+        (forceServer ? getDocFromServer : getDoc)(doc(db, 'stations', snapshot.sid, 'config', 'board')),
         snapshot.crew
-          ? getDoc(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
+          ? (forceServer ? getDocFromServer : getDoc)(doc(db, 'stations', snapshot.sid, 'shifts', snapshot.crew))
           : Promise.resolve(null)
       ]);
       const b = pair[0], s = pair[1];
@@ -872,7 +955,8 @@ async function loadStatic(){
       const assign = (s && s.exists() && (s.data() || {}).assign) || {};
 
       const mine = Object.keys(assign).filter(k => assign[k] === snapshot.uid);
-      let found = snapshot.mySite;
+      // Never retain a prior mySite when the live board has no active slot.
+      let found = '';
       // משבצת של רכב מושבת אינה מקור לתחנת המשנה שלי: הרכב ירד
       // מהצי, והשיבוץ הישן נשאר שמור רק כדי ששחזור יהיה מלא.
       (board.vehicles || []).forEach(function (v) {
@@ -882,7 +966,7 @@ async function loadStatic(){
         });
       });
       next.mySite = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
   // החלפות מאושרות. אדם שהחליף לא עובד ביום שלו, וכן עובד
@@ -890,19 +974,19 @@ async function loadStatic(){
   // במילוי מראש, אחרת הדוח מתחיל שגוי.
   const loadSwaps = async function () {
     try {
-      const sw = await getDocs(collection(db, 'stations', snapshot.sid, 'swaps'));
+      const sw = await (forceServer ? getDocsFromServer : getDocs)(collection(db, 'stations', snapshot.sid, 'swaps'));
       const found = [];
       sw.forEach(d => {
         const v = d.data() || {};
         if (v.status === 'approved') found.push(v);
       });
       next.swaps = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
   const loadSites = async function () {
     try {
-      const ss = await getDocs(collection(db, 'stations', snapshot.sid, 'sub_stations'));
+      const ss = await (forceServer ? getDocsFromServer : getDocs)(collection(db, 'stations', snapshot.sid, 'sub_stations'));
       const found = [];
       ss.forEach(d => {
         const v = d.data() || {};
@@ -913,19 +997,34 @@ async function loadStatic(){
       });
       found.sort((a, b) => a.order - b.order);
       next.sites = found;
-    } catch (ignore) {}
+    } catch (error) { if (forceServer) sourceFailure = error; }
   };
 
-  await Promise.all([
-    loadLegacyCompatibility(),
-    loadBoardSite(), loadSwaps(), loadSites()
-  ]);
+  const stationHit = !forceServer && staticCacheFresh(staticStationCache) && staticStationCache.sid === snapshot.sid;
+  const boardKey = snapshot.sid + '|' + snapshot.uid + '|' + String(snapshot.crew || '');
+  const boardHit = !forceServer && staticCacheFresh(staticBoardCache) && staticBoardCache.key === boardKey;
+
+  const tasks = [loadLegacyCompatibility()];
+  if (!boardHit) tasks.push(loadBoardSite());
+  else next.mySite = staticBoardCache.mySite;
+  if (!stationHit) {
+    tasks.push(loadSwaps(), loadSites());
+  } else {
+    next.swaps = staticStationCache.swaps;
+    next.sites = staticStationCache.sites;
+  }
+  await Promise.all(tasks);
 
   const current = generation === staticLoadGeneration &&
     SID === snapshot.sid && SUBJ && SUBJ.uid === snapshot.uid &&
     String(SUBJ.emp) === snapshot.emp && (SUBJ.crew || '') === snapshot.crew &&
     viewYear === snapshot.year && viewMonth === snapshot.month;
   if (!current) return false;
+
+  if (sourceFailure) {
+    msg('לא ניתן לאמת כעת את השיבוץ ותחנות המשנה מול השרת. הדיווח לא נשמר; נסה שוב כשיש חיבור.', 'err');
+    return false;
+  }
 
   if (compatibilityFailure || !next.compatibility || !next.effective) {
     showLegacyCompatibilityFailure();
@@ -944,6 +1043,14 @@ async function loadStatic(){
   if (Object.prototype.hasOwnProperty.call(next, 'mySite')) mySite = next.mySite;
   if (Object.prototype.hasOwnProperty.call(next, 'swaps')) swaps = next.swaps;
   if (Object.prototype.hasOwnProperty.call(next, 'sites')) sites = next.sites;
+
+  if (Object.prototype.hasOwnProperty.call(next, 'swaps') &&
+      Object.prototype.hasOwnProperty.call(next, 'sites')) {
+    staticStationCache = { sid: snapshot.sid, swaps: next.swaps, sites: next.sites, at: Date.now() };
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'mySite')) {
+    staticBoardCache = { key: boardKey, mySite: next.mySite, at: Date.now() };
+  }
   return true;
 }
 
@@ -1040,31 +1147,21 @@ async function loadMonth(){
     })(), Promise.resolve(), guardRequest
   ]) : await Promise.all([
     (async function () {
-      // חודש אחד של אדם אחד. שני סינונים על שדות שונים דורשים
-      // אינדקס מורכב — הוא מוגדר ב-firestore.indexes.json ונפרס
-      // עם deploy.bat. בלעדיו הקריאה נכשלת עם failed-precondition.
       try {
-        const qs = await getDocs(query(
-          collection(db, 'stations', snapshot.sid, 'attendance'),
-          where('emp_number', '==', snapshot.emp),
-          where('month', '==', mk)
-        ));
-        qs.forEach(function (d) {
-          const v = d.data() || {};
-          nextRecords[v.date] = Object.assign({ id: d.id }, v);
+        const response = await callGetMyAttendanceMonth({ month: mk });
+        const value = response && response.data;
+        if (!value || value.station_id !== snapshot.sid || String(value.employee_number) !== snapshot.emp
+            || value.month !== mk || !Array.isArray(value.days) || value.days.length > 31) {
+          throw new Error('attendance-month-mismatch');
+        }
+        value.days.forEach(function (row) {
+          if (!row || !row.record || row.record.date.slice(0, 7) !== mk) throw new Error('attendance-day-mismatch');
+          nextRecords[row.record.date] = Object.assign({ id: row.record_id,
+            _expected_version: row.expected_version }, row.record);
         });
-      } catch (e) {
-        attendanceError = e;
-      }
-    })(),
-    (async function () {
-      try {
-        const r = await getDoc(doc(db, 'stations', snapshot.sid, 'monthly_reports',
-                                   snapshot.emp + '_' + mk));
-        if (r.exists()) nextReport = r.data();
-      } catch (e) { reportError = e; }
-    })(),
-    guardRequest
+        if (value.report) nextReport = Object.assign({ _expected_version: value.report.expected_version }, value.report.record || {});
+      } catch (e) { attendanceError = e; reportError = e; }
+    })(), Promise.resolve(), guardRequest
   ]);
   const guardResult = loaded[2];
 
@@ -1127,8 +1224,18 @@ function suggestedDays(){
 }
 
 function baseTimes(){
-  const t = shiftTimes(rotations[0], SUBJ && SUBJ.role || ME.role, false);
-  return { start: t.start, end: t.end };
+  const rotation = rotations[0];
+  const role = SUBJ && SUBJ.role || ME.role;
+  // shiftTimes() has legacy defaults. Those are useful for display but are not
+  // evidence that a 24-hour workday may be created by the bulk action.
+  if (!rotation || typeof rotation !== 'object') return { start:'', end:'', end_day:null };
+  const start = role === 'commander' ? rotation.commander_start : rotation.shift_start;
+  const hours = role === 'commander' ? rotation.commander_shift_hours : rotation.shift_hours;
+  const end = rotation.shift_end;
+  const endDay = configuredDayOffset(start, end, hours);
+  return endDay === null
+    ? { start:'', end:'', end_day:null }
+    : { start, end, end_day:endDay };
 }
 
 // האם אני עובד בתאריך הזה לפי הסבב וההחלפות המאושרות. אותה
@@ -1151,6 +1258,21 @@ function myGuardOn(key){
   return myGuards.filter(g => String(g.date || '') === String(key))[0] || null;
 }
 
+// HR must never turn a corrupt stored value into a believable month total.
+// A split record can legitimately reach 96 hours; values outside that range
+// are displayed as unknown and require a data correction.
+function reportedHours(row){
+  const value = row && row.hours;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 96) return null;
+  return value;
+}
+function correctedMonthHours(rows){
+  const values = rows.map(reportedHours);
+  if (values.some(value => value === null)) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number.isFinite(total) ? Math.round(total * 100) / 100 : null;
+}
+
 function render(){
   const unknownDays = unknownDaysThisMonth();
   $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear +
@@ -1161,12 +1283,10 @@ function render(){
 
   const list = Object.keys(records).sort();
   const saved = list.map(k => records[k]);
-  const total = onOther()
-    ? Math.round(saved.reduce((sum, row) => sum + (Number.isFinite(Number(row.hours)) ? Number(row.hours) : 0), 0) * 100) / 100
-    : monthTotal(saved, siteHoursOf);
+  const total = onOther() ? correctedMonthHours(saved) : monthTotal(saved, siteHoursOf);
   const sug = suggestedDays();
 
-  $('tHours').textContent = total;
+  $('tHours').textContent = total == null ? '— · נתון שעות פגום' : total;
   $('tDays').textContent  = saved.length;
   $('tSug').textContent   = sug.length;
 
@@ -1186,8 +1306,8 @@ function render(){
     onOther() || st !== 'draft' || !saved.length);
   $('btnUnsubmit').classList.toggle('hide', onOther() || st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
-  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && (st === 'approved' ||
-    (onOther() && correctionContext && correctionContext.eligibility && correctionContext.eligibility.can_reopen))));
+  $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && onOther() &&
+    correctionContext && correctionContext.eligibility && correctionContext.eligibility.can_reopen));
   $('timerCard').classList.toggle('hide', onOther());
 
   renderTimer();
@@ -1236,9 +1356,9 @@ function renderRows(sug){
     const eff = swapEffect(swaps, SUBJ.uid, key);
     const bt = baseTimes();
 
-    const view = rec || { day_type: 'regular', start: bt.start, end: bt.end,
+    const view = rec || { day_type: 'regular', start: bt.start, end: bt.end, end_day:bt.end_day,
                           sub_station: mySite };
-    const hrs = onOther() && rec ? (Number.isFinite(Number(rec.hours)) ? Number(rec.hours) : null)
+    const hrs = onOther() && rec ? reportedHours(rec)
       : calcHours(view, siteHoursOf(view.sub_station));
     const why = reasonWhy(view, siteHoursOf(view.sub_station), shiftHoursFor());
     const running = !!(rec && rec.start && !rec.end);
@@ -1289,10 +1409,15 @@ function renderRows(sug){
       //
       // שיוך אבטחה ממלא אותו לבד, ולכן העמודה הזו מסבירה
       // בשקט למה ליום מסוים יש יותר שעות.
-      '<td class="nt' + (view.notes ? '' : ' dash') + '" data-l="הערות">' +
+      // ⭐ הסימון יושב ליד ההערות ולא במקומן: „מתי דווח" הוא עובדה
+      // על הדיווח, לא תוכן היום, והוא צריך להיראות גם כשאין הערה.
+      '<td class="nt' + (view.notes || retroLabel(key, rec) ? '' : ' dash') + '" data-l="הערות">' +
+        (retroLabel(key, rec)
+          ? '<span class="retro" title="' + esc(retroLabel(key, rec)) + '">' + esc(retroLabel(key, rec)) + '</span>'
+          : '') +
         (view.notes
           ? '<span title="' + esc(view.notes) + '">' + esc(view.notes) + '</span>'
-          : '<span class="em">—</span>') + '</td>';
+          : (retroLabel(key, rec) ? '' : '<span class="em">—</span>')) + '</td>';
 
     const td = document.createElement('td');
     td.className = 'c-act';
@@ -1307,7 +1432,7 @@ function renderRows(sug){
       b.textContent = isSug ? 'שמור' : 'ערוך';
       b.setAttribute('aria-label', (isSug ? 'שמירת' : 'עריכת') +
         ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
-      b.onclick = () => editDay(key, rec);
+      b.onclick = () => void editDay(key, rec);
       td.appendChild(b);
     }
     tr.appendChild(td);
@@ -1375,19 +1500,13 @@ async function saveRecord(key, rec, correctionReason){
   body.month = key.slice(0, 7);
   body.uid = target.uid;
 
-  const fix = siteHoursOf(body.sub_station);
-  body.hours = calcHours(body, fix);
-
-  // שדות שהשרת קורא ואינו מחשב: הסיכום החודשי והריצה הלילית
-  // צריכים לדעת מה סוג היום בעברית, איפה זה היה, והאם היום
-  // דורש נימוק — בלי להריץ שוב את כללי החישוב בצד השרת.
-  // חישוב שני היה יוצר אפשרות שהמייל אומר מספר אחד והמסך אחר.
-  const site = sites.filter(s => s.id === body.sub_station)[0];
-  body.day_type_he     = dayTypeHe(body.day_type);
-  body.site_name       = site ? site.name : '';
-  body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
-
   if (onOther()) {
+    const fix = siteHoursOf(body.sub_station);
+    body.hours = calcHours(body, fix);
+    const site = sites.filter(s => s.id === body.sub_station)[0];
+    body.day_type_he = dayTypeHe(body.day_type);
+    body.site_name = site ? site.name : '';
+    body.reason_required = reasonWhy(body, fix, shiftHoursFor()) !== '';
     const previous = records[key];
     const intent = Object.assign(correctionBase(target), {
       date: key, operation: previous ? 'update' : 'create',
@@ -1399,11 +1518,15 @@ async function saveRecord(key, rec, correctionReason){
     return { corrected: true };
   }
 
-  body.updated_at = serverTimestamp();
+  const existing = records[key];
+  await callCorrection(callMutateMyAttendanceDay, {
+    date: key,
+    operation: 'save',
+    expected_version: existing ? existing._expected_version : 'absent',
+    patch: correctionPatch(body)
+  }, 'self');
   requireMonthWrite(target, key);
-  await setDoc(doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, key)), stamp(body));
-  requireMonthWrite(target, key);
-  records[key] = Object.assign({ id: recordId(target.emp, key) }, body);
+  return { selfSaved: true };
 }
 
 async function createMissingDays(target, entries){
@@ -1411,37 +1534,15 @@ async function createMissingDays(target, entries){
   requireMonthWrite(target);
   if (!entries.length) return { created: 0, skipped: 0 };
   if (entries.length > 31 || new Set(entries.map(x => x.date)).size !== entries.length) throw new Error('רשימת ימים לא תקינה.');
-  const prepared = entries.map(entry => {
-    const body = stamp(Object.assign({}, entry));
-    const date = String(body.date || '');
-    const parsed = new Date(date + 'T12:00:00Z');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) ||
-        parsed.toISOString().slice(0,10) !== date || date.slice(0,7) !== target.month ||
-        String(body.emp_number) !== target.emp || body.uid !== target.uid || body.month !== target.month) throw new Error('זהות היום אינה תואמת לדוח.');
-    return { body, ref: doc(db, 'stations', target.sid, 'attendance', recordId(target.emp, date)) };
-  });
-  const reportRef = doc(db, 'stations', target.sid, 'monthly_reports', target.emp + '_' + target.month);
-  return runTransaction(db, async tx => {
-    requireMonthWrite(target);
-    const monthly = await tx.get(reportRef);
-    const existing = await Promise.all(prepared.map(item => tx.get(item.ref)));
-    requireMonthWrite(target);
-    if (monthly.exists()) {
-      const value = monthly.data();
-      if (!value || String(value.emp_number) !== target.emp || value.month !== target.month ||
-          (Object.prototype.hasOwnProperty.call(value, 'uid') && value.uid !== target.uid)) {
-        throw new Error('פרטי הדוח החודשי אינם תואמים לעובד ולחודש.');
-      }
-      const state = Object.prototype.hasOwnProperty.call(value, 'status') ? value.status : 'draft';
-      if (state !== 'draft') throw new Error('הדוח הוגש, אושר או דורש בדיקה. לא נוספו ימים.');
-    }
-    let created = 0;
-    prepared.forEach((item, i) => { if (!existing[i].exists()) { tx.set(item.ref, item.body); created++; } });
-    return { created, skipped: prepared.length - created };
-  });
+  const response = await callCorrection(callMutateMyAttendanceMonth, { month: target.month, operation: 'fill',
+    entries: entries.slice().sort((a, b) => a.date.localeCompare(b.date))
+      .map(entry => ({ date: entry.date, patch: correctionPatch(entry) })) }, 'self-month');
+  requireMonthWrite(target);
+  return { created: response.changed_count, skipped: entries.length - response.changed_count };
 }
 async function refreshAfterCreation(target, result){
   if (!sameMonthWrite(target)) return false;
+  clearAttendanceStaticCache();
   const expected = monthLoadGeneration + 1;
   const loaded = await loadMonth();
   const owns = expected === monthLoadGeneration && SID === target.sid && SUBJ && ME &&
@@ -1457,28 +1558,27 @@ $('btnFill').onclick = async () => {
   if (!monthDataReady) return;
   if (onOther()) { msg('מילוי אוטומטי זמין לעובד עצמו בלבד.', 'err'); return; }
   const target = captureMonthWrite();
-  const sug = suggestedDays();
-  if (!sug.length) return;
   const b = $('btnFill'); b.disabled = true;
   try {
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(target)) return;
+    const sug = suggestedDays();
+    if (!sug.length) return;
     const bt = baseTimes();
+    if (bt.end_day === null) {
+      msg('תצורת שעות המשמרת חסרה או סותרת. לא נוצרו ימים; ניתן לדווח ידנית.', 'err');
+      return;
+    }
     const entries = sug.map(function (key) {
       const rec = newRecord(key, { day_type: 'regular', start: bt.start,
-                                   end: bt.end, sub_station: mySite });
-      const fx = siteHoursOf(mySite);
-      const site0 = sites.filter(s => s.id === mySite)[0];
-      rec.hours           = calcHours(rec, fx);
-      rec.day_type_he     = dayTypeHe(rec.day_type);
-      rec.site_name       = site0 ? site0.name : '';
-      rec.reason_required = reasonWhy(rec, fx, shiftHoursFor()) !== '';
-      rec.updated_at = serverTimestamp();
+                                   end: bt.end, end_day:bt.end_day, sub_station: mySite });
       return rec;
     });
     const result = await createMissingDays(target, entries);
     await refreshAfterCreation(target, result);
   } catch (e) {
     if (!sameMonthWrite(target)) return;
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.createMissingDays', e, 'השמירה נכשלה.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -1495,10 +1595,11 @@ $('btnStart').onclick = async () => {
       ? Object.assign({}, records[key], { start: hh, end: '' })
       : newRecord(key, { start: hh, end: '' });
     await saveRecord(key, rec);
+    await loadMonth();
     msg('המשמרת התחילה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
-    msg('לא הצלחתי לפתוח משמרת. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.startShift', e, 'לא הצלחתי לפתוח משמרת.'), 'err');
   }
 };
 
@@ -1510,19 +1611,24 @@ $('btnStop').onclick = async () => {
   if (!rec) return;
   const hh = String(now.getHours()).padStart(2, '0') + ':' +
              String(now.getMinutes()).padStart(2, '0');
+  if (hh === rec.start) {
+    msg('אי אפשר לסיים משמרת באותה דקה שבה התחילה. המתן דקה או פתח דיווח ידני ובדוק את השעות.', 'err');
+    return;
+  }
   try {
     await saveRecord(key, Object.assign({}, rec, { end: hh }));
+    await loadMonth();
     msg('המשמרת נסגרה ב-' + hh + '.', 'ok');
     render();
   } catch (e) {
-    msg('לא הצלחתי לסגור משמרת. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.stopShift', e, 'לא הצלחתי לסגור משמרת.'), 'err');
   }
 };
 
 $('btnManual').onclick = () => {
   if (onOther()) { msg('דיווח ידני יש לפתוח דרך שורת היום המתועדת.', 'err'); return; }
   const now = new Date();
-  editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
+  void editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
           records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
 };
 
@@ -1545,8 +1651,9 @@ $('btnSync').onclick = async () => {
     // הסידור והאבטחות האישיות נטענים מחדש — שניהם יכולים היו
     // להשתנות מאז שהמסך נפתח. האבטחות נשארות אישיות גם בזמן
     // שרכזת כוח אדם פותחת דוח של עובד אחר.
+    // Explicit refresh: drop TTL caches so board/swaps/sites re-fetch.
     const guardRequest = beginMyGuardAttendance(action);
-    const loaded = await Promise.all([loadStatic(), guardRequest]);
+    const loaded = await Promise.all([ensureFreshAttendanceForWrite(), guardRequest]);
     const fresh = loaded[0];
     const freshGuards = loaded[1];
     const sameTarget = action.subject === subjectGeneration &&
@@ -1563,6 +1670,10 @@ $('btnSync').onclick = async () => {
     if (freshGuards.generation === guardLoadGeneration) myGuards = freshGuards.guards;
 
     const bt = baseTimes();
+    if (bt.end_day === null) {
+      msg('תצורת שעות המשמרת חסרה או סותרת. לא נוצרו ימים; ניתן לדווח ידנית.', 'err');
+      return;
+    }
     const last = daysInMonth(viewYear, viewMonth);
     const entries = [], extra = [];
 
@@ -1573,7 +1684,7 @@ $('btnSync').onclick = async () => {
 
       if (working === true && !rec) {
         const add = newRecord(key, { day_type: 'regular', start: bt.start,
-                                     end: bt.end, sub_station: mySite });
+                                     end: bt.end, end_day:bt.end_day, sub_station: mySite });
         const fx2 = siteHoursOf(mySite);
         const st2 = sites.filter(s => s.id === mySite)[0];
         add.hours           = calcHours(add, fx2);
@@ -1596,7 +1707,7 @@ $('btnSync').onclick = async () => {
       ' ימים שדיווחת עליהם והסידור שונה: ' + extra.join(', ') + '. הם לא שונו.', 'info');
   } catch (e) {
     if (!sameMonthWrite(target)) return;
-    msg('התיקון נכשל. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('attendance.fixMissingDays', e, 'התיקון נכשל.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -1621,26 +1732,17 @@ $('btnRecalc').onclick = async () => {
       if (sameCorrectionOrigin(target) && !refreshed) msg('החישוב נרשם, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       return;
     }
-    const batch = writeBatch(db);
-    let fixed = 0;
-
-    keys.forEach(function (key) {
-      const r = records[key];
-      const h = calcHours(r, siteHoursOf(r.sub_station));
-      if (Number(r.hours) !== Number(h)) {
-        batch.set(doc(db, 'stations', SID, 'attendance', recordId(SUBJ.emp, key)),
-                  stamp({ hours: h, updated_at: serverTimestamp() }), { merge: true });
-        r.hours = h; fixed++;
-      }
-    });
-
-    if (fixed) await batch.commit();
+    const result = await callCorrection(callMutateMyAttendanceMonth, { month: target.month,
+      operation: 'recalculate', days: keys.slice().sort().map(key => ({ date: key,
+        expected_version: records[key]._expected_version })) }, 'self-month');
+    requireMonthWrite(target);
+    const fixed = result.changed_count;
     msg(fixed ? fixed + ' ימים תוקנו.'
               : 'אין פער. השעות השמורות תואמות לחישוב.', 'ok');
-    render();
+    await loadMonth();
   } catch (e) {
     msg(onOther() ? correctionErrorText(e, 'החישוב נכשל.')
-      : 'החישוב נכשל. (' + (e.code || e.message) + ')', 'err');
+      : userError('attendance.recalc', e, 'החישוב נכשל.'), 'err');
   } finally {
     releaseMonthAction(b);
   }
@@ -1692,7 +1794,7 @@ document.addEventListener('keydown', function (e) {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
-window.addEventListener('pagehide', function () { lifecycleGeneration++; });
+window.addEventListener('pagehide', function () { lifecycleGeneration++; clearAttendanceStaticCache(); });
 window.addEventListener('pageshow', function (event) {
   if (event.persisted) location.reload();
 });
@@ -1712,10 +1814,16 @@ function dayOptions(sel){
   }).join('');
 }
 
-function editDay(key, rec){
+async function editDay(key, rec){
   if (locked()) return;
   const editTarget = captureMonthWrite();
   if (key.slice(0, 7) !== editTarget.month) return;
+  // An existing record can open immediately; save validates its selected site
+  // against the server. A new record needs fresh defaults before opening.
+  if (!rec) {
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(editTarget)) return;
+  }
   const bt = baseTimes();
 
   // אבטחה ביום הזה. אם הכבאי משובץ לאבטחה ביום שאינו יום
@@ -1752,6 +1860,10 @@ function editDay(key, rec){
 
   $('dlg').innerHTML =
     '<h3 id="dlgTitle">דיווח ליום ' + Number(p[2]) + '.' + Number(p[1]) + '.' + p[0] + '</h3>' +
+    // מי שפותח יום ישן צריך לדעת שזה מה שהוא עושה, לפני שהוא שומר.
+    (retroLabel(key, rec)
+      ? '<p class="retro retro-note">' + esc(retroLabel(key, rec)) + '</p>'
+      : (key < localToday() ? '<p class="retro retro-note">היום הזה כבר עבר. הדיווח יסומן כרטרואקטיבי.</p>' : '')) +
     '<div class="hint" id="dHint"></div>' +
     '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
 
@@ -1767,6 +1879,10 @@ function editDay(key, rec){
             '<input type="time" id="dEnd" value="' + esc(v.end || '') + '"></div>' +
         '</div>' +
       '</div>' +
+      '<label id="dFullDayWrap" class="hide" for="dFullDay">' +
+        '<input type="checkbox" id="dFullDay"' +
+          (rec && v.start && v.start === v.end && Number(v.end_day) === 1 ? ' checked' : '') +
+        '> יציאה למחרת באותה שעה — 24 שעות מלאות</label>' +
 
       '<div class="seg hide" id="dSeg2">' +
         '<div class="two">' +
@@ -1793,15 +1909,16 @@ function editDay(key, rec){
       'placeholder="כתוב מה תוקן ולמה (20 תווים לפחות)"></textarea>' : '') +
     '<div class="acts">' +
       '<button type="button" class="btn go" id="dSave">שמור</button>' +
-      (rec ? '<button type="button" class="btn" id="dDel">מחק את היום</button>' : '') +
+      (rec ? '<button type="button" class="btn" id="dDel">בטל דיווח טיוטה</button>' : '') +
       '<button type="button" class="btn" id="dCancel">ביטול</button>' +
     '</div>';
   openOv();
 
-  // הצורה קובעת את חישוב היממות, ולא ניחוש מהשעות.
+  // הצורה קובעת את חישוב היממות. שעות זהות דורשות בחירה מפורשת,
+  // ולא ניחוש שעלול להפוך לחיצה כפולה למשמרת של 24 שעות.
   //
-  //   regular    הכלל הישן: אם היציאה קטנה או שווה לכניסה,
-  //              המשמרת חצתה חצות. תמיד עד 24 שעות.
+  //   regular    יציאה מוקדמת חצתה חצות; יציאה באותה שעה
+  //              נחשבת למחרת רק כשהמשתמש אישר 24 שעות מלאות.
   //   continued  היציאה תמיד למחרת. תמיד מעל 24.
   //   split      שני קטעים באותו יום, והסך הוא הסכום.
   function current(){
@@ -1811,7 +1928,10 @@ function editDay(key, rec){
       shape: sh,
       start: $('dStart').value,
       end:   $('dEnd').value,
-      end_day: sh === 'continued' ? 1 : guessDayOffset($('dStart').value, $('dEnd').value),
+      end_day: sh === 'continued' ? 1
+        : sh === 'regular' && $('dStart').value && $('dStart').value === $('dEnd').value
+          ? ($('dFullDay').checked ? 1 : 0)
+          : guessDayOffset($('dStart').value, $('dEnd').value),
       start2: sh === 'split' ? $('dStart2').value : '',
       end2:   sh === 'split' ? $('dEnd2').value : '',
       end_day2: sh === 'split'
@@ -1832,8 +1952,12 @@ function editDay(key, rec){
   const sync = function () {
     const t  = $('dType').value;
     const sh = $('dShape').value;
+    const equalRegular = needsTimes(t) && sh === 'regular' && !!$('dStart').value &&
+      $('dStart').value === $('dEnd').value;
 
     $('dTimes').style.display = needsTimes(t) ? '' : 'none';
+    $('dFullDayWrap').classList.toggle('hide', !equalRegular);
+    if (!equalRegular) $('dFullDay').checked = false;
     $('dSeg2').classList.toggle('hide', sh !== 'split');
     $('dShapeNote').textContent = NOTES[sh] || '';
     $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
@@ -1842,7 +1966,7 @@ function editDay(key, rec){
 
     const cur   = current();
     const fixed = siteHoursOf(cur.sub_station);
-    const h     = calcHours(cur, fixed);
+    const h     = equalRegular && !$('dFullDay').checked ? null : calcHours(cur, fixed);
     const why   = reasonWhy(cur, fixed, shiftHoursFor());
 
     $('dHint').innerHTML = 'שעות שיישמרו: <b>' + (h == null ? '—' : h) + '</b>' +
@@ -1869,8 +1993,9 @@ function editDay(key, rec){
     }
   };
 
-  ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
-  ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
+  ['dType','dShape','dSite','dFullDay'].forEach(id => { $(id).onchange = sync; });
+  ['dStart','dEnd'].forEach(id => { $(id).oninput = () => { $('dFullDay').checked = false; sync(); }; });
+  ['dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
 
   $('dSave').onclick = async () => {
@@ -1884,6 +2009,21 @@ function editDay(key, rec){
     }
     if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
+    }
+    if (needsTimes(t) && sh !== 'continued' &&
+        ((cur.start === cur.end && !(sh === 'regular' && $('dFullDay').checked)) ||
+         (sh === 'split' && cur.start2 === cur.end2))) {
+      msg('כניסה ויציאה באותה שעה אינן משמרת של 24 שעות. תקן את השעות לפני שמירה.', 'err');
+      return;
+    }
+
+    // The form may have stayed open while site hours or the assignment changed.
+    // Validate against the server again immediately before deriving the patch.
+    if (!(await ensureFreshAttendanceForWrite())) return;
+    if (!sameMonthWrite(editTarget)) return;
+    if (cur.sub_station && !sites.some(site => site.id === cur.sub_station)) {
+      msg('תחנת המשנה שנבחרה השתנתה. בחר תחנה עדכנית ונסה שוב.', 'err');
+      return;
     }
 
     const fixed = siteHoursOf(cur.sub_station);
@@ -1932,15 +2072,22 @@ function editDay(key, rec){
       closeOv(false);
       if (outcome && outcome.corrected) {
         msg('התיקון נרשם ביומן הביקורת.', 'ok');
+        clearAttendanceStaticCache();
         const refreshed = await loadMonth();
         if (!refreshed) msg('התיקון נרשם, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
+      } else if (outcome && outcome.selfSaved) {
+        msg('היום נשמר.', 'ok');
+        clearAttendanceStaticCache();
+        const refreshed = await loadMonth();
+        if (!refreshed) msg('היום נשמר, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
+        else focusAfterRender(key);
       } else {
         msg('היום נשמר.', 'ok'); render(); focusAfterRender(key);
       }
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;
       msg(onOther() ? correctionErrorText(e, 'השמירה נכשלה.')
-        : 'השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+        : userError('attendance.saveDay', e, 'השמירה נכשלה.'), 'err');
     }
   };
 
@@ -1950,27 +2097,30 @@ function editDay(key, rec){
       if (onOther()) {
         const correctionReason = $('dCorrectionReason').value.normalize('NFC').trim();
         if (correctionReason.length < 20 || correctionReason.length > 500) {
-          msg('כדי למחוק יום יש לכתוב סיבה ברורה של 20–500 תווים.', 'err');
+          msg('כדי לבטל דיווח יש לכתוב סיבה ברורה של 20–500 תווים.', 'err');
           $('dCorrectionReason').focus(); return;
         }
         await callCorrection(callCorrectAttendanceDay, Object.assign(correctionBase(editTarget), { date: key,
           operation: 'delete', expected_version: rec._expected_version, reason: correctionReason }), 'day');
       } else {
-        await deleteDoc(doc(db, 'stations', editTarget.sid, 'attendance', recordId(editTarget.emp, key)));
+        await callCorrection(callMutateMyAttendanceDay, { date: key, operation: 'delete',
+          expected_version: rec._expected_version }, 'self');
       }
       requireMonthWrite(editTarget, key);
       closeOv(false);
       if (onOther()) {
-        msg('המחיקה נרשמה ביומן הביקורת.', 'ok');
+        msg('ביטול הדיווח נרשם ביומן הביקורת.', 'ok');
         const refreshed = await loadMonth();
         if (!refreshed) msg('המחיקה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info');
       } else {
-        delete records[key]; msg('היום נמחק.', 'ok'); render(); focusAfterRender(key);
+        const refreshed = await loadMonth();
+        msg(refreshed ? 'טיוטת היום בוטלה ונשמרה בקבלת ביקורת.' : 'טיוטת היום בוטלה, אך הרענון נכשל. טען מחדש.', refreshed ? 'ok' : 'info');
+        if (refreshed) focusAfterRender(key);
       }
     } catch (e) {
       if (!sameMonthWrite(editTarget)) return;
-      msg(onOther() ? correctionErrorText(e, 'המחיקה נכשלה.')
-        : 'המחיקה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      msg(onOther() ? correctionErrorText(e, 'ביטול הדיווח נכשל.')
+        : userError('attendance.deleteDay', e, 'ביטול הדיווח נכשל.'), 'err');
     }
   };
   $('dCancel').onclick = closeOv;
@@ -1979,22 +2129,20 @@ function editDay(key, rec){
 
 // ---------- שליחה ואישור ----------
 
-async function writeReport(patch){
+async function writeReport(status){
   if (onOther()) throw new Error('רק העובד עצמו רשאי לשלוח או לבטל את הצהרת הדוח שלו.');
   const target = captureMonthWrite();
-  const mk = target.month;
   const saved = Object.keys(records).sort();
-  const body = Object.assign({
-    emp_number: SUBJ.emp, uid: SUBJ.uid, full_name: SUBJ.full_name,
-    crew: SUBJ.crew, month: mk,
-    days: saved,
-    total_hours: monthTotal(saved.map(k => records[k]), siteHoursOf),
-    updated_at: serverTimestamp()
-  }, patch);
+  const operation = status === 'submitted' ? 'submit' : 'unsubmit';
+  const intent = { month: target.month, operation,
+    expected_report_version: report ? report._expected_version : 'absent' };
+  if (operation === 'submit') intent.days = saved.map(key => ({ date: key,
+    expected_version: records[key]._expected_version }));
   requireMonthWrite(target);
-  await setDoc(doc(db, 'stations', target.sid, 'monthly_reports', target.emp + '_' + mk), stamp(body));
+  await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
   requireMonthWrite(target);
-  report = body;
+  clearAttendanceStaticCache();
+  await loadMonth();
 }
 
 // לפני שליחה — סיכום על המסך. הכבאי מאשר מה שהוא רואה, ולא
@@ -2007,8 +2155,7 @@ function submitPreview(){
   const st = (report && report.status) || 'draft';
   const saved = Object.keys(records).sort().map(k => records[k]);
   const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
-  if (onOther()) s.hours = Math.round(saved.reduce((sum, row) => sum +
-    (Number.isFinite(Number(row.hours)) ? Number(row.hours) : 0), 0) * 100) / 100;
+  if (onOther()) s.hours = correctedMonthHours(saved);
   const sug = suggestedDays();
 
   const typeLines = DAY_TYPES
@@ -2031,7 +2178,7 @@ function submitPreview(){
     '<div class="hint">' + MONTHS[viewMonth] + ' ' + viewYear +
       ' · ' + esc(SUBJ.full_name || '') + ' · מס׳ ' + esc(SUBJ.emp) + '</div>' +
 
-    '<div class="sum-big">' + s.hours + '</div>' +
+    '<div class="sum-big">' + (s.hours == null ? '— · נתון שעות פגום' : s.hours) + '</div>' +
     '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
 
     '<div class="sum-line"><span>ימים שדווחו</span><b>' + s.days + '</b></div>' +
@@ -2075,14 +2222,14 @@ function submitPreview(){
     if (!sameMonthWrite(previewTarget)) return;
     $('pSend').disabled = true;
     try {
-      await writeReport({ status: 'submitted', submitted_at: serverTimestamp() });
+      await writeReport('submitted');
       if (!sameMonthWrite(previewTarget)) return;
       closeOv(false);
       msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
       render(); focusAfterRender();
     } catch (e) {
       if (!sameMonthWrite(previewTarget)) return;
-      msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+      msg(userError('attendance.submitReport', e, 'השליחה נכשלה.'), 'err');
       if (sameMonthWrite(previewTarget) && $('pSend')) $('pSend').disabled = false;
     }
   };
@@ -2097,80 +2244,74 @@ $('btnView').onclick = submitPreview;
 $('btnUnsubmit').onclick = async () => {
   if (onOther()) { msg('רק העובד עצמו רשאי לבטל את שליחת הדוח.', 'err'); return; }
   try {
-    await writeReport({ status: 'draft' });
+    await writeReport('draft');
     msg('השליחה בוטלה.', 'ok'); render();
-  } catch (e) { msg('הביטול נכשל. (' + (e.code || e.message) + ')', 'err'); }
+  } catch (e) { msg(userError('attendance.unsubmitReport', e, 'הביטול נכשל.'), 'err'); }
 };
 
-// אישור נועל את הרשומות עצמן, לא רק את מסמך הדוח. כללי האבטחה
-// אינם קוראים מסמך אחר כדי להחליט — אין בהם אף get() — ולכן
-// הנעילה חייבת לשבת על כל רשומה.
-async function setMonthStatus(emp, mk, days, status){
-  const batch = writeBatch(db);
-  (days || []).forEach(function (key) {
-    // אישור נוגע ברשומות של אדם אחר, ולכן הוא נחתם כמו כל
-    // עריכה. בלי החתימה כלל האבטחה החדש ידחה את האצווה כולה.
-    const body = { status: status, updated_at: serverTimestamp() };
-    body.edited_by      = ME.uid;
-    body.edited_by_name = ME.full_name || '';
-    body.edited_at      = serverTimestamp();
-    batch.set(doc(db, 'stations', SID, 'attendance', recordId(emp, key)),
-              body, { merge: true });
-  });
-  await batch.commit();
-}
-
-$('btnApprove').onclick = () => approveMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
-                                            Object.keys(records).sort(), 'msg');
+$('btnApprove').onclick = () => approveMonth(SUBJ.uid, SUBJ.emp, monthKey(viewYear, viewMonth),
+                                            'msg', $('btnApprove'));
 $('btnReopen').onclick  = () => reopenMonth(SUBJ.emp, monthKey(viewYear, viewMonth),
                                             Object.keys(records).sort(), 'msg');
 
-async function approveMonth(emp, mk, days, box){
+async function approveMonth(targetUid, emp, mk, box, button){
+  const key = String(targetUid || '') + '|' + String(emp || '') + '|' + String(mk || '');
+  let pending = pendingMonthApprovals.get(key);
+  if (pending && pending.inFlight) return;
+  if (!pending) {
+    pending = { requestId: newCorrectionRequestId(), inFlight: false };
+    pendingMonthApprovals.set(key, pending);
+  }
+  pending.inFlight = true;
+  if (button) button.disabled = true;
   try {
-    await setMonthStatus(emp, mk, days, 'approved');
-    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
-    await setDoc(ref, { status: 'approved', approved_by: ME.uid,
-                        approved_by_name: ME.full_name,
-                        approved_at: serverTimestamp() }, { merge: true });
+    const response = await callApproveAttendanceMonth({
+      target_uid: targetUid, employee_number: String(emp), month: mk,
+      request_id: pending.requestId
+    });
+    const data = response && response.data;
+    if (!data || data.outcome !== 'approved' || !/^[a-f0-9]{64}$/.test(String(data.approval_id || ''))
+        || !Number.isInteger(data.attendance_changed_count) || data.attendance_changed_count < 0
+        || typeof data.duplicate !== 'boolean') {
+      const malformed = new Error('השרת לא החזיר אישור מלא. אפשר לנסות שוב את אותה הפעולה.');
+      malformed.uncertain = true; throw malformed;
+    }
+    pendingMonthApprovals.delete(key);
     msg('החודש אושר ונעול.', 'ok', box);
     if (emp === SUBJ.emp) await loadMonth();
     if (CAN_APPROVE) loadApprovals();
   } catch (e) {
-    msg('האישור נכשל. (' + (e.code || e.message) + ')', 'err', box);
+    if (definiteCorrectionRejection(e)) pendingMonthApprovals.delete(key);
+    else pending.inFlight = false;
+    msg(e && e.uncertain
+      ? 'לא התקבל אישור סופי מהשרת. אפשר לנסות שוב; אותה פעולה לא תאושר פעמיים.'
+      : userError('attendance.approveMonth', e, 'האישור נכשל.'), 'err', box);
+  } finally {
+    const current = pendingMonthApprovals.get(key);
+    if (current) current.inFlight = false;
+    if (button && button.isConnected) button.disabled = false;
   }
 }
 
 async function reopenMonth(emp, mk, days, box){
   const target = captureMonthWrite();
   try {
-    if (onOther()) {
-      if (!correctionContext || String(emp) !== String(SUBJ.emp) || mk !== correctionContext.month) {
-        throw new Error('יש לרענן את החודש לפני פתיחה מחדש.');
-      }
-      const reason = String(prompt('כתוב סיבה לפתיחת החודש מחדש (20–500 תווים):', '') || '').normalize('NFC').trim();
-      if (reason.length < 20 || reason.length > 500) throw new Error('נדרשת סיבה ברורה של 20–500 תווים.');
-      await callCorrection(callReopenAttendanceMonth, Object.assign(correctionBase(target), {
-        expected_report_version: correctionContext.report.expected_version,
-        days: correctionContext.days.map(row => ({ date: row.date, expected_version: row.expected_version })),
-        reason
-      }), 'reopen');
-      requireMonthWrite(target);
-      msg('החודש נפתח מחדש והפעולה נרשמה ביומן הביקורת.', 'ok', box);
-      const refreshed = await loadMonth();
-      if (sameCorrectionOrigin(target) && !refreshed) msg('הפתיחה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info', box);
-      return;
+    if (!onOther() || !correctionContext || String(emp) !== String(SUBJ.emp) || mk !== correctionContext.month) {
+      throw new Error('פתיחה מחדש מבוצעת על ידי גורם מוסמך אחר ומתועדת ביומן הביקורת.');
     }
-    await setMonthStatus(emp, mk, days, 'draft');
-    const ref = doc(db, 'stations', SID, 'monthly_reports', emp + '_' + mk);
-    await setDoc(ref, { status: 'draft', reopened_by: ME.uid,
-                        reopened_by_name: ME.full_name,
-                        reopened_at: serverTimestamp() }, { merge: true });
-    msg('החודש נפתח מחדש.', 'ok', box);
-    if (emp === SUBJ.emp) await loadMonth();
-    if (CAN_APPROVE) loadApprovals();
+    const reason = String(prompt('כתוב סיבה לפתיחת החודש מחדש (20–500 תווים):', '') || '').normalize('NFC').trim();
+    if (reason.length < 20 || reason.length > 500) throw new Error('נדרשת סיבה ברורה של 20–500 תווים.');
+    await callCorrection(callReopenAttendanceMonth, Object.assign(correctionBase(target), {
+      expected_report_version: correctionContext.report.expected_version,
+      days: correctionContext.days.map(row => ({ date: row.date, expected_version: row.expected_version })),
+      reason
+    }), 'reopen');
+    requireMonthWrite(target);
+    msg('החודש נפתח מחדש והפעולה נרשמה ביומן הביקורת.', 'ok', box);
+    const refreshed = await loadMonth();
+    if (sameCorrectionOrigin(target) && !refreshed) msg('הפתיחה נרשמה, אך הרענון נכשל. טען מחדש לפני שינוי נוסף.', 'info', box);
   } catch (e) {
-    msg(onOther() ? correctionErrorText(e, 'הפתיחה נכשלה.')
-      : 'הפתיחה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+    msg(correctionErrorText(e, 'הפתיחה נכשלה.'), 'err', box);
   }
 }
 
@@ -2242,7 +2383,7 @@ async function loadCorrectionAudit(loadMore){
   } catch (e) {
     if (!sameAuditFence(fence)) return;
     box.textContent = 'לא ניתן לטעון את היסטוריית התיקונים.';
-    msg('טעינת ההיסטוריה נכשלה. (' + (e.code || e.message) + ')', 'err', 'correctionAuditMsg');
+    msg(userError('attendance.correctionAudit.list', e, 'טעינת ההיסטוריה נכשלה.'), 'err', 'correctionAuditMsg');
   }
 }
 $('btnLoadCorrectionAudit').onclick = () => loadCorrectionAudit(false);
@@ -2268,7 +2409,7 @@ $('correctionAuditList').onclick = async function (event) {
       '<div class="acts"><button type="button" class="btn" id="dCancel">סגור</button></div>';
     openOv(); $('dCancel').onclick = closeOv;
   } catch (e) {
-    if (sameAuditFence(fence)) msg('טעינת פרטי התיקון נכשלה. (' + (e.code || e.message) + ')', 'err', 'correctionAuditMsg');
+    if (sameAuditFence(fence)) msg(userError('attendance.correctionAudit.detail', e, 'טעינת פרטי התיקון נכשלה.'), 'err', 'correctionAuditMsg');
   } finally { if (sameAuditFence(fence)) button.disabled = false; }
 };
 
@@ -2321,6 +2462,8 @@ async function switchTo(p){
     // ברירת מחדל ריקה בטוחה יותר מהצגת אתר או אבטחה של אדם אחר.
     mySite = '';
     myGuards = [];
+    // Subject switch must not reuse prior board mySite (or TTL residue).
+    clearAttendanceStaticCache();
   }
   const generation = ++subjectGeneration;
   monthLoadGeneration++;
@@ -2371,7 +2514,7 @@ async function loadApprovals(){
     const qs = await getDocs(qref);
     qs.forEach(d => list.push(Object.assign({ id: d.id }, d.data() || {})));
   } catch (e) {
-    msg('לא הצלחתי לקרוא את רשימת הדוחות. (' + (e.code || e.message) + ')',
+    msg(userError('attendance.approvals.load', e, 'לא הצלחתי לקרוא את רשימת הדוחות.'),
         'err', 'apprMsg');
     return;
   }
@@ -2402,7 +2545,7 @@ async function loadApprovals(){
     b.textContent = 'אשר';
     b.setAttribute('aria-label', 'אישור הדוח של ' + (r.full_name || r.emp_number) +
       ' לחודש ' + (r.month || ''));
-    b.onclick = () => approveMonth(r.emp_number, r.month, r.days || [], 'apprMsg');
+    b.onclick = () => approveMonth(r.uid, r.emp_number, r.month, 'apprMsg', b);
     td.appendChild(b);
     tr.appendChild(td);
     body.appendChild(tr);
@@ -2410,6 +2553,35 @@ async function loadApprovals(){
 }
 
 // ---------- ניווט חודשים ----------
+
+/* ⭐ קפיצה לתאריך — וגם, כשצריך, מעבר לחודש שבו הוא נמצא.
+ *
+ * אין כאן מסלול שמירה שני: היעד הוא אותו דיאלוג יום בדיוק, ולכן כל
+ * הכללים שחלים על דיווח רגיל חלים גם כאן. מה שהשתנה הוא הדרך אליו. */
+async function jumpToDate(key) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key || ''))) {
+    msg('צריך לבחור תאריך.', 'err');
+    return;
+  }
+  const year = Number(key.slice(0, 4)), month = Number(key.slice(5, 7)) - 1;
+  if (year !== viewYear || month !== viewMonth) {
+    viewYear = year; viewMonth = month;
+    msg('', ''); setMonthBusy(true);
+    if (!(await loadStatic())) return;
+    if (!(await loadMonth())) return;
+  }
+  if (locked()) {
+    // החודש אושר ונעול. זה לא כישלון של הקפיצה — זו מדיניות, והמסך
+    // כבר אומר אותה במקום אחד; כאן רק לא מעמידים פנים שנפתח משהו.
+    msg('החודש הזה אושר ונעול. פנה למפקד כדי לפתוח אותו לתיקון.', 'err');
+    return;
+  }
+  const row = document.querySelector('[data-date="' + key + '"]');
+  if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' });
+  void editDay(key, records[key]);
+}
+$('jumpGo').onclick = () => { void jumpToDate($('jumpDate').value); };
+$('jumpDate').onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); void jumpToDate($('jumpDate').value); } };
 
 $('prev').onclick = async () => {
   viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }

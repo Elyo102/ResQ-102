@@ -33,12 +33,12 @@
 // עובד Service Worker אינו מייבא מודולים ולכן אינו יכול לקרוא JSON בעוד הרישום
 // (הערה המקורית שכבר מופיעה למעלה לגבי firebase-config.js). הערך נשמר כאן בכוונה,
 // ו-`tests/version-release.mjs` נופל אם הערך צופה מ-`release-manifest.json`.
-const CACHE = 'resq-v42h20-release1';
+const CACHE = 'resq-v42h42-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
 const SHELL = [
-  './login.html', './schedule.html', './schedule-management.html',
+  './login.html', './terms.html', './privacy.html', './schedule.html', './schedule-management.html',
   './schedule-management.js', './schedule-update-guard.js', './schedule-file-import.js', './board.html', './attendance.html',
   './attendance-shadow.html',
   './hr.html', './hr-client.js', './hr-hours-ui.js', './hr-hours-ui.css',
@@ -49,8 +49,8 @@ const SHELL = [
   './hr-attachments-ui.js', './hr-attachments-ui.css',
   './maintenance.html', './maintenance-client.js', './maintenance.css',
   './guards.html', './faults.html', './forms.html', './swaps.html',
-  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-siren.mp3', './stats.html', './people.html',
-  './vehicle.html', './sign.html',
+  './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-roster-cache.js', './callout-siren.mp3', './stats.html', './people.html',
+  './vehicle.html', './operational-vehicles.html', './operational-vehicles-model.js', './sign.html',
   './index.html',
   './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
   './guards.js', './faults.js', './fleet.js', './forms.js', './stats.js',
@@ -61,7 +61,9 @@ const SHELL = [
   './role-view.js', './role-view-page.js', './roles.js', './shiftlog.js', './bulletin.js', './bulletin.css', './alerts-feed.js', './home-faults.js', './home-command.js', './appcheck.js',
   './incident-client.js', './monitoring-bootstrap.js', './monitored-functions.js',
   './push.js', './callout.js', './stations.js', './firebase-config.js',
-  './join-ui.js',
+  // שני מודולים משותפים שכל מסך עם פעולה נשען עליהם.
+  './error-text.js', './mode-bar.js', './mode-controller.js',
+  './join-ui.js', './invitation-link.js',
   './theme.css', './pwa.js', './version.js', './vmap.js',
   './manifest.json', './resq-192.png', './favicon.ico'
 ];

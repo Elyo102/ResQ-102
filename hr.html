@@ -5,14 +5,24 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ResQ — משאבי אנוש</title>
 <link rel="icon" href="./favicon.ico">
-<link rel="stylesheet" href="./theme.css?v=42h20">
-<link rel="stylesheet" href="./hr-hours-ui.css?v=42h20">
-<link rel="stylesheet" href="./hr-workforce-ui.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
+<link rel="stylesheet" href="./hr-hours-ui.css?v=42h42">
+<link rel="stylesheet" href="./hr-workforce-ui.css?v=42h42">
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="hr">
 <main id="hr-workspace" class="hr-workspace">
   <header class="hr-heading"><div><p class="hr-eyebrow">ResQ · משאבי אנוש</p><h1>דאשבורד משאבי אנוש</h1><p>מעקב כוח־אדם, דוחות שעות, פניות ומסמכים במקום אחד.</p></div><a href="./index.html">חזרה לרסקיו</a></header>
-  <nav class="hr-main-nav" aria-label="משאבי אנוש"><a href="#workforce">כוח אדם ומעקב</a><a href="#hours">דוחות שעות</a><a href="./hr-requests.html">פניות וקבצים</a><a href="./hr-documents.html">נהלים והפצה</a><a href="./attendance-shadow.html">בקרת דיווחים</a></nav>
+  <nav class="hr-main-nav" aria-label="משאבי אנוש"><a href="#workforce">כוח אדם ומעקב</a><a href="#hours">דוחות שעות</a><a href="#monthly">הדוח החודשי</a><a href="./hr-requests.html">פניות וקבצים</a><a href="./hr-documents.html">נהלים והפצה</a><a href="./attendance-shadow.html">בקרת דיווחים</a></nav>
+  <section class="hr-card hr-inbox-summary" data-hr-inbox aria-labelledby="hr-inbox-title">
+    <div class="hr-report-nav"><div><h2 id="hr-inbox-title">תיבות טיפול שוטפות</h2><p class="hr-meta">כל הדיווחים מרוכזים לפי נושא. הספירה מציגה פניות שעדיין דורשות טיפול.</p></div><button data-hi="refresh" type="button">רענון</button></div>
+    <div class="hr-inbox-grid">
+      <a href="./hr-requests.html" class="hr-inbox-tile" data-kind="sick"><span aria-hidden="true">✚</span><strong data-hi="sick">—</strong><b>דיווחי מחלה</b><small>אישורים, תאריכים והחלטה</small></a>
+      <a href="./hr-requests.html" class="hr-inbox-tile" data-kind="reserve"><span aria-hidden="true">◇</span><strong data-hi="reserve">—</strong><b>דיווחי מילואים</b><small>טווח השירות ומסמכים</small></a>
+      <a href="./hr-requests.html" class="hr-inbox-tile" data-kind="vacation"><span aria-hidden="true">○</span><strong data-hi="vacation">—</strong><b>דיווחי חופש</b><small>בקשות והכרעות</small></a>
+      <a href="./hr-requests.html" class="hr-inbox-tile" data-kind="extended_absence"><span aria-hidden="true">⌛</span><strong data-hi="extended_absence">—</strong><b>היעדרות ממושכת</b><small>מעקב רציף וחזרה לעבודה</small></a>
+    </div>
+    <p data-hi="message" class="hr-meta" role="status" aria-live="polite">ממתין לחיבור מאובטח.</p>
+  </section>
   <section id="workforce" data-hr-workforce class="hr-card hr-workforce" aria-labelledby="workforce-title">
     <div class="hr-report-nav"><div><h2 id="workforce-title">שליטה וניהול כוח אדם</h2><p class="hr-meta">המידע נגיש למשאבי אנוש ולמנהל־על בלבד. סיבות אישיות אינן נכללות בהודעות פוש.</p></div><button data-w="refresh" type="button">רענון</button></div>
     <div class="hr-overview" aria-label="תמונת מצב">
@@ -26,6 +36,7 @@
       <h3>חריגות שעות מעל הסף — לידיעה בלבד</h3>
       <p class="hr-meta" data-oh="meta"></p>
       <ul data-oh="list" class="hr-over-hours-list"></ul>
+      <p><button data-oh="build" type="button" hidden>הפקת הדוח החודשי עכשיו</button><button data-oh="retry" type="button" hidden>ניסיון חוזר</button></p>
     </div>
     <div class="hr-workforce-grid">
       <section><h3>מעקבים פעילים</h3><div data-w="list" class="hr-case-list"></div><button data-w="more" type="button" hidden>טעינת מעקבים נוספים</button></section>
@@ -70,9 +81,23 @@
     <p data-hr="status-message" role="status"></p><button data-hr="status-refresh" type="button" hidden>רענון מצב הבקשה מהעמוד הראשון</button><button data-hr="children-more" type="button" hidden>תוצאות נוספות</button>
   </section>
   </section>
+  <section id="monthly" data-hr-monthly class="hr-card" aria-labelledby="monthly-title">
+    <div class="hr-report-nav"><div><h2 id="monthly-title">הדוח החודשי המאוחד</h2>
+      <p class="hr-meta">שעות והיעדרויות מאושרות לכל עובד, לפי החודש הנבחר מלמעלה. רק היעדרויות שאושרו נספרות כמאושרות; דיווחים שממתינים להכרעה מוצגים בעמודה נפרדת. חריגת השעות היא התרעת ניטור ואינה חוסמת שיבוץ או פרסום.</p></div>
+      <button data-mr="load" type="button">טעינת הדוח לחודש הנבחר</button></div>
+    <p data-mr="head" class="hr-meta"></p>
+    <p data-mr="coverage" class="hr-notice" role="status" hidden></p>
+    <p data-mr="message" role="status" aria-live="polite"></p>
+    <p data-mr="empty" hidden>אין שורות בדוח לחודש הזה.</p>
+    <div class="hr-monthly-scroll"><table data-mr="table" class="hr-monthly-table" hidden>
+      <thead><tr><th scope="col">מספר עובד</th><th scope="col">שם</th><th scope="col">משמרת</th><th scope="col">שעות</th><th scope="col">מחלה</th><th scope="col">מילואים</th><th scope="col">חופשה</th><th scope="col">היעדרות ממושכת</th><th scope="col">ממתין להכרעה</th><th scope="col">חריגה</th></tr></thead>
+      <tbody data-mr="rows"></tbody>
+    </table></div>
+    <button data-mr="more" type="button" hidden>טעינת עובדים נוספים</button>
+  </section>
 </main>
 <script type="module">
-import './hr-client.js?v=42h20';
+import './hr-client.js?v=42h42';
 </script>
 </body>
 </html>

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -26,45 +26,61 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <style>
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--txt); direction:rtl;
-        font-family:"Segoe UI",Arial,sans-serif; padding:18px }
-  .wrap{ max-width:1100px; margin:0 auto }
+        font-family:"Segoe UI",Arial,sans-serif; padding:18px;
+        overflow-x:hidden }
+  .wrap{ max-width:1100px; width:100%; margin:0 auto; overflow-x:hidden }
   h1{ font-size:21px; margin:0 0 3px }
   .sub{ color:var(--muted); font-size:12.5px; margin-bottom:18px }
   h2{ font-size:15px; margin:0 0 4px; color:var(--accent-txt) }
   .note{ color:var(--muted); font-size:12.5px; line-height:1.7 }
 
   .card{ background:var(--card); border:1px solid var(--line);
-         border-radius:12px; padding:16px; margin-bottom:14px }
+         border-radius:12px; padding:16px; margin-bottom:14px;
+         max-width:100%; overflow-x:hidden }
 
   .cols{ display:grid; grid-template-columns:1fr; gap:14px }
   @media (min-width:900px){ .cols{ grid-template-columns:1.5fr 1fr } }
 
-  label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
-  select, textarea, input{ width:100%; padding:10px; background:var(--input);
-        color:var(--txt); border:1px solid var(--line); border-radius:7px;
-        font-size:15px; font-family:inherit }
+  label{ display:block; font-size:13px; font-weight:600; color:var(--muted); margin:12px 0 5px }
+  select, textarea, input{ width:100%; max-width:100%; min-width:0;
+        padding:10px 12px; min-height:44px; background:var(--input);
+        color:var(--txt); border:1px solid var(--line); border-radius:9px;
+        font-size:15px; font-family:inherit; box-sizing:border-box }
   textarea{ min-height:60px; resize:vertical }
+  #newCard input, #newCard select, #newCard textarea,
+  #dlg input, #dlg select, #dlg textarea{
+        min-height:44px }
   .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
   .row3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
          gap:10px; align-items:end }
   .row3 > div{ min-width:0; display:flex; flex-direction:column }
-  .row3 input{ min-width:0; height:46px }
+  .row3 input{ min-width:0; height:46px; min-height:46px }
+  @media (max-width:520px){
+    .row3{ grid-template-columns:minmax(0,1fr) minmax(0,1fr) }
+    .row3 > div:nth-child(3){ grid-column:1 / -1 }
+  }
+  @media (max-width:340px){
+    .row3{ grid-template-columns:1fr }
+    .row3 > div:nth-child(3){ grid-column:auto }
+  }
 
   .btn{ border:1px solid var(--line); background:transparent; color:var(--muted);
         border-radius:7px; padding:10px 17px; font-size:14px; cursor:pointer;
-        font-family:inherit; font-weight:600; margin-top:14px }
+        font-family:inherit; font-weight:600; margin-top:14px;
+        min-height:44px; box-sizing:border-box }
   .btn:hover{ color:var(--txt); border-color:var(--line-hover) }
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.ok{ background:var(--go); border-color:var(--go); color:var(--on-accent) }
-  .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0 }
+  .btn.sm{ padding:10px 14px; font-size:12.5px; margin-top:0;
+           min-height:44px; min-width:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
 
   /* ---------- כרטיס אבטחה ---------- */
   .g{ border:1px solid var(--line); border-radius:11px; padding:14px;
-      margin-top:11px; background:var(--panel) }
+      margin-top:11px; background:var(--panel); max-width:100%; overflow:hidden }
   .g.mine{ border-color:var(--good-bd); background:var(--good-bg) }
   .g .top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap }
-  .g .ttl{ font-size:16px; font-weight:700; flex:1 1 190px }
+  .g .ttl{ font-size:16px; font-weight:700; flex:1 1 190px; min-width:0 }
   .g .when{ font-size:13px; color:var(--muted); direction:ltr;
             unicode-bidi:isolate; font-variant-numeric:tabular-nums }
   .g .meta{ font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.7 }
@@ -73,6 +89,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
            border-radius:20px; padding:3px 11px }
   .g .who.empty{ color:var(--muted); border-style:dashed }
   .g .acts{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
+  .g .acts .btn{ min-height:44px; min-width:44px }
 
   .tag{ font-size:11px; font-weight:700; border-radius:20px;
         padding:2px 10px; white-space:nowrap }
@@ -82,7 +99,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   /* ---------- לוח עומס ---------- */
   .bal{ display:grid; grid-template-columns:auto 1fr auto; gap:7px 11px;
-        align-items:center; margin-top:10px; font-size:13px }
+        align-items:center; margin-top:10px; font-size:13px; max-width:100% }
   .bal .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px }
   .bal .nm i{ font-style:normal; color:var(--muted); font-size:11.5px }
   .bal .tr{ height:9px; background:var(--track); border-radius:99px; overflow:hidden }
@@ -94,19 +111,28 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   /* ---------- המלצה ---------- */
   .rec{ display:flex; align-items:center; gap:10px; padding:9px 0;
-        border-bottom:1px solid var(--line-soft); font-size:13.5px }
+        border-bottom:1px solid var(--line-soft); font-size:13.5px;
+        min-height:44px }
   .rec:last-child{ border-bottom:0 }
-  .rec input{ width:auto; margin:0; flex:none }
+  .rec input{ margin:0; flex:none; width:24px; height:24px;
+              min-width:24px; min-height:24px }
   .rec .nm{ flex:1; min-width:0 }
   .rec .nm b{ font-weight:600 }
   .rec .nm em{ display:block; font-style:normal; font-size:11.5px;
                color:var(--muted); margin-top:1px }
   .rec.blocked{ opacity:.5 }
   .rec .sg{ font-size:11px; color:var(--good); white-space:nowrap }
+  #dlgList{max-height:46vh;overflow-y:auto;overscroll-behavior:contain;
+           border:1px solid var(--line);border-radius:10px;padding:2px 12px;
+           background:var(--input)}
+  #dlgList .rec[hidden]{display:none}
+  #dlgSearch{margin-bottom:5px}
+  #dlgCount{margin:0 0 8px}
 
   /* ---------- לוג ---------- */
-  .tblwrap{ overflow-x:auto; margin-top:10px }
-  table{ width:100%; border-collapse:collapse; font-size:13px; min-width:520px }
+  .tblwrap{ overflow-x:auto; margin-top:10px; max-width:100%;
+            -webkit-overflow-scrolling:touch }
+  table{ width:100%; border-collapse:collapse; font-size:13px; min-width:0 }
   th{ text-align:start; padding:8px 10px; color:var(--muted); font-size:11.5px;
       font-weight:700; border-bottom:1px solid var(--line); white-space:nowrap }
   td{ padding:8px 10px; border-bottom:1px solid var(--line-soft); vertical-align:top }
@@ -124,13 +150,41 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .tabs button{ width:auto; margin:0; background:var(--chip); border:1px solid var(--line);
                 color:var(--muted); border-radius:9px; padding:9px 16px;
                 font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
-                min-height:44px; box-sizing:border-box }
+                min-height:44px; min-width:44px; box-sizing:border-box }
   .tabs button.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
 
   .hide{ display:none !important }
+
+  /* P0 phone widths: keep creation/edit fields aligned; log scrolls in-card only */
+  @media (max-width:390px){
+    body{ padding:14px }
+    .card{ padding:14px }
+    .bal .nm{ max-width:120px }
+    table{ font-size:12.5px }
+    th,td{ padding:8px 7px }
+  }
+  @media (max-width:360px){
+    body{ padding:12px }
+    .tabs{ gap:6px }
+    .tabs button{ padding:9px 12px; font-size:13px }
+    .g .acts{ gap:6px }
+    .bal{ grid-template-columns:minmax(0,1fr) auto; gap:6px 8px }
+    .bal .nm{ max-width:100%; grid-column:1 / -1 }
+    .bal .tr{ grid-column:1 / -1 }
+  }
+  @media (max-width:320px){
+    body{ padding:10px }
+    h1{ font-size:19px }
+    .tabs button{ flex:1 1 calc(50% - 6px); text-align:center }
+    table{ font-size:12px }
+    th,td{ padding:7px 5px }
+  }
+  @media (min-width:521px){
+    .tblwrap table{ min-width:520px }
+  }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="guards">
 
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
@@ -139,21 +193,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 <script>
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -289,29 +355,29 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
-import { CREW_HE } from './rotation.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { CREW_HE } from './rotation.js?v=42h42';
 import { parseEffectiveWorkdays, mergeEffectiveWorkdays, workdaysSourceLabel,
-         WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h20';
+         WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h42';
 import { GUARD_KINDS, kindHe, stateHe, stateColor, guardHours, dmy, toKey,
          assignedOf, signupsOf, isAssigned, isSignedUp, openSlots,
          dutyKind, DUTY_HE, loadByPerson, fairnessRank, recommend,
-         autoPick, whyPicked, logRows, unavailableWhy } from './guards.js?v=42h20';
+         autoPick, whyPicked, logRows, unavailableWhy } from './guards.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs,
          query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -342,6 +408,7 @@ function msg(text, kind, box){
 
 let SID = '', ME = null, CAN_MANAGE = false, WIDE = false;
 let people = [], guards = [], memberGuards = [], managerGuards = [], quals = [], held = {};
+let rosterFailed = false;
 let effective = null, swaps = [], busy = {}, scheduleCompatibilityMode = '';
 let loadMap = {}, ctx = {};
 let scheduleClassificationAvailable = false;
@@ -682,7 +749,7 @@ async function loadAll(){
     manager: CAN_MANAGE === true,
     wide: WIDE === true
   };
-  const next = { people:[], quals:[], held:{}, swaps:[], busy:{} };
+  const next = { people:[], quals:[], held:{}, swaps:[], busy:{}, rosterFailed:false };
   const jobs = [];
   const ranges = guardBoardRanges();
   // מסמכי הסגל והכשירויות משמשים רק להצעת שיבוץ ולעריכה. הרשאת
@@ -703,12 +770,17 @@ async function loadAll(){
   const guardBoards = loadGuardBoards(managerDataRequested, ranges);
 
   if (managerDataRequested) {
-    await grab('roster', s => s.forEach(d => {
-      const v = d.data() || {};
-      if (v.is_active === false) return;
-      next.people.push({ uid: d.id, name: v.full_name || '', crew: v.crew || '',
-                    emp: String(v.emp || v.emp_number || '') });
-    }));
+    jobs.push((async () => {
+      try {
+        const s = await getDocs(collection(db, 'stations', snapshot.sid, 'roster'));
+        s.forEach(d => {
+          const v = d.data() || {};
+          if (v.is_active === false) return;
+          next.people.push({ uid:d.id, name:v.full_name || '', crew:v.crew || '',
+            role:v.role || '', emp:String(v.emp || v.emp_number || '') });
+        });
+      } catch (ignore) { next.rosterFailed = true; }
+    })());
 
     await grab('quals', s => s.forEach(d =>
       next.quals.push(Object.assign({ id: d.id }, d.data() || {}))));
@@ -794,6 +866,7 @@ async function loadAll(){
     effective = compatibility.data;
   }
   people = next.people;
+  rosterFailed = managerDataRequested && next.rosterFailed;
   quals = next.quals;
   held = next.held;
   swaps = next.swaps;
@@ -808,6 +881,7 @@ async function loadAll(){
   // את נתוני הניהול בזיכרון רק מפני שהם יצאו רגע קודם לכן.
   if (!CAN_MANAGE) {
     people = [];
+    rosterFailed = false;
     quals = [];
     held = {};
     loadMap = {};
@@ -1354,6 +1428,10 @@ function renderLog(){
 // A dictionary without Object.prototype keeps selection state correct for every
 // valid UID and prevents property-name collisions from changing the result.
 let dlgPick = Object.create(null);
+const GUARD_FIELD_ROLES = new Set(['firefighter', 'team_leader', 'deputy_team_leader']);
+function guardFieldPerson(person){
+  return GUARD_FIELD_ROLES.has(String(person && person.role || ''));
+}
 
 function assignmentRows(g){
   // recommend() מוציא משובצים קיימים מן ההצעות בכוונה. בחלון
@@ -1362,6 +1440,8 @@ function assignmentRows(g){
   const current = Array.from(new Set(assignedOf(g)
     .map(uid => String(uid || ''))
     .filter(Boolean)));
+  const fieldPeople = people.filter(guardFieldPerson);
+  const fieldUids = new Set(fieldPeople.map(person => String(person.uid)));
   const assignedRows = current.map(function (uid) {
     const person = people.filter(p => String(p.uid) === uid)[0] || {};
     const load = loadMap[uid] || {};
@@ -1370,6 +1450,7 @@ function assignmentRows(g){
       uid: uid,
       name: person.name || load.name || nameOf(uid),
       crew: crew,
+      role: person.role || '',
       emp: person.emp || load.emp || '',
       signed: isSignedUp(g, uid),
       blocked: false,
@@ -1380,26 +1461,34 @@ function assignmentRows(g){
     };
   });
   const suggestedRows = scheduleClassificationAvailable
-    ? recommend(g, people, loadMap, ctx, busy,
+    ? recommend(g, fieldPeople, loadMap, ctx, busy,
         { needQuals: g.need_quals || [], memberQuals: held })
-    : manualAssignmentRows(g, current);
+        .filter(row => fieldUids.has(String(row.uid)))
+    : manualAssignmentRows(g, current, fieldPeople);
+  // Keep the existing sign-up-first recommendation and automatic selection,
+  // while letting a manager manually search the full active station roster.
+  const suggestedUids = new Set(suggestedRows.map(row => String(row.uid)));
+  const manualRows = scheduleClassificationAvailable
+    ? manualAssignmentRows(g, current, fieldPeople).filter(row => !suggestedUids.has(String(row.uid)))
+    : [];
   return { current: current, suggested: suggestedRows,
-           rows: assignedRows.concat(suggestedRows) };
+           rows: assignedRows.concat(suggestedRows, manualRows) };
 }
 
-function manualAssignmentRows(g, current){
+function manualAssignmentRows(g, current, fieldPeople){
   const signed = signupsOf(g).map(function (s) { return String(s.uid || ''); }).filter(Boolean);
-  const pool = signed.length ? signed : people.map(function (p) { return String(p.uid || ''); });
+  const pool = fieldPeople.map(function (p) { return String(p.uid || ''); });
+  const peopleByUid = new Map(fieldPeople.map(person => [String(person.uid), person]));
   const need = Array.isArray(g.need_quals) ? g.need_quals.filter(Boolean) : [];
   const rows = [];
   Array.from(new Set(pool)).forEach(function (uid) {
     if (!uid || current.indexOf(uid) !== -1) return;
-    const person = people.filter(function (p) { return String(p.uid) === uid; })[0];
+    const person = peopleByUid.get(uid);
     if (!person) return;
     const mine = Array.isArray(held[uid]) ? held[uid] : [];
     const why = unavailableWhy(g, uid, { guards:guards }, busy);
     rows.push({
-      uid:uid, name:person.name, crew:person.crew, emp:person.emp,
+      uid:uid, name:person.name, crew:person.crew, role:person.role, emp:person.emp,
       off:0, shift:0, total:0, last:'', signed:signed.indexOf(uid) !== -1,
       blocked:!!why, why:why,
       missingQuals:need.filter(function (q) { return mine.indexOf(q) === -1; }),
@@ -1407,6 +1496,7 @@ function manualAssignmentRows(g, current){
     });
   });
   rows.sort(function (a, b) {
+    if (a.signed !== b.signed) return a.signed ? -1 : 1;
     if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
     if (a.missingQuals.length !== b.missingQuals.length) {
       return a.missingQuals.length - b.missingQuals.length;
@@ -1416,8 +1506,40 @@ function manualAssignmentRows(g, current){
   return rows;
 }
 
+function guardRoleLabel(role){
+  return ({ firefighter:'לוחם אש', team_leader:'מפקד צוות',
+    deputy_team_leader:'סגן מפקד צוות', commander:'מפקד משמרת',
+    deputy:'סגן מפקד משמרת', station_commander:'מפקד תחנה',
+    hr_coordinator:'משאבי אנוש' })[String(role || '')] || '';
+}
+
+function guardNameKey(value){
+  return String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('he');
+}
+
+function showRosterFailure(g){
+  const d = $('dlg');
+  d.innerHTML = '<h2>רשימת אנשי התחנה אינה זמינה</h2>' +
+    '<p class="note">לא ניתן לבחור משובצים בלי רשימה מאומתת. אפשר לנסות לטעון אותה שוב.</p>' +
+    '<div id="dlgMsg" class="msg" role="status" aria-live="polite"></div>' +
+    '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
+    '<button class="btn go" id="dlgRetry" type="button">טען רשימה שוב</button>' +
+    '<button class="btn" id="dlgClose" type="button">סגור</button></div>';
+  $('dlgClose').onclick = closeDlg;
+  $('dlgRetry').onclick = async function () {
+    const button = $('dlgRetry'); button.disabled = true;
+    const ok = await loadAll();
+    const refreshed = managerGuards.find(row => String(row.id) === String(g.id));
+    if (ok && !rosterFailed && refreshed) openAssign(refreshed);
+    else if (refreshed) showRosterFailure(refreshed);
+    else dialogMessage('האבטחה אינה זמינה כרגע. רענן את המסך ונסה שוב.', 'err');
+  };
+  $('ov').style.display = 'flex';
+}
+
 function openAssign(g){
   if (!CAN_MANAGE) return;
+  if (rosterFailed) { showRosterFailure(g); return; }
   dlgPick = Object.create(null);
   const assignment = assignmentRows(g);
   const cur = assignment.current;
@@ -1439,15 +1561,17 @@ function openAssign(g){
     '<div class="note" style="margin-bottom:6px">' +
       (signupsOf(g).length
         ? (scheduleClassificationAvailable
-            ? 'מתוך הנרשמים. המסומנים הם ההמלצה לפי חלוקת עומס.'
-            : 'מתוך הנרשמים. הבחירה ידנית כי סיווג המשמרות אינו זמין.')
+            ? 'נרשמו לוחמים ומפקדי צוות? הם בראש הרשימה; שאר תפקידי השטח זמינים בחיפוש.'
+            : 'נרשמו לוחמים ומפקדי צוות? הם בראש הרשימה; שאר תפקידי השטח זמינים בחיפוש.')
         : (scheduleClassificationAvailable
-            ? 'אין נרשמים — הרשימה היא כל הסגל, מדורג לפי חלוקת עומס.'
-            : 'אין נרשמים — כל הסגל מוצג לבחירה ידנית ללא דירוג עומס.')) +
+            ? 'אין נרשמים — לוחמים ומפקדי צוות מדורגים לפי חלוקת עומס.'
+            : 'אין נרשמים — לוחמים ומפקדי צוות מוצגים לבחירה ידנית.')) +
       '<br>בלחיצה על שמירה נשלחת לשרת הרשימה המלאה והעדכנית.</div>' +
-    '<div id="dlgList" style="max-height:46vh;overflow:auto;' +
-      'border:1px solid var(--line);border-radius:9px;padding:2px 12px;' +
-      'background:var(--input)"></div>' +
+    '<label for="dlgSearch">חיפוש לוחם או מפקד צוות לפי שם מלא</label>' +
+    '<input id="dlgSearch" type="search" maxlength="80" autocomplete="off" ' +
+      'placeholder="הקלד שם מלא">' +
+    '<p id="dlgCount" class="note" role="status" aria-live="polite"></p>' +
+    '<div id="dlgList" role="group" aria-label="בחירת לוחמים ומפקדי צוות לשיבוץ"></div>' +
     '<div id="dlgMsg" class="msg"></div>' +
     '<div style="display:flex;gap:9px;flex-wrap:wrap">' +
       '<button class="btn go" id="dlgSave">שמור שיבוץ</button>' +
@@ -1455,6 +1579,7 @@ function openAssign(g){
     '</div>';
 
   const list = $('dlgList');
+  const rolesByUid = new Map(people.map(person => [String(person.uid), person.role]));
   assignment.rows.forEach(function (r) {
     const el = document.createElement('label');
     el.className = 'rec' + (r.blocked && !r.assigned ? ' blocked' : '');
@@ -1472,11 +1597,15 @@ function openAssign(g){
     el.appendChild(cb);
     const nm = document.createElement('span');
     nm.className = 'nm';
+    const role = rolesByUid.get(String(r.uid)) || r.role;
     nm.innerHTML = '<b>' + esc(r.name) + '</b>' +
       (r.crew ? ' <span class="note">' + esc(CREW_HE[r.crew] || r.crew) +
         '</span>' : '') +
+      (guardRoleLabel(role) ? ' <span class="note">· ' + esc(guardRoleLabel(role)) + '</span>' : '') +
       '<em>' + esc(r.assigned ? 'משובץ כעת — אפשר להסיר'
-        : (r.manual ? 'בחירה ידנית — סיווג משמרת לא זמין' : whyPicked(r))) + '</em>';
+        : (r.manual ? (scheduleClassificationAvailable
+            ? 'בחירה ידנית — בדוק התאמה לאבטחה' : 'בחירה ידנית — סיווג משמרת לא זמין')
+          : whyPicked(r))) + '</em>';
     el.appendChild(nm);
     if (r.assigned) {
       const s = document.createElement('span');
@@ -1500,8 +1629,24 @@ function openAssign(g){
   });
   if (!assignment.rows.length) {
     list.innerHTML = '<div class="note" style="padding:12px">' +
-      'אין אף אחד להציע.</div>';
+      'לא נמצאו לוחמים או מפקדי צוות פעילים לבחירה בתחנה.</div>';
   }
+
+  const search = $('dlgSearch');
+  const updateSearch = function () {
+    const term = guardNameKey(search.value);
+    let visible = 0;
+    Array.from(list.querySelectorAll('label.rec')).forEach(function (row, index) {
+      const show = !term || guardNameKey(assignment.rows[index].name).includes(term);
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    $('dlgCount').textContent = term
+      ? 'מוצגים ' + visible + ' מתוך ' + assignment.rows.length + ' אנשי סגל'
+      : 'מוצגים ' + assignment.rows.length + ' אנשי סגל';
+  };
+  search.addEventListener('input', updateSearch);
+  updateSearch();
 
   $('dlgClose').onclick = closeDlg;
   $('dlgSave').onclick = () => saveAssign(g);

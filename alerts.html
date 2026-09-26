@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -43,6 +43,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .btn.go{ background:var(--accent); border-color:var(--accent); color:var(--accent-on) }
   .btn.sm{ padding:6px 12px; font-size:12.5px; margin-top:0; min-height:44px }
   .btn:disabled{ opacity:.5; cursor:not-allowed }
+  a.btn{ display:inline-flex; align-items:center; justify-content:center; text-decoration:none; min-width:44px }
+  .path{ display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:20px;
+         padding:2px 9px; color:var(--muted); margin-inline-start:6px; vertical-align:middle }
 
   label{ display:block; font-size:12.5px; color:var(--muted); margin:12px 0 4px }
   select, textarea, input{ width:100%; padding:10px; background:var(--input);
@@ -132,7 +135,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .feed-item .fi-text{ margin-top:6px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="alerts">
 
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
@@ -141,21 +144,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 <script>
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -195,6 +210,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <button class="btn go" id="btnOn">הפעל התראות במכשיר הזה</button>
       <button class="btn hide" id="btnOff">כבה במכשיר הזה</button>
       <div class="msg" id="pMsg"></div>
+      <div class="note" style="margin-top:14px" id="readinessNote">
+        <b>בדיקת מוכנות המכשיר</b> <span class="path">המסלול הרגיל לכל עובד</span><br>
+        אשף קצר בשלושה שלבים: הפעלת התראות, התראת בדיקה למכשיר הזה בלבד, ואישור קבלה.
+        אינו שולח לאנשי התחנה.
+      </div>
+      <a class="btn go" id="btnReadiness" href="./device-readiness.html"
+         aria-describedby="readinessNote">בדיקת מוכנות המכשיר</a>
     </div>
 
     <div class="card">
@@ -216,10 +238,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="card hide" id="labCard">
-      <h2>מעבדת המכשיר שלי</h2>
+      <h2>מעבדת המכשיר שלי <span class="path">כלי מתקדם · חשבון בקרה מורשה בלבד</span></h2>
       <div class="note">
-        בדיקה אישית ומוגבלת למכשיר הזה בלבד. היא לא שולחת לאנשי התחנה,
-        לא משנה הרשאות ולא מפעילה פעולה מבצעית.
+        זה אינו המסלול הרגיל — לבדיקת מכשיר רגילה השתמש/י ב״בדיקת מוכנות המכשיר״
+        בכרטיס ״המכשיר הזה״. המעבדה היא בדיקה אישית ומוגבלת למכשיר הזה בלבד.
+        היא לא שולחת לאנשי התחנה, לא משנה הרשאות ולא מפעילה פעולה מבצעית.
       </div>
       <div class="lab-grid" id="labMetrics"></div>
       <button class="btn" id="btnLabMeasure">מדוד תגובת מערכת</button>
@@ -262,29 +285,30 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h20';
-import { CREW_HE } from './rotation.js?v=42h20';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h42';
+import { CREW_HE } from './rotation.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h20';
-import { markCalloutSeen } from './callout.js?v=42h20';
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h42';
+import { markCalloutSeen } from './callout.js?v=42h42';
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -303,8 +327,15 @@ function msg(text, kind, box){
   m.textContent = text || '';
   m.className = 'msg ' + (text ? (kind || '') : '');
 }
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
+}
 
 let SID = '', ME = null, ROLE = '', IS_SUPER = false;
+// מעבדת המכשיר הישנה נפתחת רק לחשבון בקרה שנושא את ה-claim בפועל.
+// מנהל-על בלי personal_lab_control אינו רואה אותה; השרת אוכף את אותו תנאי.
+let LAB_CONTROL = false;
 let feedItems = [], feedFilter = 'all';
 let feedEverLoaded = false;
 let lastFeedClaims = null;
@@ -355,10 +386,9 @@ onAuthStateChanged(auth, async user => {
   renderNav(c, 'alerts.html', user.email || '');
   watchCallouts(db, SID, ME.uid, { name: ME.full_name || user.email || '' });
 
-  if (IS_SUPER) {
-    $('keyCard').classList.remove('hide');
-    $('labCard').classList.remove('hide');
-  }
+  LAB_CONTROL = IS_SUPER && c.personal_lab_control === true;
+  if (IS_SUPER) $('keyCard').classList.remove('hide');
+  if (LAB_CONTROL) $('labCard').classList.remove('hide');
 
   try { messaging = MSG.getMessaging(app); } catch (ignore) {}
 
@@ -368,7 +398,7 @@ onAuthStateChanged(auth, async user => {
   renderState();
   await loadBroadcasts();
   await loadFeed(c);
-  if (IS_SUPER) await loadLab();
+  if (LAB_CONTROL) await loadLab();
 
   // התראה שמגיעה בזמן שהמסך פתוח.
   if (messaging) {
@@ -417,12 +447,12 @@ async function loadLab(){
       history.replaceState(null, '', './alerts.html');
     }
   } catch (e) {
-    msg('בדיקת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg');
+    msg(userError('alerts.lab.status', e, 'בדיקת המעבדה נכשלה.'), 'err', 'labMsg');
   }
 }
 
 async function acknowledgeLab(id, stage){
-  if (!IS_SUPER || !id) return;
+  if (!LAB_CONTROL || !id) return;
   try { await httpsCallable(fns, 'ackPersonalLiveLabPush')({ probe_id:id, stage }); }
   catch (ignore) {}
 }
@@ -435,7 +465,7 @@ $('btnLabMeasure').onclick = async () => {
     const elapsed = performance.now() - started;
     renderLabMetrics(elapsed);
     msg('המדידה הסתיימה. זו מדידת המכשיר והחיבור שלך, לא בדיקת עומס של כלל המערכת.', 'ok', 'labMsg');
-  } catch (e) { msg('המדידה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.measure', e, 'המדידה נכשלה.'), 'err', 'labMsg'); }
   b.disabled = false;
 };
 
@@ -445,7 +475,7 @@ $('btnLabEnable').onclick = async () => {
     await httpsCallable(fns, 'enablePersonalLiveLab')({});
     labActive = true; b.classList.add('hide'); $('btnLabPush').disabled = !myToken;
     msg('המעבדה פעילה ל־24 שעות. הפוש יישלח רק לאחר לחיצה מפורשת.', 'ok', 'labMsg');
-  } catch (e) { msg('הפעלת המעבדה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.enable', e, 'הפעלת המעבדה נכשלה.'), 'err', 'labMsg'); }
   b.disabled = false;
 };
 
@@ -460,7 +490,7 @@ $('btnLabPush').onclick = async () => {
       ? 'Firebase קיבל את ההודעה. כעת יש לוודא שהיא הופיעה בטלפון וללחוץ עליה.'
       : 'תוצאת השליחה אינה ודאית; המערכת לא תשלח אותה שוב אוטומטית.',
       state === 'accepted' ? 'ok' : 'info', 'labMsg');
-  } catch (e) { msg('בדיקת הפוש נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'labMsg'); }
+  } catch (e) { msg(userError('alerts.lab.push', e, 'בדיקת הפוש נכשלה.'), 'err', 'labMsg'); }
   b.disabled = !labActive || !myToken;
 };
 
@@ -559,7 +589,7 @@ function renderDevices(){
     b.onclick = async () => {
       tokens.splice(i, 1);
       try { await saveTokens('המכשיר הוסר.'); renderState(); }
-      catch (e) { msg('ההסרה נכשלה. (' + (e.code || e.message) + ')', 'err'); }
+      catch (e) { msg(userError('alerts.token.remove', e, 'ההסרה נכשלה.'), 'err'); }
     };
     row.appendChild(b);
     box.appendChild(row);
@@ -603,7 +633,7 @@ $('btnOn').onclick = async () => {
 
     renderState();
   } catch (e) {
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    msg(userError('alerts.token.save', e, 'השמירה נכשלה.'), 'err');
   }
   b.disabled = false;
 };
@@ -611,7 +641,7 @@ $('btnOn').onclick = async () => {
 $('btnOff').onclick = async () => {
   tokens = tokens.filter(t => t.token !== myToken);
   try { await saveTokens('המכשיר הזה כבוי.'); renderState(); }
-  catch (e) { msg('הכיבוי נכשל. (' + (e.code || e.message) + ')', 'err'); }
+  catch (e) { msg(userError('alerts.token.disable', e, 'הכיבוי נכשל.'), 'err'); }
 };
 
 // ---------- העדפות ----------
@@ -650,7 +680,7 @@ $('btnSavePrefs').onclick = async () => {
     prefs[t.id] = t.must ? true : $('pf_' + t.id).checked;
   });
   try { await saveTokens(); msg('ההעדפות נשמרו.', 'ok', 'prefMsg'); }
-  catch (e) { msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'prefMsg'); }
+  catch (e) { msg(userError('alerts.preferences.save', e, 'השמירה נכשלה.'), 'err', 'prefMsg'); }
 };
 
 // ---------- שליחת הודעה ----------
@@ -710,7 +740,7 @@ async function send(){
     $('text').value = '';
     await loadBroadcasts();
   } catch (e) {
-    msg('השליחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
+    msg(userError('alerts.broadcast.send', e, 'השליחה נכשלה.'),
         'err', 'sendMsg');
   }
   b.disabled = false;
@@ -872,7 +902,7 @@ $('btnKey').onclick = async () => {
     msg('המפתח נשמר. עכשיו אפשר להפעיל התראות.', 'ok', 'keyMsg');
     renderState();
   } catch (e) {
-    msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'keyMsg');
+    msg(userError('alerts.key.save', e, 'השמירה נכשלה.'), 'err', 'keyMsg');
   }
 };
 </script>

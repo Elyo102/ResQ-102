@@ -106,8 +106,8 @@ function validTime(s) {
 // מחזיר שעתיים בשני המקרים, ומי שנשאר יממה ועוד שעתיים
 // מקבל שכר על שעתיים בלי שאיש ישים לב.
 //
-// בלי dayOffset נשמר הכלל הישן, כדי שרשומות שכבר נשמרו
-// ימשיכו להתנהג כפי שהתנהגו.
+// בלי dayOffset נשמר כלל חציית החצות רק כשהיציאה מוקדמת
+// מהכניסה. שעות זהות אינן הוכחה למשמרת של 24 שעות.
 export function segmentHours(start, end, dayOffset) {
   if (!validTime(start) || !validTime(end)) return null;
   const s = String(start).split(':').map(Number);
@@ -115,12 +115,27 @@ export function segmentHours(start, end, dayOffset) {
   let diff = (e[0] * 60 + e[1]) - (s[0] * 60 + s[1]);
 
   if (dayOffset == null || dayOffset === '') {
-    if (diff <= 0) diff += 24 * 60;
+    if (diff === 0) return null;
+    if (diff < 0) diff += 24 * 60;
   } else {
     diff += Number(dayOffset) * 24 * 60;
     if (diff <= 0) return null;
   }
   return Math.round((diff / 60) * 100) / 100;
+}
+
+// A roster-defined shift may span midnight, but equal clock times alone do
+// not establish a 24-hour shift. Accept an offset only when the trusted
+// duration and both configured clocks describe exactly the same interval.
+export function configuredDayOffset(start, end, hours) {
+  if (!validTime(start) || !validTime(end) || typeof hours !== 'number' ||
+      !Number.isFinite(hours)) return null;
+  const duration = hours * 60;
+  if (!Number.isInteger(duration) || duration <= 0 || duration > 48 * 60) return null;
+  const s = String(start).split(':').map(Number);
+  const e = String(end).split(':').map(Number);
+  const offset = (duration - ((e[0] * 60 + e[1]) - (s[0] * 60 + s[1]))) / (24 * 60);
+  return Number.isInteger(offset) && offset >= 0 && offset <= 2 ? offset : null;
 }
 
 // כמה ימים לדלג, לפי מה שנשמר. ברירת מחדל: הכלל הישן.
@@ -334,4 +349,48 @@ export function daysInMonth(y, m) {
 
 export function dateKey(y, m, d) {
   return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+/* ⭐ רטרואקטיביות נגזרת, ואינה דגל שמור.
+ *
+ * שתי עובדות אכיפות: התאריך שעליו דווח, וזמן היצירה שהשרת חתם עליו
+ * (`reported_at == request.time` ב-Rules). דיווח שנוצר ביום מאוחר
+ * יותר מהיום שעליו דיווחו — הוא רטרואקטיבי. אין כאן שדה שהלקוח
+ * יכול לשקר בו, וכל קורא של הרשומה מגיע לאותה מסקנה.
+ *
+ * הספירה היא **בימי לוח בשעון ישראל** ולא בשעות: מי שמדווח ב-19
+ * על ה-16 יאמר „שלושה ימים אחרי", ולא „שניים" כי עברו 2.4 ימים.
+ * אותה שעה, אותו יום — אפס. */
+export function jerusalemDate(value) {
+  const ms = typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(ms)) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date(ms));
+}
+
+export function reportedAtMs(rec) {
+  const value = rec && rec.reported_at;
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  return null;
+}
+
+export function retroDays(key, rec) {
+  const at = reportedAtMs(rec);
+  if (!at || !/^\d{4}-\d{2}-\d{2}$/.test(String(key || ''))) return 0;
+  const madeOn = jerusalemDate(at);
+  if (!madeOn || madeOn <= String(key)) return 0;
+  const a = Date.parse(String(key) + 'T00:00:00Z');
+  const b = Date.parse(madeOn + 'T00:00:00Z');
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.max(1, Math.round((b - a) / 86400000));
+}
+
+export function retroLabel(key, rec) {
+  const days = retroDays(key, rec);
+  if (!days) return '';
+  return days === 1 ? 'דיווח רטרואקטיבי · יום אחרי' : 'דיווח רטרואקטיבי · ' + days + ' ימים אחרי';
 }

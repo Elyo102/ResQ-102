@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -98,6 +98,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .v .nm em{ display:block; font-style:normal; font-size:12px;
              color:var(--muted); font-weight:400; margin-top:2px }
   .v .st{ font-size:12px; font-weight:700; white-space:nowrap }
+  .vehicle-issues{ display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));
+                   gap:9px; margin:10px 0 16px }
+  .vehicle-issues button{ width:100%; min-height:58px; margin:0; text-align:start;
+                          justify-content:space-between; gap:8px; white-space:normal }
+  .vehicle-issues button[data-open="true"]{ border-color:var(--bad); color:var(--err-fg);
+                                          background:var(--err-bg) }
 
   /* שורת נושא — רכב אחד או פריט אחד, עם הדיווח האחרון עליו.
      הפס הצדדי נושא את החומרה הגרועה שעדיין פתוחה, ולא את
@@ -165,7 +171,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .off .nm{ flex:1; font-size:13px; color:var(--muted) }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="faults">
 
 <div id="errBar"><span class="xx" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
@@ -174,21 +180,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 <script>
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -229,6 +247,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <h1>תקלות וחפיפת משמרת</h1>
   <div class="sub" id="whoSub">—</div>
   <div class="msg" id="mainMsg" role="alert"></div>
+  <div class="card hide" id="loadError" role="alert">
+    <p>לא ניתן לטעון את נתוני התקלות והצי. אין להסתמך על תצוגה חלקית.</p>
+    <button class="btn" id="retryLoad" type="button">נסה שוב</button>
+  </div>
 
   <div class="card hide" id="denyCard">
     <div class="note" id="denyWho"></div>
@@ -247,6 +269,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <!-- ========== פתוחות ========== -->
     <div id="viewOpen">
       <button class="btn go reportJump" id="jumpReport">+ דיווח תקלה חדשה</button>
+      <div class="card">
+        <h2>תקלות לפי רכבים</h2>
+        <div class="note">לחיצה על רכב פותחת את כל הדיווחים עליו, כולל תקלות ציוד וסגורות.</div>
+        <div id="vehicleIssues" class="vehicle-issues"></div>
+      </div>
       <div class="cols">
         <div>
           <div class="card">
@@ -271,7 +298,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               <select id="nVeh"></select>
             </div>
             <label for="nTitle">כותרת</label>
-            <input type="text" id="nTitle" maxlength="80" placeholder="נזילת שמן מתחת למנוע">
+            <input type="text" id="nTitle" maxlength="240" placeholder="נזילת שמן מתחת למנוע">
             <label for="nDesc">תיאור</label>
             <textarea id="nDesc" maxlength="600"
               placeholder="מה בדיוק, מתי התגלה, מה כבר נעשה"></textarea>
@@ -284,9 +311,15 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               את החומרה קובע ראש המשמרת. תאר מה ראית וצלם —
               הוא יעריך.
             </div>
-            <label for="nShot">צילום (לא חובה)</label>
-            <input type="file" id="nShot" accept="image/*" capture="environment" multiple>
-            <div class="note" id="shotNote">אפשר לצרף עד 3 תמונות. הן מוקטנות אוטומטית.</div>
+            <label>צילומים (לא חובה, עד שלוש)</label>
+            <div class="row">
+              <button type="button" class="btn sm" id="nCameraBtn">צלם והוסף</button>
+              <button type="button" class="btn sm" id="nGalleryBtn">בחר תמונות</button>
+            </div>
+            <input type="file" id="nShot" accept="image/*" capture="environment" class="hide">
+            <input type="file" id="nGallery" accept="image/*" multiple class="hide">
+            <div class="note" id="shotNote" aria-live="polite">לא נבחרו תמונות.</div>
+            <div id="shotList"></div>
             <button class="btn go" id="btnNew">פתח תקלה</button>
             <div class="msg" id="newMsg"></div>
           </div>
@@ -412,12 +445,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
-import { CREW_HE, plural } from './rotation.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { CREW_HE, plural } from './rotation.js?v=42h42';
 import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -425,21 +459,27 @@ import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevCol
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage } from './faults.js?v=42h20';
+         shrinkImage, createPhotoQueue } from './faults.js?v=42h42';
 import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
-         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h20';
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, addDoc,
+         deleteDoc, serverTimestamp, runTransaction, query, orderBy, documentId, limit, startAfter }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const createFaultReport = httpsCallable(getFunctions(app, 'europe-west1'), 'createFaultReport',
+  { timeout:60000 });
+const appendFaultPhotos = httpsCallable(getFunctions(app, 'europe-west1'), 'appendFaultPhotos',
+  { timeout:60000 });
 const $ = id => document.getElementById(id);
 renderStuckNav('');
 initPWA({ offer: false });
@@ -457,8 +497,35 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
-let faults = [], fleet = [], anchors = [], shots = {}, handovers = {};
+let faults = [], fleet = [], anchors = [], shots = {}, shotsInflight = {}, shotsPages = {}, handovers = {};
+let handoversStatus = 'not_loaded', handoversPending = null, handoversLoadedAt = 0;
 let FAULT_ATTEMPT = null;
+const PHOTO_QUEUE = createPhotoQueue(Number.POSITIVE_INFINITY);
+function renderPhotoQueue(){
+  const files = PHOTO_QUEUE.list();
+  $('shotNote').textContent = files.length
+    ? files.length + ' תמונות נבחרו. הדיווח והתמונות יישמרו באצוות עם התקדמות.'
+    : 'לא נבחרו תמונות. אפשר לצלם ולהוסיף אחת בכל פעם.';
+  $('shotList').replaceChildren();
+  files.forEach((file, index) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const name = document.createElement('span');
+    name.textContent = file.name || 'תמונה ' + (index + 1);
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'btn sm';
+    remove.textContent = 'הסר';
+    remove.setAttribute('aria-label', 'הסר תמונה ' + (index + 1));
+    remove.onclick = () => {
+      if (FAULT_ATTEMPT?.baseSent) {
+        msg('הדיווח כבר נוצר. השלימו תחילה את העלאת התמונות.', 'err'); return;
+      }
+      PHOTO_QUEUE.remove(index); FAULT_ATTEMPT = null; renderPhotoQueue();
+    };
+    row.append(name, remove);
+    $('shotList').appendChild(row);
+  });
+}
 // מסמך הלוח **כפי שהוא בשרת**, שלם: הרכבים המבצעיים ושרשרת הפיקוד.
 // נשמר שלם ולא מסונן, כי עריכת רכב מבצעי כותבת את המסמך כולו בחזרה
 // — כתיבה של מערך מסונן הייתה מוחקת מהמסמך את הרכבים המושבתים.
@@ -478,20 +545,26 @@ let anchorDocs = [];
  * הדור עולה בכל החלפת זהות. קריאה בודקת אותו כשהיא חוזרת, כתיבה
  * בודקת אותו לפני ואחרי, וחלון העריכה נסגר. */
 let AUTH_GEN = 0;
+let LOAD_GEN = 0;
 let PRIV_SIG = '';
 
 function bumpIdentity(){
   AUTH_GEN += 1;
+  LOAD_GEN += 1;
   PRIV_SIG = '';
   ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
   vehEditing = null;
   boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
-  faults = []; handovers = {}; shots = {};
+  faults = []; handovers = {}; shots = {}; shotsInflight = {}; shotsPages = {};
+  handoversStatus = 'not_loaded'; handoversPending = null; handoversLoadedAt = 0;
   FAULT_ATTEMPT = null;
-  $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
+  $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = ''; $('nGallery').value = '';
+  PHOTO_QUEUE.clear();
+  renderPhotoQueue();
   $('btnNew').disabled = false;
   msg('', '');
   $('work').classList.add('hide');
+  $('loadError').classList.add('hide');
   $('anchorCard').classList.add('hide');
   $('denyCard').classList.add('hide');
   $('fleetList').replaceChildren();
@@ -592,7 +665,6 @@ onAuthStateChanged(auth, async user => {
   } catch (ignore) {}
   if (stale()) return;
 
-  $('work').classList.remove('hide');
   $('whoSub').textContent = (ME.full_name || user.email) +
     (ME.crew ? ' · משמרת ' + (CREW_HE[ME.crew] || ME.crew) : '');
   renderNav(c, 'faults.html', user.email || '');
@@ -662,49 +734,72 @@ async function loadAll(){
   // תלויה בקודמת, וההמתנה הסדרתית הייתה כ-800 מילישניות של
   // מסך ריק מטלפון סלולרי.
   const origin = { gen: AUTH_GEN, uid: ME && ME.uid, sid: SID };
+  const loadGen = ++LOAD_GEN;
   try { assertFence(origin); } catch (ignore) { return; }
-  faults = []; anchors = []; anchorDocs = []; handovers = {};
-  boardDoc = null;
+  const nextFaults = [], nextAnchorDocs = [];
+  let nextBoardDoc = null;
   let boardVehicles = [];
-
-  const safe = p => p.catch(function () { return null; });
-
-  const [fs_, bd, vs, hs] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', origin.sid, 'faults'))),
-    safe(getDoc(doc(db, 'stations', origin.sid, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', origin.sid, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', origin.sid, 'handovers')))
-  ]);
+  $('retryLoad').disabled = true;
+  let fs_, bd, vs;
+  try {
+    [fs_, bd, vs] = await Promise.all([
+      getDocs(collection(db, 'stations', origin.sid, 'faults')),
+      getDoc(doc(db, 'stations', origin.sid, 'config', 'board')),
+      getDocs(collection(db, 'stations', origin.sid, 'vehicles'))
+    ]);
+  } catch (error) {
+    try { assertFence(origin); } catch (ignore) { return false; }
+    if (loadGen !== LOAD_GEN) return false;
+    $('rep').classList.remove('on');
+    $('veh').classList.remove('on');
+    $('lb').classList.remove('on');
+    $('dlgBody').replaceChildren();
+    vehEditing = null;
+    shotsInflight = {};
+    $('work').classList.add('hide');
+    $('loadError').classList.remove('hide');
+    $('retryLoad').disabled = false;
+    return false;
+  }
 
   /* התשובה חזרה — אבל למי? אם הזהות התחלפה בזמן שחיכינו, הנתונים
    * האלה שייכים למשתמש או לתחנה הקודמים ואסור לצייר אותם. */
   try { assertFence(origin); } catch (ignore) { return; }
+  if (loadGen !== LOAD_GEN) return false;
 
-  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id: d.id }, d.data() || {})));
+  fs_.forEach(d => nextFaults.push(Object.assign({ id: d.id }, d.data() || {})));
   if (bd && bd.exists()) {
     const b = bd.data() || {};
-    boardDoc = {
+    nextBoardDoc = {
       vehicles: Array.isArray(b.vehicles) ? b.vehicles : [],
       command:  Array.isArray(b.command)  ? b.command  : []
     };
-    boardVehicles = boardDoc.vehicles;
+    boardVehicles = nextBoardDoc.vehicles;
   }
-  if (vs) vs.forEach(d => {
+  vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
-    anchorDocs.push(Object.assign({ id: d.id }, v));
+    nextAnchorDocs.push(Object.assign({ id: d.id }, v));
   });
+  faults = nextFaults;
+  boardDoc = nextBoardDoc;
+  anchorDocs = nextAnchorDocs;
   // `mergeFleet` מסנן מושבתים בעצמו; `anchors` נשאר הרשימה הפעילה
   // שכל שאר המסך מסתמך עליה.
   anchors = anchorDocs.filter(v => v.active !== false);
-  if (hs) hs.forEach(d => {
-    handovers[d.id] = Object.assign({ id: d.id }, d.data() || {});
-  });
-
   fleet = mergeFleet(boardVehicles, anchors);
+  $('loadError').classList.add('hide');
+  $('retryLoad').disabled = false;
+  $('work').classList.remove('hide');
 
+  if (!$('viewShift').classList.contains('hide')) handoversStatus = 'loading';
   renderFilter(); renderOpen(); renderShift(); renderFleet(origin); renderHist();
+  $('anchorCard').classList.toggle('hide', !CAN_FLEET);
+  if (!$('viewShift').classList.contains('hide')) await loadHandovers(true);
+  return true;
 }
+
+$('retryLoad').onclick = () => { void loadAll(); };
 
 // ---------- לשוניות ----------
 
@@ -716,8 +811,42 @@ VIEWS.forEach(function (v) {
       $(x[0]).classList.toggle('on', x[0] === v[0]);
       $(x[1]).classList.toggle('hide', x[1] !== v[1]);
     });
+    if (v[1] === 'viewShift') void loadHandovers();
   };
 });
+
+// A full handover history is only needed for the handover tab and signing.
+// Never interpret a failed read as "no prior handover".
+function loadHandovers(force = false){
+  if (!ME || !SID) return Promise.resolve(false);
+  if (handoversPending) return handoversPending;
+  if (!force && handoversStatus === 'ready' && Date.now() - handoversLoadedAt < 30000)
+    return Promise.resolve(true);
+  const origin = { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+  handoversStatus = 'loading';
+  renderSign(toKey(new Date()));
+  const pending = getDocsFromServer(collection(db, 'stations', origin.sid, 'handovers'))
+    .then(snapshot => {
+      assertFence(origin);
+      const current = {};
+      snapshot.forEach(d => { current[d.id] = Object.assign({ id:d.id }, d.data() || {}); });
+      handovers = current;
+      handoversStatus = 'ready';
+      handoversLoadedAt = Date.now();
+      renderSign(toKey(new Date()));
+      return true;
+    }).catch(error => {
+      try { assertFence(origin); } catch (ignore) { return false; }
+      handoversStatus = 'error';
+      handoversLoadedAt = 0;
+      renderSign(toKey(new Date()));
+      return false;
+    }).finally(() => {
+      if (handoversPending === pending) handoversPending = null;
+    });
+  handoversPending = pending;
+  return pending;
+}
 
 // ---------- טופס ----------
 
@@ -731,11 +860,25 @@ function setupForm(){
     '<option value="' + esc(s.id) + '">' + esc(s.he) + '</option>').join('');
 
   $('nKind').onchange = updateKindForm;
-  ['nKind','nVeh','nTitle','nDesc','nSev','nShot'].forEach(function (id) {
+  ['nKind','nVeh','nTitle','nDesc','nSev'].forEach(function (id) {
     $(id).addEventListener(id === 'nTitle' || id === 'nDesc' ? 'input' : 'change',
-      function () { FAULT_ATTEMPT = null; });
+      function () { if (!FAULT_ATTEMPT?.baseSent) FAULT_ATTEMPT = null; });
   });
   updateKindForm();
+  $('nCameraBtn').onclick = () => $('nShot').click();
+  $('nGalleryBtn').onclick = () => $('nGallery').click();
+  for (const id of ['nShot','nGallery']) {
+    $(id).onchange = function () {
+      if (FAULT_ATTEMPT?.baseSent) {
+        msg('הדיווח כבר נוצר. השלימו תחילה את העלאת התמונות.', 'err');
+        this.value = ''; return;
+      }
+      if (!PHOTO_QUEUE.add(this.files)) msg('לא ניתן לצרף את הקבצים שנבחרו.', 'err');
+      else FAULT_ATTEMPT = null;
+      this.value = '';
+      renderPhotoQueue();
+    };
+  }
   $('jumpReport').onclick = function () {
     $('reportCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     $('nKind').focus({ preventScroll: true });
@@ -789,7 +932,7 @@ function renderFilter(){
 async function createFault(){
   const kind = $('nKind').value;
   const title = $('nTitle').value.trim();
-  if (!title) { msg('צריך כותרת קצרה.', 'err'); return; }
+  if (!title) { msg('צריך כותרת לתקלה.', 'err'); return; }
 
   const vid = needsVehicle(kind) ? $('nVeh').value : '';
   if (needsVehicle(kind) && !vid) {
@@ -798,7 +941,7 @@ async function createFault(){
     return;
   }
   const veh = fleet.filter(v => v.id === vid)[0];
-  const files = Array.from($('nShot').files || []).slice(0, 3);
+  const files = PHOTO_QUEUE.list();
   const b = $('btnNew');
   let fence;
   try {
@@ -818,55 +961,68 @@ async function createFault(){
                             modified:f.lastModified || 0 }))
   };
   const attemptKey = JSON.stringify(input);
+  if (FAULT_ATTEMPT?.baseSent && FAULT_ATTEMPT.key !== attemptKey) {
+    msg('שליחת הדיווח הקודם טרם הוכרעה. החזירו את פרטי הטופס ונסו שוב לפני שינוי.', 'err');
+    return;
+  }
   if (!FAULT_ATTEMPT || FAULT_ATTEMPT.key !== attemptKey ||
       FAULT_ATTEMPT.fence.gen !== fence.gen) {
     FAULT_ATTEMPT = {
-      key: attemptKey, fence: fence, now: new Date(),
-      ref: doc(collection(db, 'stations', fence.sid, 'faults'))
+      key: attemptKey, fence: fence,
+      reportId: doc(collection(db, 'stations', fence.sid, 'faults')).id,
+      nextPhotoIndex:0, baseCreated:false, baseSent:false, batch:null, initialPhotos:null
     };
   }
   const attempt = FAULT_ATTEMPT;
   b.disabled = true;
   msg('', '');
 
-  // כל התקלה ועד שלוש התמונות נכתבות בעסקה אחת: או שהכול נשמר,
-  // או ששום דבר לא נשמר. תשובה שאבדה ניתנת לניסיון חוזר על אותו id.
-  // העסקה קוראת לפני שהיא כותבת: אם אותו id כבר קיים, ה-commit הקודם
-  // נחת ורק התשובה אבדה. במקרה כזה אסור לכתוב שוב — מפקד כבר יכול היה
-  // לדרג, לסגור או להעביר את התקלה לטיפול.
-  const pics = [], failed = [];
+  // A retry keeps the same report and batch IDs. Only three images are ever
+  // sent in one transaction; there is no product-level total count cap.
   try {
-    for (const f of files) {
-      assertFence(attempt.fence);
-      try { pics.push(await shrinkImage(f)); }
-      catch (e) {
-        assertFence(attempt.fence);
-        failed.push((f.name || 'תמונה') + ': ' + (e.message || ''));
+    if (!attempt.baseCreated) {
+      if (!attempt.initialPhotos) {
+        const prepared = [];
+        for (const f of files.slice(0, 3)) {
+          assertFence(attempt.fence);
+          const p = await shrinkImage(f);
+          prepared.push({ data:p.data, w:p.w, h:p.h });
+        }
+        attempt.initialPhotos = prepared;
       }
       assertFence(attempt.fence);
-    }
-
-    await runTransaction(db, async function (tx) {
-      assertFence(attempt.fence);
-      const existing = await tx.get(attempt.ref);
-      assertFence(attempt.fence);
-      if (existing.exists()) return;
-      tx.set(attempt.ref, {
-        kind: kind, vehicle_id: vid, vehicle_name: veh ? veh.name : '',
-        title: input.title, desc: input.desc, severity: input.severity,
-        status: 'open', photos: pics.length,
-        by_uid: attempt.fence.uid, by_name: attempt.fence.name,
-        crew: attempt.fence.crew,
-        date: toKey(attempt.now), created_key: attempt.now.toISOString(),
-        created_at: serverTimestamp()
+      attempt.baseSent = true;
+      await createFaultReport({
+        stationId:attempt.fence.sid, expectedUid:attempt.fence.uid,
+        reportId:attempt.reportId, kind, vehicleId:vid,
+        title:input.title, desc:input.desc, severity:input.severity,
+        photos:attempt.initialPhotos
       });
-      for (let i = 0; i < pics.length; i++) {
-        tx.set(doc(attempt.ref, 'photos', 'p' + i), {
-          data: pics[i].data, w: pics[i].w, h: pics[i].h,
-          by_uid: attempt.fence.uid, created_key: attempt.now.toISOString()
-        });
+      attempt.baseCreated = true;
+      attempt.nextPhotoIndex = attempt.initialPhotos.length;
+      attempt.initialPhotos = null;
+    }
+    while (attempt.nextPhotoIndex < files.length) {
+      assertFence(attempt.fence);
+      const offset = attempt.nextPhotoIndex;
+      if (!attempt.batch) {
+        const batchPhotos = [];
+        for (const f of files.slice(offset, offset + 3)) {
+          const p = await shrinkImage(f);
+          assertFence(attempt.fence);
+          batchPhotos.push({ data:p.data, w:p.w, h:p.h });
+        }
+        attempt.batch = { offset, photos:batchPhotos,
+          requestId:attempt.reportId + '_' + String(offset).padStart(8, '0') };
       }
-    });
+      assertFence(attempt.fence);
+      await appendFaultPhotos({ stationId:attempt.fence.sid,
+        expectedUid:attempt.fence.uid, reportId:attempt.reportId,
+        requestId:attempt.batch.requestId, photos:attempt.batch.photos });
+      attempt.nextPhotoIndex += attempt.batch.photos.length;
+      attempt.batch = null;
+      msg('נשמרו ' + attempt.nextPhotoIndex + ' מתוך ' + files.length + ' תמונות…', 'info');
+    }
     if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
     // השרת אישר שהאצווה נשמרה. אם הזהות התחלפה בדיוק לאחר מכן,
     // לא מציירים הודעת הצלחה במסך של המשתמש החדש — אך גם לא משקרים
@@ -874,10 +1030,9 @@ async function createFault(){
     try { assertFence(attempt.fence); } catch (ignore) { return; }
 
     msg('התקלה נפתחה.' +
-        (pics.length ? ' ' + pics.length + ' תמונות צורפו.' : '') +
-        (failed.length ? ' לא נשמרו: ' + failed.join(' · ') : ''),
-        failed.length ? 'info' : 'ok');
+        (files.length ? ' ' + files.length + ' תמונות צורפו.' : ''), 'ok');
     $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
+    $('nGallery').value = ''; PHOTO_QUEUE.clear(); renderPhotoQueue();
     await loadAll();
   } catch (e) {
     // פעולה מן הדור הקודם אינה רשאית לצייר או לנקות מצב של המשתמש
@@ -885,10 +1040,13 @@ async function createFault(){
     if (attempt.fence.gen !== AUTH_GEN) return;
     if (e.code === 'identity-changed' || e.message === 'identity-changed') {
       if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
-      msg('המשתמש או ההרשאות השתנו. הדיווח הישן לא נשלח.', 'err');
+      msg(attempt.baseSent
+        ? 'הזהות השתנתה לאחר ניסיון שליחה. ייתכן שהדיווח או חלק מתמונותיו נשמרו; בדקו את רשימת התקלות לפני ניסיון חדש.'
+        : 'הזהות השתנתה. הדיווח לא נשלח.', 'err');
     } else {
-      msg('לא התקבל אישור שהדיווח נשמר. ניסיון חוזר ישלח את אותו דיווח, בלי ליצור מזהה חדש. (' +
-          (e.code || '') + ' ' + (e.message || '') + ')', 'err');
+      msg('ההעלאה לא הושלמה. נשמרו ' + attempt.nextPhotoIndex + ' מתוך ' + files.length +
+          ' תמונות; הטופס נשמר וניסיון חוזר ימשיך מאותה אצווה. ' +
+          errorText(e), 'err');
     }
   }
   if (fence.gen === AUTH_GEN) b.disabled = false;
@@ -958,8 +1116,7 @@ function showFleetIdentityChange(){
   closeVehicleEditor();
   // Also used after an await: the write outcome can be unknown, so do not
   // claim that an operation was cancelled or that nothing was saved.
-  msg('המשתמש או ההרשאות השתנו. רעננו ובדקו את המצב לפני פעולה נוספת. (identity-changed)',
-    'err', 'mainMsg');
+  msg(errorText({ code: 'identity-changed' }), 'err', 'mainMsg');
 }
 
 /* כמה תקלות פתוחות על הרכב — נאמר למי שמוריד אותו מהצי, כדי
@@ -1035,8 +1192,9 @@ async function saveVehicleEdit(){
     msg('הרכב עודכן.', 'ok', 'anchorMsg');
     await loadAll();
   } catch (e) {
+    logError('fleet.saveVehicle', e);
     if (e.code === 'identity-changed') showFleetIdentityChange();
-    else msg('השמירה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+    else msg('השמירה נכשלה. ' + errorText(e), 'err', 'vehMsg');
   }
   b.disabled = false;
 }
@@ -1069,8 +1227,9 @@ async function deactivateVehicle(){
     msg('הרכב ירד מהצי.', 'ok', 'anchorMsg');
     await loadAll();
   } catch (e) {
+    logError('fleet.deactivateVehicle', e);
     if (e.code === 'identity-changed') showFleetIdentityChange();
-    else msg('ההורדה נכשלה. (' + (e.code || e.message) + ')', 'err', 'vehMsg');
+    else msg('ההורדה נכשלה. ' + errorText(e), 'err', 'vehMsg');
   }
   b.disabled = false;
 }
@@ -1113,7 +1272,10 @@ function faultCard(f){
       ? '<span class="tag" style="color:' + sevColor(f.severity) + '">' +
         esc(sevHe(f.severity)) + '</span>' : '') +
     '<span class="tag">' + esc(kindHe(f.kind)) +
-      (f.vehicle_name ? ' · ' + esc(f.vehicle_name) : '') + '</span>';
+      (f.vehicle_id ? ' · ' + esc((fleet.find(v => v.id === f.vehicle_id) || {}).name || f.vehicle_name || '') : '') +
+      (f.vehicle_name && (fleet.find(v => v.id === f.vehicle_id) || {}).name &&
+       (fleet.find(v => v.id === f.vehicle_id) || {}).name !== f.vehicle_name
+        ? ' (בדיווח: ' + esc(f.vehicle_name) + ')' : '') + '</span>';
   el.appendChild(head);
 
   if (f.desc) {
@@ -1123,12 +1285,26 @@ function faultCard(f){
     el.appendChild(d);
   }
 
+  // F-01: history / damageReport / subjectReport / list cards — placeholder
+  // from photos count only. No getDocs(/photos) until the user opens this
+  // fault's photos (click). loadShots still keyed SID:faultId + AUTH_GEN.
   if (Number(f.photos || 0) > 0) {
     const box = document.createElement('div');
     box.className = 'shots';
-    box.innerHTML = '<span class="ld">טוען ' + f.photos + ' תמונות…</span>';
+    const n = Number(f.photos || 0);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ld';
+    btn.style.cssText = 'background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit;text-decoration:underline';
+    btn.textContent = n + ' תמונות · הצג';
+    btn.setAttribute('aria-label', 'הצג ' + n + ' תמונות לתקלה');
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      box.innerHTML = '<span class="ld">טוען ' + n + ' תמונות…</span>';
+      loadShots(f, box);
+    };
+    box.appendChild(btn);
     el.appendChild(box);
-    loadShots(f, box);
   }
 
   const rep = document.createElement('div');
@@ -1138,6 +1314,62 @@ function faultCard(f){
     (f.status === 'fixed' && f.fixed_by_name
       ? ' · נסגר ע״י ' + f.fixed_by_name : '');
   el.appendChild(rep);
+
+  // A committed report remains recoverable after a page reload: the author
+  // can select the missing photos and append them to the same report.
+  if (ME && f.by_uid === ME.uid) {
+    const row = document.createElement('div'); row.className = 'acts';
+    const picker = document.createElement('input');
+    picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true;
+    picker.hidden = true;
+    const button = actBtn('צרף תמונות לתקלה זו', 'sm', () => {
+      if (upload) void send(); else picker.click();
+    });
+    const state = document.createElement('span'); state.className = 'note';
+    state.setAttribute('role', 'status');
+    let upload = null;
+    async function send() {
+      if (!upload) return;
+      button.disabled = true;
+      try {
+        assertFence(upload.fence);
+        while (upload.next < upload.files.length) {
+          const offset = upload.next;
+          if (!upload.batch) {
+            const photos = [];
+            for (const file of upload.files.slice(offset, offset + 3)) {
+              const image = await shrinkImage(file);
+              assertFence(upload.fence);
+              photos.push({ data:image.data, w:image.w, h:image.h });
+            }
+            upload.batch = { photos, requestId:upload.id + '_' + offset };
+          }
+          await appendFaultPhotos({ stationId:upload.fence.sid,
+            expectedUid:upload.fence.uid, reportId:f.id,
+            requestId:upload.batch.requestId, photos:upload.batch.photos });
+          assertFence(upload.fence);
+          upload.next += upload.batch.photos.length;
+          upload.batch = null;
+          if (row.isConnected) state.textContent = 'נשמרו ' + upload.next +
+            ' מתוך ' + upload.files.length + ' תמונות.';
+        }
+        upload = null;
+        if (row.isConnected) await loadAll();
+      } catch (error) {
+        if (row.isConnected && upload?.fence.gen === AUTH_GEN) state.textContent =
+          'ההעלאה לא הושלמה. לחצו שוב להמשך; אחרי רענון בחרו רק את התמונות החסרות.';
+      } finally { if (row.isConnected) button.disabled = false; }
+    }
+    picker.onchange = () => {
+      if (!picker.files?.length) return;
+      try { upload = { fence:writeFence(), files:Array.from(picker.files),
+        id:crypto.randomUUID(), next:0, batch:null }; }
+      catch (error) { state.textContent = 'נדרשת התחברות מחדש לפני צירוף תמונות.'; return; }
+      picker.value = '';
+      void send();
+    };
+    row.append(button, picker, state); el.appendChild(row);
+  }
 
   if (f.fix_note) {
     const fx = document.createElement('div');
@@ -1205,16 +1437,84 @@ function actBtn(text, cls, fn){
 // התמונות נטענות רק כשהתקלה מצוירת, ולא בטעינה הראשונה.
 // מסך עם עשרים תקלות היה מוריד עשרים תמונות שאיש לא הסתכל בהן.
 async function loadShots(f, box){
-  if (shots[f.id]) { paintShots(shots[f.id], box); return; }
-  try {
-    const s = await getDocs(collection(db, 'stations', SID, 'faults', f.id, 'photos'));
-    const list = [];
-    s.forEach(d => list.push(d.data() || {}));
-    shots[f.id] = list;
-    paintShots(list, box);
-  } catch (e) {
-    box.innerHTML = '<span class="ld">התמונות לא נטענו.</span>';
+  // Key includes SID so station A / station B never share inflight or cache.
+  const reqSid = SID;
+  const reqGen = AUTH_GEN;
+  const key = String(reqSid || '') + ':' + String(f.id || '');
+  if (shots[key]) { paintShots(shots[key], box); moreShots(key, f, box, reqSid, reqGen); return; }
+  // Coalesce concurrent gets for the same station+fault (dialog can paint
+  // multiple cards / re-enter before the first getDocs resolves). Preserves
+  // cache, photo queue, and atomic createFaultReport writes.
+  if (!shotsInflight[key]) {
+    const request = getDocs(query(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'),
+      orderBy(documentId()), limit(11)))
+      .then(function (s) {
+        const page = s.docs.slice(0, 10);
+        const list = page.map(d => d.data() || {});
+        // Late response after station/user switch: discard — do not poison cache.
+        if (SID !== reqSid || AUTH_GEN !== reqGen) {
+          return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
+        }
+        shots[key] = list;
+        shotsPages[key] = { cursor:page.at(-1) || null, more:s.docs.length > 10 };
+        return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
+      })
+      .finally(function () {
+        // An old request may settle after an identity switch created a new
+        // request with the same key; never remove that newer entry.
+        if (shotsInflight[key] === request) delete shotsInflight[key];
+      });
+    shotsInflight[key] = request;
   }
+  try {
+    const result = await shotsInflight[key];
+    // Guard paint: only apply if this screen's identity still matches the request.
+    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected ||
+        result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
+      return;
+    }
+    paintShots(result.list, box);
+    moreShots(key, f, box, reqSid, reqGen);
+  } catch (e) {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+    box.replaceChildren();
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'ld';
+    retry.textContent = 'התמונות לא נטענו · נסה שוב';
+    retry.onclick = () => {
+      if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+      box.textContent = 'טוען תמונות…';
+      void loadShots(f, box);
+    };
+    box.appendChild(retry);
+  }
+}
+
+function moreShots(key, fault, box, reqSid, reqGen) {
+  const state = shotsPages[key];
+  if (!state?.more || !state.cursor) return;
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'ld';
+  button.textContent = 'עוד תמונות'; box.append(button);
+  button.onclick = async () => {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+    button.disabled = true;
+    try {
+      const snap = await getDocs(query(collection(db, 'stations', reqSid,
+        'faults', fault.id, 'photos'), orderBy(documentId()),
+        startAfter(state.cursor), limit(11)));
+      if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected || shotsPages[key] !== state) return;
+      const page = snap.docs.slice(0, 10);
+      state.cursor = page.at(-1) || null; state.more = snap.docs.length > 10;
+      shots[key].push(...page.map(d => d.data() || {}));
+      paintShots(shots[key], box); moreShots(key, fault, box, reqSid, reqGen);
+    } catch (error) {
+      if (SID === reqSid && AUTH_GEN === reqGen && box.isConnected) {
+        button.textContent = 'לא נטען · נסו שוב'; button.disabled = false;
+      }
+    }
+  };
 }
 
 function paintShots(list, box){
@@ -1248,7 +1548,7 @@ async function wipeDamage(f){
       }
     } catch (ignore) {}
     await deleteDoc(doc(db, 'stations', SID, 'faults', f.id));
-    delete shots[f.id];
+    delete shots[String(SID || '') + ':' + String(f.id || '')];
     msg('הפגיעה נמחקה.', 'ok');
     await loadAll();
   } catch (e) {
@@ -1312,7 +1612,9 @@ function subRow(row){
   el.style.borderInlineStartColor = row.color;
   el.innerHTML =
     '<div class="hd">' +
-      '<span class="nm">' + esc(row.head || row.name) + '</span>' +
+      '<span class="nm">' + esc(row.vehicle_id
+        ? ((fleet.find(v => v.id === row.vehicle_id) || {}).name || row.head || row.name)
+        : (row.head || row.name)) + '</span>' +
       '<span class="sev" style="color:' + row.color + '">' +
         esc(row.sev_he) + '</span></div>' +
     '<div class="last">' + esc(f.title || '—') + '</div>' +
@@ -1334,7 +1636,8 @@ function subRow(row){
 // לראות שזו הפעם השלישית שאותה מסכה נקרעת.
 function subjectReport(row){
   const list = row.history || [];
-  $('dlgTitle').textContent = 'לוג · ' + row.name;
+  $('dlgTitle').textContent = 'לוג · ' + (row.vehicle_id
+    ? ((fleet.find(v => v.id === row.vehicle_id) || {}).name || row.name) : row.name);
   $('dlgSub').innerHTML = '<span style="color:' + row.color + '">' +
     esc(row.sev_he) + '</span> · ' + list.length + ' דיווחים בסך הכל, ' +
     list.filter(isOpen).length + ' פתוחים';
@@ -1358,6 +1661,36 @@ function renderOpen(){
       plural(rows.length, 'נושא אחד', 'נושאים') + '. לחץ לפתיחת הלוג.'
     : 'אין דיווח.';
   rows.forEach(r => box.appendChild(subRow(r)));
+  renderVehicleIssues();
+}
+
+function renderVehicleIssues(){
+  const box = $('vehicleIssues');
+  box.replaceChildren();
+  const counts = new Map();
+  faults.forEach(f => {
+    if (!f || !f.vehicle_id) return;
+    const row = counts.get(f.vehicle_id) || { all:0, open:0 };
+    row.all += 1;
+    if (isOpen(f)) row.open += 1;
+    counts.set(f.vehicle_id, row);
+  });
+  fleet.slice().sort((a, b) => {
+    const opened = (counts.get(b.id)?.open || 0) - (counts.get(a.id)?.open || 0);
+    return opened || String(a.name || '').localeCompare(String(b.name || ''), 'he');
+  }).forEach(v => {
+    const count = counts.get(v.id) || { all:0, open:0 };
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn';
+    button.dataset.open = count.open > 0 ? 'true' : 'false';
+    button.textContent = (count.open ? '❗️ ' : '') + v.name + ' · ' +
+      count.open + ' פתוחות / ' + count.all + ' בסך הכול';
+    button.setAttribute('aria-label', 'פתח את כל התקלות של ' + v.name +
+      (count.open ? ', ' + count.open + ' תקלות פתוחות' : ', אין תקלות פתוחות'));
+    button.onclick = () => damageReport(v);
+    box.appendChild(button);
+  });
+  if (!fleet.length) box.textContent = 'אין רכבים מוגדרים בתחנה.';
 }
 
 function fill(boxId, list, empty){
@@ -1441,6 +1774,27 @@ function renderSign(today){
   const h = handovers[id];
   const box = $('hoState');
 
+  if (handoversStatus !== 'ready') {
+    $('hoAcceptWrap').classList.add('hide');
+    $('btnAccept').disabled = true;
+    $('hoLog').replaceChildren();
+    box.replaceChildren();
+    const note = document.createElement('div');
+    note.className = handoversStatus === 'error' ? 'msg err' : 'note';
+    note.textContent = handoversStatus === 'error'
+      ? 'לא ניתן לאמת את היסטוריית המסירות. חתימה חסומה עד טעינה מחדש.'
+      : 'טוען את היסטוריית המסירות לפני אישור החפיפה…';
+    box.appendChild(note);
+    if (handoversStatus === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'btn sm'; retry.textContent = 'נסה שוב';
+      retry.onclick = () => { void loadHandovers(true); };
+      box.appendChild(retry);
+    }
+    return;
+  }
+  $('btnAccept').disabled = false;
+
   // רק מפקד או סגנו מקבל אחריות. כבאי רואה את הרישום ולא
   // יכול לחתום עליו.
   const canSign = CAN_MANAGE && !!ME.crew;
@@ -1478,11 +1832,20 @@ function renderSign(today){
 }
 
 $('btnAccept') && ($('btnAccept').onclick = async () => {
+  if (handoversStatus !== 'ready' || !ME || !CAN_MANAGE || !ME.crew) return;
+  const origin = { gen: AUTH_GEN, uid: ME.uid, sid: SID };
+  // Read once more immediately before a signed write; a stale or failed
+  // history must never be reported as a missing predecessor.
+  if (!(await loadHandovers(true))) return;
+  try { assertFence(origin); } catch (ignore) { return; }
   const today = toKey(new Date());
   const id = handoverId(ME.crew, today);
+  if (handovers[id] && handovers[id].accepted_key) return;
   if (!window.confirm('לאשר קבלת אחריות על המשמרת?\n\n' +
       'הפעולה נרשמת עם השם והשעה ומהווה חתימה רשמית. ' +
       'אי אפשר לשנות אותה אחר כך.')) return;
+  if (handoversStatus !== 'ready') return;
+  try { assertFence(origin); } catch (ignore) { return; }
 
   // מי מסר: המפקד שחתם על החפיפה הקודמת. אם אין — נרשם
   // במפורש שלא נמצאה מסירה קודמת, ולא מומצא שם.
@@ -1493,19 +1856,32 @@ $('btnAccept') && ($('btnAccept').onclick = async () => {
   const b = $('btnAccept'); b.disabled = true;
   try {
     const now = new Date();
+    const acceptedKey = now.toISOString();
     await setDoc(doc(db, 'stations', SID, 'handovers', id), {
       crew: ME.crew, date: today,
       from_uid: prev ? prev.to_uid : '',
       from_name: prev ? prev.to_name : 'לא נרשמה מסירה קודמת',
       to_uid: ME.uid, to_name: ME.full_name || '',
       assessment: $('hoMsg').value.trim(),
-      accepted_key: now.toISOString(),
+      accepted_key: acceptedKey,
       accepted_at: serverTimestamp()
     });
-    msg('האחריות נרשמה על שמך.', 'ok', 'hoSignMsg');
-    $('hoMsg').value = '';
-    await loadAll();
+    assertFence(origin);
+    // A handover write changes only this collection. Re-reading every fault,
+    // vehicle and board document here would add three unrelated reads.
+    await loadHandovers(true);
+    assertFence(origin);
+    const recorded = handovers[id];
+    if (handoversStatus === 'ready' && recorded && recorded.to_uid === origin.uid
+        && recorded.accepted_key === acceptedKey) {
+      $('hoMsg').value = '';
+      msg('האחריות נרשמה על שמך.', 'ok', 'hoSignMsg');
+    } else {
+      msg('החתימה נשלחה, אך לא ניתן לאמת את לוג המסירות המעודכן. אין לחתום שוב לפני בדיקה.', 'err', 'hoSignMsg');
+      b.disabled = true;
+    }
   } catch (e) {
+    try { assertFence(origin); } catch (ignore) { return; }
     b.disabled = false;
     msg('הרישום נכשל. (' + (e.code || '') + ' ' + (e.message || '') + ')',
         'err', 'hoSignMsg');
@@ -1518,7 +1894,8 @@ function damageReport(v){
   const list = vehicleReport(faults, v.id);
   const st = vehicleState(faults, v.id);
   $('dlgBody').innerHTML = '';
-  $('dlgTitle').textContent = 'דוח נזק · ' + v.name;
+  $('dlgTitle').textContent = (list.some(isOpen) ? '❗️ ' : '') +
+    v.name + ' · כל התקלות שדווחו';
   $('dlgSub').innerHTML = '<span style="color:' + st.color + '">' + esc(st.he) +
     '</span> · ' + plural(list.length, 'תקלה אחת', 'תקלות') + ' בסך הכל, ' +
     list.filter(isOpen).length + ' פתוחות';

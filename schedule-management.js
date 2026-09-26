@@ -1,13 +1,15 @@
-import { firebaseConfig } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h20';
-import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h20';
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { readScheduleFile } from './schedule-file-import.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h42';
+import { schedulePwaUpdateGuard } from './schedule-update-guard.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { readScheduleFile } from './schedule-file-import.js?v=42h42';
+import { renderModeBar, TRIAL_PUBLISH_WARNING } from './mode-bar.js?v=42h42';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h42';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
-import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { consumeActualRoleViewNavigation, resolvePageRoleView } from './role-view-page.js?v=42h42';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -21,6 +23,12 @@ function mutationCallable(name) {
   return function (payload) {
     if (!scheduleMutationAllowed()) {
       const error = new Error('תצוגת תפקיד היא לקריאה בלבד.');
+      error.code = 'failed-precondition';
+      return Promise.reject(error);
+    }
+    if (!['setScheduleRuntimeMode', 'promoteScheduleToNew', 'respondToSchedule'].includes(name)
+        && !canManageSchedule()) {
+      const error = new Error('ניהול הסידור ייפתח רק לאחר טעינת הגדרות התחנה.');
       error.code = 'failed-precondition';
       return Promise.reject(error);
     }
@@ -44,6 +52,7 @@ const call = Object.freeze({
   cutoverPromote: mutationCallable('promoteScheduleToNew'),
   sourcePreview: httpsCallable(functions, 'previewScheduleSource'),
   sourceSave: mutationCallable('saveScheduleSource'),
+  sourceRoster: httpsCallable(functions, 'getScheduleSourceRoster'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
   policySave: mutationCallable('saveSchedulePolicy'),
   run: mutationCallable('runSchedulePlanner'),
@@ -71,7 +80,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   user: null, claims: {}, status: null, setup: null, draft: null,
   roleView: Object.freeze({ selected:'actual', preview:false, presentation:null, readOnly:false }),
-  authResolving: true,
+  authResolving: true, managerSetupReady: false, tabChoiceRevision: 0,
   // כל אירוע התחברות מקבל דור חדש. כך תשובה שהתחילה עבור משתמש
   // קודם אינה יכולה להיכנס למטמון או להיצבע במסך של המשתמש הבא.
   authGeneration: 0, authScope: null, authContextVersion: 0,
@@ -92,6 +101,9 @@ const state = {
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false, sourceDirty: false,
+  rosterSource: null, rosterPlan: null, rosterPending: null, rosterRevision: 0,
+  rosterPlanRevision: null,
+  rosterBusy: false, rosterDirty: false, rosterVisible: 50,
   importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
   importStationMap: null, importDisplay: null, displayRequestIds: {}, displayPending: null, displayStatusSequence: 0,
   // הלוח
@@ -99,6 +111,7 @@ const state = {
   tab: null, busy: false, editDrawerOpen: false, editDrawerReturnFocus: null,
   editFormDirty: false, qualificationsDirty: false, gapPolicyDirty: false
 };
+let managerSetupFlight = null;
 
 renderStuckNav('');
 registerPwaUpdateGuard(() => schedulePwaUpdateGuard(state, document));
@@ -152,12 +165,18 @@ async function computeBoardSlotKeys(stationId) {
     [station.id, await importStationKey(scoped, station.label)]));
   return new Map(entries);
 }
-async function refreshBoardSlotKeys(claims) {
+async function refreshBoardSlotKeys(claims, user, generation) {
   const stationId = claims && (claims.stationId || claims.station_id);
   const scoped = typeof stationId === 'string' ? stationId.trim() : '';
-  if (state.boardSlotStation === scoped && state.boardSlotKeys) return;
-  state.boardSlotKeys = await computeBoardSlotKeys(scoped);
+  const stillCurrent = () => generation === state.authGeneration &&
+    state.user === user && auth.currentUser?.uid === user?.uid;
+  if (!stillCurrent()) return false;
+  if (state.boardSlotStation === scoped && state.boardSlotKeys) return true;
+  const keys = await computeBoardSlotKeys(scoped);
+  if (!stillCurrent()) return false;
+  state.boardSlotKeys = keys;
   state.boardSlotStation = scoped;
+  return true;
 }
 
 function localDate() {
@@ -271,6 +290,28 @@ function message(target, text, kind) {
   box.appendChild(node('div', 'msg ' + (kind || 'info'), text));
 }
 
+/* ⭐ „עודכן ב־… ע״י …".
+ *
+ * שני השדות נכתבו לדיסק מאז ומתמיד ופשוט לא הוחזרו בקריאת הסטטוס.
+ * השם מוצג רק כשהוא קיים: פרסום ישן שנכתב לפני שהשדה נוסף יציג את
+ * הזמן בלבד, ולא „ע״י —". שורה שאינה יודעת את התשובה אינה ממציאה
+ * אותה, ושורה שאין לה אפילו זמן פשוט אינה מוצגת.
+ */
+function publishedLine(active) {
+  const at = active && Number.isFinite(active.published_at_ms) ? active.published_at_ms : null;
+  if (!at) return '';
+  let when;
+  try {
+    when = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
+      day: '2-digit', month: '2-digit' }).format(new Date(at))
+      + ' בשעה ' + new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
+        hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(at));
+  } catch (error) { return ''; }
+  const by = active && typeof active.published_by_name === 'string' && active.published_by_name.trim()
+    ? active.published_by_name.trim() : '';
+  return ' · עודכן ב־' + when + (by ? ' ע״י ' + by : '');
+}
+
 function dateLabel(iso) {
   try {
     return new Intl.DateTimeFormat('he-IL', {
@@ -318,10 +359,14 @@ function applyPageRoleView(user, claims) {
  * ו-`publish` אוכפים `requireMode` בעצמם. המסך רק מפסיק להסתיר
  * מסך שהשרת ממילא מרשה.
  */
-function canManageSchedule() {
+function hasManagerAccess() {
   return !!state.status && (state.roleView.preview
     ? state.roleView.showScheduleManagement === true
     : state.status.manager === true);
+}
+
+function canManageSchedule() {
+  return state.managerSetupReady === true && hasManagerAccess();
 }
 
 function canRunSchedule() {
@@ -334,7 +379,7 @@ function setMode(status) {
   box.className = 'mode';
   let text = 'לא ניתן לאמת את מצב מנוע הסידור.';
   if (status.mode === 'shadow') {
-    text = 'מצב ניסוי: הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים בדיוק כמו במצב חי. פוש נשלח רק לחשבון הבדיקה של אלדד.';
+    text = 'מצב ניסוי: הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים בדיוק כמו במצב חי. פוש נשלח רק לחשבון הבדיקה של התחנה.';
   } else if (status.mode === 'new') {
     box.classList.add('good');
     text = 'המנוע החדש פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.';
@@ -410,7 +455,22 @@ function workflowAction(name) {
   return document.querySelector('[data-workflow-action="' + name + '"]');
 }
 
+/* ⭐ פס מצב האימון במסך הסידור.
+ *
+ * עד עכשיו המסך הזה הציג רק את מצב **מנוע הסידור** ולא את
+ * השקט הגלובלי של התחנה. רכזת יכלה לראות „מצב חי", לפרסם
+ * סידור, ולא להבין למה אף אחד לא קיבל התראה. המצב מגיע מהשרת
+ * (`notifications_mode`) ולא מ-Firestore, כדי שהמסך הזה לא יטען את
+ * כל ערכת ה-SDK רק כדי להציג פס. */
+function syncStationModeBar() {
+  const mode = state.status && state.status.notifications_mode;
+  // `null` = השרת לא ידע לומר. לא ממציאים ולא מרגיעים.
+  if (mode !== 'trial' && mode !== 'live') return;
+  renderModeBar(mode === 'trial' ? 'trial' : 'live');
+}
+
 function updateManagerWorkflow() {
+  syncStationModeBar();
   if (!$('managerWorkflow') || !$('publish') || !$('rollback')) return;
   const mode = state.status && state.status.mode;
   $('managerWorkflowMode').textContent = mode === 'shadow'
@@ -435,7 +495,7 @@ function updateManagerWorkflow() {
     : state.draft && state.draftPreview
       ? 'הטיוטה מוכנה לסקירה. פרסום יתאפשר רק לאחר סימון האישור המפורש.'
       : mode === 'shadow'
-        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; פוש נשלח רק לחשבון הבדיקה של אלדד.'
+        ? 'מצב ניסוי מפעיל את כל זרימת הסידור; פוש נשלח רק לחשבון הבדיקה של התחנה.'
         : 'בחרו קובץ או צרו טיוטה. הודעות יישלחו רק אחרי סקירה ואישור.';
 }
 
@@ -444,8 +504,8 @@ function showWorkflowTarget(id) {
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function openEditDrawer() {
-  if (!canEditSchedule()) return;
+function openEditDrawer(force) {
+  if (!force && !canEditSchedule()) return;
   state.editDrawerOpen = true;
   state.editDrawerReturnFocus = document.activeElement;
   const drawer = $('editDrawer');
@@ -488,7 +548,7 @@ workflowAction('review').addEventListener('click', () => showWorkflowTarget('dra
 workflowAction('publish').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 if ($('publishFromReview')) $('publishFromReview').addEventListener('click', () => { if (!$('publish').disabled) $('publish').click(); });
 workflowAction('rollback').addEventListener('click', () => { if (!$('rollback').disabled) $('rollback').click(); });
-$('editDrawerOpen').addEventListener('click', openEditDrawer);
+$('editDrawerOpen').addEventListener('click', () => openEditDrawer(false));
 $('editDrawerClose').addEventListener('click', () => closeEditDrawer(false));
 $('editDrawer').addEventListener('click', (event) => {
   if (event.target === $('editDrawer')) closeEditDrawer(false);
@@ -499,6 +559,8 @@ addEventListener('keydown', (event) => {
 addEventListener('popstate', () => {
   if (state.editDrawerOpen) closeEditDrawer(true);
 });
+document.addEventListener('click', handleBoardQuickEdit, true);
+document.addEventListener('keydown', handleBoardQuickEdit, true);
 
 /* ==================================================================
  *  יבוא מקור כוח האדם
@@ -868,6 +930,272 @@ function renderSourceSummary() {
     : 'אין מקור כוח-אדם פעיל. בלעדיו המנוע אינו יכול לתכנן.';
 }
 
+function rosterSourceRows() {
+  return (state.rosterSource ? state.rosterSource.rows : []).map((person, index) => ({
+    row: index + 1,
+    employee_number: person.employee_number,
+    expected_uid: person.uid,
+    full_name: person.full_name,
+    sub_station: person.sub_station,
+    roles: person.roles.slice(),
+    active: person.active,
+    group: person.group
+  }));
+}
+
+function rosterSourceReady() {
+  const rows = state.rosterSource && state.rosterSource.rows;
+  return !!rows && rows.length > 0 && rows.every((person) =>
+    person.status !== 'identity_conflict' && person.sub_station
+    && person.roles.length > 0
+    && (!(state.rosterSource.rotation_groups || []).length || person.group));
+}
+
+function updateRosterSourceButtons() {
+  const ready = rosterSourceReady() && $('rosterSourceConfirm').checked;
+  $('rosterSourceLoad').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceCheck').disabled = state.rosterBusy || !!state.rosterPending || !ready;
+  $('rosterSourceSave').disabled = state.rosterBusy || !ready || !state.rosterPlan
+    || state.rosterPlan.blocked === true || state.rosterPlan.kind === 'unchanged'
+    || state.rosterPlanRevision !== state.rosterRevision;
+  $('rosterSourceConfirm').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceSearch').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceNeeds').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceMore').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceRows').querySelectorAll('select,input').forEach((control) => {
+    control.disabled = state.rosterBusy || !!state.rosterPending;
+  });
+}
+
+function rosterSourceChanged() {
+  if (state.rosterBusy || state.rosterPending) return;
+  state.rosterRevision += 1;
+  state.rosterDirty = true;
+  state.rosterPlan = null;
+  state.rosterPlanRevision = null;
+  state.rosterPending = null;
+  updateRosterSourceButtons();
+}
+
+function renderRosterSourceRows() {
+  const view = state.rosterSource;
+  const box = $('rosterSourceRows');
+  clear(box);
+  if (!view) return;
+  const query = $('rosterSourceSearch').value.trim().toLocaleLowerCase('he');
+  const needsOnly = $('rosterSourceNeeds').checked;
+  const matches = view.rows.filter((person) => (!needsOnly
+    || person.status !== 'carried_for_review') && (!query
+    || person.full_name.toLocaleLowerCase('he').includes(query)
+    || person.employee_number.includes(query)));
+  const visible = matches.slice(0, state.rosterVisible);
+  visible.forEach((person) => {
+    const card = node('div', 'roster-source-person');
+    card.appendChild(node('b', '', person.full_name + ' · ' + person.employee_number));
+    const origin = person.status === 'carried_for_review'
+      ? 'שיוך קודם ממקור חתום — לבדיקה' : person.status === 'identity_conflict'
+        ? 'זהות לא מאומתת — יש לטפל בחשבון לפני שמירה' : 'דרוש שיוך מפורש';
+    card.appendChild(node('div', 'sub', origin
+      + (person.active === false ? ' · מושבת בסידור' : '')
+      + (person.group ? ' · קבוצה ' + person.group : '')));
+    if (person.status !== 'identity_conflict') {
+      const label = node('label', '', 'תחנת קצה');
+      const select = node('select');
+      const empty = node('option', '', 'בחרו תחנת קצה');
+      empty.value = '';
+      select.appendChild(empty);
+      view.sub_stations.forEach((sub) => {
+        const option = node('option', '', sub.label);
+        option.value = sub.id;
+        select.appendChild(option);
+      });
+      select.value = person.sub_station || '';
+      select.disabled = state.rosterBusy || !!state.rosterPending;
+      select.addEventListener('change', () => {
+        if (state.rosterBusy || state.rosterPending) return;
+        person.sub_station = select.value;
+        rosterSourceChanged();
+      });
+      label.appendChild(select);
+      card.appendChild(label);
+      const roles = node('details');
+      roles.appendChild(node('summary', '', 'תפקידים בסידור: ' +
+        (person.roles.length ? person.roles.join(', ') : 'לא נבחרו')));
+      view.roles.forEach((role) => {
+        const roleLabel = node('label', 'req-flag');
+        const checkbox = node('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = person.roles.includes(role);
+        checkbox.disabled = state.rosterBusy || !!state.rosterPending;
+        checkbox.addEventListener('change', () => {
+          if (state.rosterBusy || state.rosterPending) return;
+          person.roles = checkbox.checked
+            ? Array.from(new Set(person.roles.concat(role))).sort()
+            : person.roles.filter((item) => item !== role);
+          roles.querySelector('summary').textContent = 'תפקידים בסידור: ' +
+            (person.roles.length ? person.roles.join(', ') : 'לא נבחרו');
+          rosterSourceChanged();
+        });
+        roleLabel.append(checkbox, node('span', '', role));
+        roles.appendChild(roleLabel);
+      });
+      card.appendChild(roles);
+      if ((view.rotation_groups || []).length) {
+        const groupLabel = node('label', '', 'קבוצת מחזוריות');
+        const groupSelect = node('select');
+        const noGroup = node('option', '', 'בחרו קבוצה');
+        noGroup.value = '';
+        groupSelect.appendChild(noGroup);
+        view.rotation_groups.forEach((group) => {
+          const option = node('option', '', group);
+          option.value = group;
+          groupSelect.appendChild(option);
+        });
+        groupSelect.value = person.group || '';
+        groupSelect.disabled = state.rosterBusy || !!state.rosterPending;
+        groupSelect.addEventListener('change', () => {
+          if (state.rosterBusy || state.rosterPending) return;
+          person.group = groupSelect.value || null;
+          rosterSourceChanged();
+        });
+        groupLabel.appendChild(groupSelect);
+        card.appendChild(groupLabel);
+      }
+    }
+    box.appendChild(card);
+  });
+  $('rosterSourceMore').hidden = matches.length <= visible.length;
+  $('rosterSourceCounts').textContent = view.counts.total + ' עובדים בתחנה · '
+    + view.counts.carried + ' שיוכים ממקור חתום · '
+    + view.counts.needs_assignment + ' דורשים שיוך · '
+    + view.counts.identity_conflict + ' זהויות לבדיקה';
+  updateRosterSourceButtons();
+}
+
+async function loadRosterSource() {
+  if (state.rosterBusy || state.rosterPending) return;
+  if (state.rosterDirty && !confirm('לטעון מחדש את הסגל ולבטל שינויים שלא נשמרו?')) return;
+  const task = authTask();
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'טוען את סגל התחנה המאומת…', 'info');
+  try {
+    const result = (await call.sourceRoster({})).data;
+    if (!authTaskCurrent(task)) return;
+    if (!result || !Array.isArray(result.rows) || !Array.isArray(result.sub_stations)
+        || !Array.isArray(result.roles) || !result.counts
+        || !Number.isSafeInteger(result.counts.total)) {
+      throw new Error('תשובת סגל התחנה אינה תקינה. לא בוצע שינוי; נסו שוב.');
+    }
+    state.rosterSource = result;
+    state.rosterRevision += 1;
+    state.rosterPlan = null;
+    state.rosterPlanRevision = null;
+    state.rosterPending = null;
+    state.rosterDirty = false;
+    state.rosterVisible = 50;
+    $('rosterSourceConfirm').checked = false;
+    $('rosterSourceSearch').value = '';
+    $('rosterSourceNeeds').checked = false;
+    $('rosterSourceEditor').hidden = false;
+    renderRosterSourceRows();
+    message('rosterSourceMessage', result.counts.identity_conflict
+      ? 'נמצאו זהויות שאינן מאומתות. אין לשמור עד שהן יתוקנו.'
+      : 'בדקו את השיוכים, השלימו חסרים ואשרו לפני בדיקת המקור.',
+    result.counts.identity_conflict ? 'warn' : 'info');
+    return true;
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error), 'err');
+    return false;
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
+async function checkRosterSource() {
+  if (state.rosterBusy || state.rosterPending || !rosterSourceReady()
+      || !$('rosterSourceConfirm').checked) return;
+  const task = authTask();
+  const revision = state.rosterRevision;
+  const rows = rosterSourceRows();
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'בודק את כל העובדים מול המקור והמדיניות…', 'info');
+  try {
+    const plan = (await call.sourcePreview({ rows })).data;
+    if (!authTaskCurrent(task)) return;
+    if (revision !== state.rosterRevision) return;
+    state.rosterPlan = plan;
+    state.rosterPlanRevision = revision;
+    message('rosterSourceMessage', plan.blocked ? plan.message
+      : plan.kind === 'unchanged' ? 'הרשימה כבר תואמת למקור הפעיל.'
+        : plan.counts.people + ' עובדים עברו בדיקה. כעת אפשר לשמור.',
+    plan.blocked ? 'warn' : 'ok');
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
+async function saveRosterSource() {
+  if (!scheduleMutationAllowed() || state.rosterBusy || !state.rosterPlan
+      || state.rosterPlan.blocked || !rosterSourceReady()
+      || state.rosterPlanRevision !== state.rosterRevision
+      || !$('rosterSourceConfirm').checked) return;
+  const task = authTask();
+  const rows = rosterSourceRows();
+  const dropped = droppedCount(state.rosterPlan);
+  const missing = Number(state.rosterPlan.missing_staff || 0);
+  if (missing || state.rosterPlan.report && state.rosterPlan.report.rejected) {
+    message('rosterSourceMessage', 'המקור אינו מלא. יש לרענן ולתקן לפני שמירה.', 'err');
+    return;
+  }
+  if (!confirm('לשמור מקור כוח אדם עם ' + rows.length + ' עובדים? '
+    + (dropped ? dropped + ' נתוני זמינות/נעילה של עובדים שכבר אינם בסגל יוסרו. '
+      : 'נתוני זמינות, נעילה ואירועים יישמרו. ')
+    + 'הפעולה אינה מפרסמת סידור.')) return;
+  const payload = state.rosterPending || {
+    request_id: requestId('source'),
+    rows, activate: true, expected_source_id: state.rosterPlan.active_source_id,
+    accept_carry_dropped: dropped || undefined
+  };
+  state.rosterPending = payload;
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'שומר מקור כוח אדם חתום…', 'info');
+  try {
+    const result = (await call.sourceSave(payload)).data;
+    if (!authTaskCurrent(task)) return;
+    state.rosterPending = null;
+    state.rosterPlan = null;
+    state.rosterPlanRevision = null;
+    state.rosterDirty = false;
+    state.rosterBusy = false;
+    const refreshed = await loadRosterSource();
+    if (authTaskCurrent(task)) message('rosterSourceMessage', refreshed
+      ? (result.written
+        ? 'המקור נשמר במהדורה ' + result.revision + '. הסידור שפורסם לא השתנה.'
+        : 'המקור כבר היה מעודכן.')
+      : 'המקור נשמר, אבל טעינת הרשימה מחדש נכשלה. יש לרענן לפני שינוי נוסף.',
+    refreshed ? 'ok' : 'warn');
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error)
+      + ' אפשר לנסות שוב בלי לערוך את הרשימה.', 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
 /* ==================================================================
  *  מצב מנוע הסידור · המתג
  * ------------------------------------------------------------------
@@ -927,7 +1255,7 @@ function renderModeCard() {
     ? 'המנוע כבוי. מצב הבדיקה מריץ אותו בלי לשנות סידור פעיל ובלי לשלוח הודעה לאיש — '
       + 'וזה המקום היחיד לראות מה הוא היה מייצר לפני שמישהו מקבל את התוצאה כסידור שלו.'
     : (view.current === 'shadow'
-      ? 'מצב ניסוי. הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש נשלח רק לחשבון הבדיקה של אלדד.'
+      ? 'מצב ניסוי. הייבוא, הטיוטה, העריכה, הסקירה, הפרסום והחזרה עובדים כמו בחי; פוש נשלח רק לחשבון הבדיקה של התחנה.'
       : 'המנוע פעיל. פרסום מחליף את הסידור הפעיל ושולח עדכון אישי.');
 
   const box = $('modeTargets');
@@ -1251,7 +1579,13 @@ async function promoteToNew() {
     if (!authTaskCurrent(task)) return;
     /* ⭐ אין תשובה מאומתת — הכוונה נשארת ב-pendingCutover, והכפתור
      * הבא שולח אותה שוב לפני כל preview. */
-    message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. (' + (error.code || error.message) + ') '
+    logError('schedule cutover', error);
+    /* ⭐ שני הקודים האלה הם של המערכת עצמה ולא של Firebase, והם אומרים
+     * שני דברים שונים לגמרי: תשובה פגומה מול בדיקה מקדימה שנכשלה.
+     * הקוד עצמו אינו מוצג — המשפט הוא שמבדיל, והקוד יושב ב-console. */
+    const cutoverText = { 'cutover-response-invalid': 'תשובת השרת הגיעה פגומה ולא ניתן לקבוע ממנה את המצב.',
+      'cutover-preflight-invalid': 'הבדיקה המקדימה לא אושרה, והמעבר לא בוצע.' }[String((error && error.code) || '')];
+    message('modeMessage', 'המעבר לא קיבל תשובה או נדחה. ' + (cutoverText || sharedErrorText(error)) + ' '
       + (state.pendingCutover ? 'אפשר לנסות שוב — אותה בקשה, לא מעבר חדש. ' : '')
       + 'המצב נטען מחדש מהשרת.', 'err');
     try { await refreshAfterModeChange(task); } catch (_) { /* הודעה כבר הוצגה */ }
@@ -1316,7 +1650,7 @@ async function applyModeChange() {
     ? 'לכבות את מנוע הסידור? התחנה תחזור להצגת הסידור הקיים.'
     : 'להעביר את מנוע הסידור ל„' + (MODE_LABEL[target] || target) + '"? '
       + (target === 'new' ? 'מרגע זה פרסום יחליף את הסידור הפעיל וישלח עדכונים אישיים.'
-        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ופוש נשלח רק לחשבון הבדיקה של אלדד.');
+        : 'זהו מצב ניסוי: אפשר לפרסם ולחזור לאחור כמו בחי, ופוש נשלח רק לחשבון הבדיקה של התחנה.');
   if (!confirm(text)) return;
   state.modeBusy = true;
   updateModeApply();
@@ -1452,7 +1786,7 @@ function appendNotesRow(board, days) {
     if (!ready) cell.title = 'חלק ממידע ההערות אינו זמין';
 
     if (eventsReady) (day.events || []).forEach((event) => {
-      const row = node('div', 'note-item event-note', noteLabel('אירוע', event));
+      const row = node('div', 'note-item event-note', noteLabel(event.kind === 'schedule_note' ? 'הערה' : 'אירוע', event));
       if (event.cancelled === true) {
         row.classList.add('cancelled');
         row.appendChild(node('span', 'note-status', 'בוטל'));
@@ -1520,7 +1854,7 @@ function authScopeKey(user, claims) {
 
 function scopedOperationInFlight() {
   return state.busy === true || state.policyBusy === true
-    || state.sourceBusy === true || state.modeBusy === true;
+    || state.sourceBusy === true || state.rosterBusy === true || state.modeBusy === true;
 }
 
 /*
@@ -1709,7 +2043,7 @@ function subOrder(days) {
   })));
 }
 
-function cellContent(cell, block, minVisualSlots) {
+function cellContent(cell, block, minVisualSlots, context) {
   const people = (block && block.people) || [];
   const missing = !block || block.coverage === 'missing';
   // `block.minimum` הוא המינימום החתום של היום המוצג. `sub.minimum`
@@ -1728,6 +2062,7 @@ function cellContent(cell, block, minVisualSlots) {
     cell.appendChild(node('span', 'absence-empty', 'לא הוזן'));
   }
   people.forEach((person, index) => {
+    const editableSlot = !!(context && context.date && person.uid && canEditSchedule());
     // ⭐ הקו האדום מצויר במקום קו המינימום של תחנת הקצה. הוא אינו
     // ידית: הוא ההחלטה ששמורה ב-`schedule_policies`, ומשנים אותה
     // בכרטיס „חוקי התחנה" — במקום שבו היא באמת נשמרת.
@@ -1737,10 +2072,11 @@ function cellContent(cell, block, minVisualSlots) {
       bar.appendChild(node('span', 'ruleline'));
       cell.appendChild(bar);
     }
-    const row = node('div', 'nm name-slot'
+    const row = node(editableSlot ? 'button' : 'div', 'nm name-slot'
       + (index === 0 ? ' lead' : '')
       + (person.is_me ? ' me' : '')
       + (person.cancelled ? ' cancelled' : ''));
+    if (editableSlot) row.type = 'button';
     row.dataset.slotIndex = String(index + 1);
     const warningCodes = manualWarningCodes(person.manual_warning_codes);
     const warningLabel = manualWarningLabel(warningCodes);
@@ -1753,14 +2089,25 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const personLabel = person.person || person.uid || '—';
     row.textContent = personLabel;
-    if (person.is_me) row.appendChild(node('span', 'mine-marker', 'אני'));
+    if (editableSlot) {
+      row.dataset.uid = String(person.uid);
+      row.dataset.name = personLabel;
+      row.dataset.date = context.date;
+      row.dataset.station = context.subStation || '';
+      row.classList.add('quick-edit-slot');
+      row.title = 'עריכת השיבוץ של ' + personLabel + ' ביום הזה';
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openQuickEditFromBoard(person, context.date, context.subStation);
+      });
+    }
     /* ⭐ 42H.20 §1 · עובד ללא חשבון נשאר גלוי ומשובץ בלוח, מסומן
      * בבירור, ואינו חוסם דבר — הוא לא מקבל פוש (נאכף בשרת, ראה
      * schedule-publication-recipients.js), וזה כל מה שהתג הזה אומר. */
     if (person.unlinked === true) {
       row.classList.add('unlinked-slot');
-      const noAccount = node('span', 'flag unlinked', 'ללא חשבון');
-      noAccount.title = 'אין לאדם הזה חשבון מקושר — הוא לא יקבל התראות פוש. זה לא חוסם את השיבוץ או הפרסום.';
+      const noAccount = node('span', 'flag unlinked', 'ללא אפליקציה');
+      noAccount.title = 'משובץ בסידור — ללא אפליקציה. לא יקבל התראת פוש; נדרש עדכון טלפוני. זה אינו חוסם את השיבוץ או הפרסום.';
       row.appendChild(noAccount);
     }
     if (warningCodes.length) {
@@ -1771,7 +2118,7 @@ function cellContent(cell, block, minVisualSlots) {
     }
     const ariaParts = [personLabel];
     if (person.is_me) ariaParts.push('אני');
-    if (person.unlinked === true) ariaParts.push('ללא חשבון, לא מקבל פוש');
+    if (person.unlinked === true) ariaParts.push('משובץ בסידור, ללא אפליקציה, לא מקבל פוש, נדרש עדכון טלפוני');
     if (warningLabel) ariaParts.push('שיבוץ ידני עם אזהרה', warningLabel);
     row.setAttribute('aria-label', ariaParts.join(' · '));
     cell.appendChild(row);
@@ -1811,6 +2158,9 @@ function cellContent(cell, block, minVisualSlots) {
 
 function renderBoard(target, days, options) {
   const opts = options || {};
+  target.querySelectorAll('.board').forEach((oldBoard) => {
+    if (oldBoard._railObserver) oldBoard._railObserver.disconnect();
+  });
   clear(target);
   if (!days || !days.length) {
     target.appendChild(node('div', 'empty', opts.empty || 'אין סידור להצגה בטווח הזה.'));
@@ -1840,10 +2190,14 @@ function renderBoard(target, days, options) {
   // מהסבב הישן או מהצבע. בלי צוות חתום וידוע — עמודה ניטרלית.
   const dayCrew = (day) => (['A', 'B', 'C'].includes(day.crew) ? day.crew : null);
   days.forEach((day, index) => {
+    const isToday = day.date === localDate();
     const head = node('div', 'hcell' + (isWeekend(day.date) ? ' we' : '')
-      + (day.date === localDate() ? ' today' : '')
+      + (isToday ? ' today' : '')
       + (index % 7 === 0 ? ' snap' : ''));
     head.setAttribute('role', 'columnheader');
+    // ⭐ היום הנוכחי מסומן גם לקורא מסך, לא רק בצבע. זה גם העוגן
+    // שאליו הלוח נפתח, ולכן הוא חייב להיות מזוהה בלי להסתמך על class.
+    if (isToday) head.setAttribute('aria-current', 'date');
     head.appendChild(node('div', 'dw', DOW[new Date(day.date + 'T00:00:00.000Z').getUTCDay()]));
     head.appendChild(node('div', 'dd',
       Number(day.date.slice(8, 10)) + '/' + Number(day.date.slice(5, 7))));
@@ -1881,7 +2235,7 @@ function renderBoard(target, days, options) {
         block = (day.sub_stations || []).find((item) => item.sub_station === id) || null;
         if (block) break;
       }
-      cellContent(cell, block, sub.minVisualSlots);
+      cellContent(cell, block, sub.minVisualSlots, { date: day.date, subStation: sub.id });
       ariaRow.appendChild(cell);
     });
     board.appendChild(ariaRow);
@@ -1891,8 +2245,32 @@ function renderBoard(target, days, options) {
     appendNotesRow(board, days);
     appendAbsenceRows(board, days);
   }
-  target.appendChild(board);
+  const shell = node('div', 'board-shell');
+  const rail = node('div', 'board-rail');
+  rail.setAttribute('aria-hidden', 'true');
+  const boardRows = Array.from(board.querySelectorAll(':scope > [role="row"]'));
+  const pinned = boardRows.map((row) => {
+    const original = row.firstElementChild;
+    const visual = original.cloneNode(true);
+    visual.removeAttribute('role');
+    visual.removeAttribute('aria-label');
+    rail.appendChild(visual);
+    return visual;
+  });
+  shell.appendChild(board);
+  shell.appendChild(rail);
+  target.appendChild(shell);
   fitColumns(board);
+  const alignRail = () => boardRows.forEach((row, index) => {
+    pinned[index].style.height = row.getBoundingClientRect().height + 'px';
+  });
+  board._alignRail = alignRail;
+  alignRail();
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(alignRail);
+    boardRows.forEach((row) => observer.observe(row));
+    board._railObserver = observer;
+  }
   // הלוח נפתח על תחילת הטווח. בכיוון RTL הדפדפן אינו תמיד מתחיל
   // שם מעצמו, ו„החודש נפתח באמצע" נראה כמו תקלה.
   board.scrollLeft = 0;
@@ -1904,9 +2282,15 @@ function fitColumns(board) {
   const available = board.clientWidth - stub;
   // שבוע מלא כשהמסך מרשה; אחרת העמודה הצרה ביותר שעדיין קריאה,
   // והגלילה משלימה את השבוע.
+  // Shared widths keep header/body cells aligned; the visual station rail
+  // remains outside the horizontal scroller while rowheaders remain in it.
   const width = Math.max(84, Math.floor(available / 7));
   board.style.setProperty('--dayw', width + 'px');
   board.style.setProperty('--stub', stub + 'px');
+  if (board.parentElement && board.parentElement.classList.contains('board-shell')) {
+    board.parentElement.style.setProperty('--stub', stub + 'px');
+  }
+  if (board._alignRail) board._alignRail();
 }
 
 function refitAll() {
@@ -1940,12 +2324,57 @@ function renderBoardHead(target, ym, onMonth, boardId, weekLabelId) {
     const board = $(boardId);
     if (!board) return;
     const width = parseInt(getComputedStyle(board).getPropertyValue('--dayw'), 10) || 96;
-    board.scrollBy({ left: direction * width * 7, behavior: 'smooth' });
+    // Later dates are to the left on the RTL board (negative scrollLeft in
+    // modern browsers); use the board's actual direction for LTR fallbacks.
+    const rtl = getComputedStyle(board).direction === 'rtl';
+    board.scrollBy({ left: (rtl ? -direction : direction) * width * 7, behavior: 'smooth' });
   };
   prev.addEventListener('click', () => step(-1));
   next.addEventListener('click', () => step(1));
-  jump.append(prev, label, next);
+  const today = node('button', 'today-jump', 'היום');
+  today.type = 'button';
+  today.id = weekLabelId + 'Today';
+  today.setAttribute('aria-label', 'מעבר ליום הנוכחי בלוח');
+  today.hidden = true;
+  today.disabled = true;
+  today.addEventListener('click', () => focusTodayColumn(boardId, 'smooth'));
+  jump.append(prev, label, next, today);
   target.appendChild(jump);
+}
+
+/* ⭐ הלוח נפתח על היום ולא על תחילת החודש.
+ *
+ * הלוח הוא גריד חודשי שנגלל לרוחב, ועד כאן הוא נפתח תמיד ב-1 בחודש:
+ * כבאי שנכנס ב-23 בחודש ראה שבוע שאינו רלוונטי לו וצריך היה לגלול.
+ * זו נקודת האמון הראשונה של משתמש חדש, ולכן היא לא נשארת ידנית.
+ *
+ * הפונקציה מחזירה false כשהחודש המוצג אינו החודש הנוכחי — אין „היום"
+ * בלוח, ואז לא זזים בכלל ולא מתחזים למיקוד. הקריאה עצמה נעשית דרך
+ * scrollIntoView ולא בחישוב scrollLeft ידני, כי הלוח הוא RTL וסמנטיקת
+ * scrollLeft ב-RTL נבדלת בין דפדפנים; block:'nearest' מונע קפיצה
+ * אנכית של העמוד. */
+function focusTodayColumn(boardId, behavior) {
+  const board = $(boardId);
+  if (!board) return false;
+  const head = board.querySelector('.hcell.today');
+  if (!head) return false;
+  try {
+    head.scrollIntoView({ inline: 'center', block: 'nearest', behavior: behavior || 'auto' });
+  } catch (ignore) {
+    // דפדפן ישן בלי תמיכה ב-options: מיקוד הוא שיפור, לא תנאי לתצוגה.
+    try { head.scrollIntoView(); } catch (alsoIgnore) {}
+  }
+  return true;
+}
+
+/* כפתור „היום" נשאר זמין רק כשיש יום כזה בלוח המוצג. */
+function syncTodayButton(boardId, weekLabelId) {
+  const button = $(weekLabelId + 'Today');
+  if (!button) return;
+  const board = $(boardId);
+  const has = !!(board && board.querySelector('.hcell.today'));
+  button.disabled = !has;
+  button.hidden = !has;
 }
 
 function watchWeekLabel(boardId, weekLabelId, dayCount) {
@@ -1964,7 +2393,7 @@ function watchWeekLabel(boardId, weekLabelId, dayCount) {
 /* ---------------- סידור התחנה ---------------- */
 
 async function loadStationRange(ym) {
-  if (!canViewSchedule()) return;
+  if (!canViewSchedule()) return null;
   const generation = state.authGeneration;
   const requestedMonth = ym || state.month || monthStart();
   state.month = requestedMonth;
@@ -1975,29 +2404,39 @@ async function loadStationRange(ym) {
   $('stationNote').textContent = '';
   try {
     const view = await fetchRange(requestedMonth, true);
-    if (generation !== state.authGeneration || state.month !== requestedMonth) return;
+    if (generation !== state.authGeneration || state.month !== requestedMonth) return null;
     if (!view.active) {
       clear(box);
       box.appendChild(node('div', 'empty', 'עדיין לא פורסם סידור לחודש הזה.'));
-      return;
+      return { active:false, source:view.source || null };
     }
     renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
+    // הלוח נפתח על היום, ורק אחר כך תווית השבוע מתעדכנת מהגלילה בפועל.
+    focusTodayColumn('stationBoard');
+    syncTodayButton('stationBoard', 'stationWeek');
     $('stationNote').textContent = (view.source === 'legacy'
       ? 'הלוח מוצג מהסידור הקיים — החודש הזה עדיין לא הודבק מהגיליון.'
       : view.source === 'imported-display'
         ? 'הלוח מוצג מקובץ הסידור שיובא. המנוע נשאר ' + view.mode + ' וחישובי המערכת לא הוחלפו.'
-        : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.')
+        : (view.imported ? 'הלוח מוצג מהגיליון שהודבק' : 'הלוח מוצג מהסידור שפורסם') + ' · גרסה ' + (view.revision || '—') + '.'
+        + publishedLine(state.status && state.status.active))
       + absenceNote(view.days) + guardsNotice(view.days);
+    return {
+      active:true, source:view.source || null,
+      draft_id:view.draft_id || null,
+      display_generation:view.display_generation
+    };
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
-        || state.month !== requestedMonth) return;
+        || state.month !== requestedMonth) return null;
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
     const retry = node('button', 'btn sm', 'נסה שוב');
     retry.type = 'button';
     retry.addEventListener('click', () => loadStationRange(requestedMonth));
     box.appendChild(retry);
+    return null;
   }
 }
 
@@ -2119,17 +2558,49 @@ async function respond(itemId, answer, reasonCode) {
   }
 }
 
+// Coalesce getMyScheduleV2 by uid|stationId|date — never one global Promise
+// (User A→B / today↔month must not share an in-flight result).
+const mineInflight = new Map(); // key -> { generation, principal, promise }
+
+function mineInflightKey(date) {
+  const uid = rangePrincipal();
+  const claims = state.claims || {};
+  const stationId = String(claims.stationId || claims.station_id || '');
+  return uid + '|' + stationId + '|' + String(date || localDate());
+}
+
+function clearMineInflight() { mineInflight.clear(); }
+
 async function loadMine(generation = state.authGeneration) {
   if (!canViewSchedule()) return;
   const principal = rangePrincipal();
-  let mine;
+  const date = localDate();
+  const key = mineInflightKey(date);
+  const existing = mineInflight.get(key);
+  if (existing
+      && existing.generation === generation
+      && existing.principal === principal) {
+    return existing.promise;
+  }
+  const promise = (async () => {
+    let mine;
+    try {
+      // App Check remains on httpsCallable getMyScheduleV2 (call.mine).
+      mine = (await call.mine({ date: date })).data;
+    } catch (error) { mine = { active: false, error: errorText(error) }; }
+    // Do not apply after auth bump / principal change; drop sticky error for retry.
+    if (generation !== state.authGeneration || rangePrincipal() !== principal) return false;
+    state.mine = mine;
+    renderMineToday();
+    return true;
+  })();
+  mineInflight.set(key, { generation: generation, principal: principal, promise: promise });
   try {
-    mine = (await call.mine({ date: localDate() })).data;
-  } catch (error) { mine = { active: false, error: errorText(error) }; }
-  if (generation !== state.authGeneration || rangePrincipal() !== principal) return false;
-  state.mine = mine;
-  renderMineToday();
-  return true;
+    return await promise;
+  } finally {
+    const cur = mineInflight.get(key);
+    if (cur && cur.promise === promise) mineInflight.delete(key);
+  }
 }
 
 function daysWithMe(days) {
@@ -2147,6 +2618,12 @@ async function loadMineRange(ym) {
   const box = $('mineContent');
   clear(box); box.appendChild(node('div', 'loader'));
   $('mineNote').textContent = '';
+  // Keep today card hidden until THIS authGeneration's mine load succeeds.
+  $('mineToday').hidden = true;
+  // OFF may be an imported-display month: wait for the range source before
+  // making an operational-today call. In active modes, fetch today in parallel.
+  const sourceMayBeImported = state.status && state.status.mode === 'off';
+  const minePromise = sourceMayBeImported ? null : loadMine(generation);
   try {
     // „הסידור שלי" הוא מסנן תצוגה על אותו לוח חודשי מורשה של
     // התחנה. כך הוא מציג גם טיוטת אימון שנבחרה להצגה בזמן שהמנוע
@@ -2158,12 +2635,13 @@ async function loadMineRange(ym) {
     // עד שגם תשובת היום של הדור הנוכחי הושלמה, ולא רק עד שהלוח
     // החודשי החדש הגיע. אחרת תשובת טווח מהירה ותשובת יום איטית
     // עלולות לחשוף לרגע את הכרטיס של הזהות הקודמת.
-    $('mineToday').hidden = true;
     if (displayOnly) {
+      if (minePromise) await minePromise.catch(function () { return false; });
+      if (generation !== state.authGeneration || state.month !== requestedMonth) return;
       state.mine = null;
       renderMineToday();
     } else {
-      if (await loadMine(generation) === false) return;
+      if (await (minePromise || loadMine(generation)) === false) return;
       if (generation !== state.authGeneration || state.month !== requestedMonth) return;
       $('mineToday').hidden = false;
     }
@@ -2177,14 +2655,23 @@ async function loadMineRange(ym) {
       showAbsences: true,
       empty: 'אין לך שיבוץ בחודש הזה.' });
     watchWeekLabel('mineBoard', 'mineWeek', (days || []).length);
+    focusTodayColumn('mineBoard');
+    syncTodayButton('mineBoard', 'mineWeek');
     $('mineNote').textContent = 'מוצגים רק הימים שבהם שובצת לעבודה בפועל. בכל יום מוצגות כל ארבע התחנות.'
       + (displayOnly ? ' זו תצוגת אימון מהקובץ המיובא; המנוע נשאר ' + view.mode + '.' : '')
       + (view.source === 'legacy'
         ? ' הסידור הקיים יודע את המשמרת אך לא את תחנת הקצה; יש לייבא את הקובץ כדי להציג שמות לפי תחנה.' : '')
+      + publishedLine(state.status && state.status.active)
       + absenceNote(days) + guardsNotice(days);
   } catch (error) {
     if (isStaleRangeError(error) || generation !== state.authGeneration
         || state.month !== requestedMonth) return;
+    // A failed month request must not indefinitely hide a valid daily card.
+    // In OFF mode the range source is unknown, so fail closed on the daily card.
+    if (minePromise && await minePromise !== false &&
+        generation === state.authGeneration && state.month === requestedMonth) {
+      $('mineToday').hidden = false;
+    }
     clear(box);
     box.appendChild(node('div', 'msg err', errorText(error)));
     const retry = node('button', 'btn sm', 'נסה שוב');
@@ -2783,7 +3270,7 @@ function renderImportReport(report) {
    * התנגשות שיבוץ/היעדרות, בלוק שנדחה, ימים מתחת למינימום, שמות שהודחו)
    * מוסתר כאן כדי לא לכפול; מה שאין לו תצוגה ייעודית מתורגם לעברית ברורה. */
   const WARNING_HE = {
-    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא חשבון" ולא יקבלו התראות פוש; הם אינם חוסמים פרסום.'
+    'unlinked-people': (w) => (w.count || 1) + ' מאנשי הגיליון אינם מקושרים לחשבון פעיל — יופיעו בסידור מסומנים „ללא אפליקציה", לא יקבלו התראות פוש ויידרש עדכון טלפוני; הם אינם חוסמים פרסום.'
   };
   (report.warnings || []).forEach((warning) => {
     if (warning.code === 'assignment-absence-conflict') return; // Named findings above.
@@ -2948,7 +3435,7 @@ function updateImportDisplayAvailability() {
 }
 
 async function loadImportDisplayStatus(month, generation = state.authGeneration) {
-  if (!canManageSchedule() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
+  if (!hasManagerAccess() || !/^\d{4}-\d{2}$/.test(String(month || ''))) return;
   if ($('importMonth').value !== month) return;
   const sequence = ++state.displayStatusSequence;
   state.importDisplay = null;
@@ -3008,11 +3495,17 @@ async function showImportedSchedule() {
     state.importDisplay = result;
     state.displayPending = null;
     renderImportDisplayStatus();
-    message('importMessage', 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר '
-      + state.status.mode + ' ולא נשלחה שום התראה.', 'ok');
     invalidateRange();
-    await loadStationRange(month);
+    const board = await loadStationRange(month);
     if (!authTaskCurrent(task)) return;
+    const boardReady = !!board && board.active === true
+      && board.source === 'imported-display'
+      && board.draft_id === result.draft_id
+      && Number(board.display_generation) === Number(result.generation);
+    message('importMessage', boardReady
+      ? 'הסידור מוצג עכשיו בלוח. מצב המנוע נשאר ' + state.status.mode + ' ולא נשלחה שום התראה.'
+      : 'הפעולה נשמרה, אך לא ניתן לאמת כעת את הלוח המעודכן. נסו לרענן את הסידור.',
+    boardReady ? 'ok' : 'warn');
   } catch (error) {
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
@@ -3057,10 +3550,15 @@ async function clearImportedSchedule() {
     state.importDisplay = result;
     state.displayPending = null;
     renderImportDisplayStatus();
-    message('importMessage', 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.', 'ok');
     invalidateRange();
-    await loadStationRange(month);
+    const board = await loadStationRange(month);
     if (!authTaskCurrent(task)) return;
+    const boardReady = !!board && board.source !== 'imported-display'
+      && (board.active === false || ['legacy', 'v2'].includes(board.source));
+    message('importMessage', boardReady
+      ? 'הסידור המיובא הוסר מהלוח. נתוני הייבוא עצמם נשמרו ולא נמחקו.'
+      : 'הפעולה נשמרה, אך לא ניתן לאמת כעת את הלוח המעודכן. נסו לרענן את הסידור.',
+    boardReady ? 'ok' : 'warn');
   } catch (error) {
     if (!authTaskCurrent(task) || sequence !== state.displayStatusSequence || $('importMonth').value !== month) return;
     message('importMessage', errorText(error), 'err');
@@ -3230,14 +3728,14 @@ async function runPlanner() {
  * ממה שכבר נטען למסך; אין ניחוש — מספר שאין לו מקור פשוט לא מוצג. */
 function publishConfirmationText(trial) {
   const lines = [trial
-    ? 'לפרסם את הטיוטה במצב ניסוי? הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של אלדד.'
+    ? TRIAL_PUBLISH_WARNING + ' הסידור יהפוך לפעיל בסביבת הניסוי ופוש יישלח רק לחשבון הבדיקה של התחנה. לפרסם?'
     : 'לפרסם את הטיוטה? הסידור יהפוך לפעיל והמשתמשים הרלוונטיים יקבלו עדכון.'];
   const filled = state.draft && state.draft.summary && Number.isFinite(state.draft.summary.filled)
     ? state.draft.summary.filled : null;
   if (filled !== null) lines.push('שיבוצים בטיוטה: ' + filled + '.');
   const unlinked = state.importReport && state.importReport.counts
     && Number.isFinite(state.importReport.counts.unlinked) ? state.importReport.counts.unlinked : null;
-  if (unlinked) lines.push(unlinked + ' מהם ללא חשבון מקושר — לא יקבלו התראת פוש.');
+  if (unlinked) lines.push(unlinked + ' מהם ללא אפליקציה — לא יקבלו התראת פוש ויידרש עדכון טלפוני.');
   const gaps = state.draftPreview && state.draftPreview.gaps;
   const warningCount = gaps ? (gaps.blocking || []).length + (gaps.acknowledgeable || []).length : 0;
   lines.push(warningCount
@@ -3273,7 +3771,7 @@ async function publishDraft() {
       throw new Error('השרת לא אישר פרסום ניסוי פעיל. יש לרענן לפני ניסיון נוסף.');
     }
     const successText = trial
-      ? 'הסידור פורסם ופועל בסביבת הניסוי. הפוש הוגבל לחשבון הבדיקה של אלדד, ואפשר לבדוק או לחזור לגרסה הקודמת.'
+      ? 'הסידור פורסם ופועל בסביבת הניסוי. הפוש הוגבל לחשבון הבדיקה של התחנה, ואפשר לבדוק או לחזור לגרסה הקודמת.'
       : 'הסידור פורסם בהצלחה. נוצרו ' + result.notified_people + ' עדכונים לשליחה.';
     message('publishMessage', successText, 'ok');
     resetPublishRequest();
@@ -3291,7 +3789,9 @@ async function publishDraft() {
       if (!authTaskCurrent(task)) return;
       state.status = status;
       setMode(state.status); setRollbackAvailability(); updateEditAvailability();
-      await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+      // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
       if (!authTaskCurrent(task)) return;
       // ⭐ E (seq379) · אחרי הכנה המועמד קיים; מי שיש לו גם סמכות פיקוד
       // רואה אותו מיד, בלי לרענן את הדף.
@@ -3340,7 +3840,7 @@ function rollbackConfirmText(active, mode) {
     + (active.from && active.to ? ' (' + active.from + ' עד ' + active.to + ')' : '')
     + ' ' + targetLabel + '? '
     + (mode === 'shadow'
-      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של אלדד.'
+      ? 'המערכת תשמור את ההיסטוריה, ובמצב ניסוי פוש יישלח רק לחשבון הבדיקה של התחנה.'
       : 'המערכת תשמור את ההיסטוריה ותשלח עדכון רק למי שהסידור שלו משתנה.');
 }
 if (typeof module !== 'undefined' && module.exports) module.exports.rollbackConfirmText = rollbackConfirmText;
@@ -3398,7 +3898,9 @@ async function rollbackSchedule() {
     state.status = status;
     setMode(state.status); setRollbackAvailability(); updateEditAvailability();
     invalidateRange();
-    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
@@ -3413,7 +3915,7 @@ async function rollbackSchedule() {
 }
 
 async function loadSetup(generation = state.authGeneration) {
-  if (!canManageSchedule()) return;
+  if (!hasManagerAccess()) return;
   try {
     const setup = (await call.setup({})).data;
     if (generation !== state.authGeneration) return;
@@ -3645,7 +4147,7 @@ $('editPolicyAck').addEventListener('change', () => { if (state.editReport) $('e
  *  שהמסך ראה (publication_id + revision + חתימה). כל שינוי ברשימה מבטל
  *  את הדוח. תשובה שאבדה — אותה בקשה נשלחת שוב (כמו בייבוא).
  * ================================================================== */
-const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות' };
+const EDIT_KIND_HE = { assign: 'שיבוץ', unassign: 'הסרה', role: 'תפקיד', absence: 'היעדרות', note: 'הערת סידור' };
 const EDIT_ABSENCE_HE = { sick: 'מחלה', reserve: 'מילואים', course: 'קורס', leave: 'חופש' };
 const EDIT_WARN_HE = {
   'assigned-while-absent': 'משובץ ביום שבו רשומה לו היעדרות',
@@ -3724,6 +4226,8 @@ function renderEditControls() {
   $('editRoleWrap').hidden = action !== 'assign' && action !== 'role';
   $('editAbsenceWrap').hidden = action !== 'absence';
   $('editLocationWrap').hidden = action !== 'absence' || $('editAbsence').value !== 'leave';
+  $('editNoteWrap').hidden = action !== 'note';
+  if (action === 'note') $('editNote').disabled = $('editNoteRemove').checked;
   const stationSelect = $('editStation');
   if (!stationSelect.options.length) {
     editStations().forEach((station) => {
@@ -3768,12 +4272,76 @@ function renderEditSearch() {
   });
 }
 
+function selectEditPerson(person) {
+  if (!person) return false;
+  state.editPerson = person;
+  state.editPersonSub = person.sub_station || null;
+  state.editFormDirty = true;
+  $('editSearch').value = person.name || person.id || '';
+  $('editPerson').textContent = 'נבחר: ' + (person.name || person.id);
+  if (person.sub_station && $('editStation').querySelector('option[value="' + person.sub_station + '"]')) {
+    $('editStation').value = person.sub_station;
+  }
+  renderEditSearch();
+  renderEditControls();
+  return true;
+}
+
+function openQuickEditFromBoard(slot, date, subStation) {
+  if (!canManageSchedule()) return;
+  const people = (state.setup && state.setup.people) || [];
+  const uid = String(slot && slot.uid || '');
+  const label = String(slot && (slot.person || slot.uid) || '');
+  // A display name is not an identity. Duplicate names are valid, and an
+  // imported/unlinked slot may share a name with an active account. Only an
+  // exact uid may preselect a person; otherwise require an explicit choice.
+  const person = people.find((item) => String(item.id) === uid);
+  chooseTab('manage', false);
+  openEditDrawer(true);
+  if (!person) {
+    state.editPerson = null;
+    state.editPersonSub = null;
+    state.editFormDirty = true;
+    $('editSearch').value = label;
+    $('editPerson').textContent = 'לא נבחר עובד';
+    renderEditSearch();
+    renderEditControls();
+    message('editMessage', 'פתחתי את העריכה. בחר/י את העובד מהרשימה כדי לשנות את השיבוץ.', 'info');
+    return;
+  }
+  selectEditPerson(person);
+  $('editRange').value = 'day';
+  $('editDate').value = date || $('editDate').value;
+  $('editAction').value = 'assign';
+  if (subStation && $('editStation').querySelector('option[value="' + subStation + '"]')) {
+    $('editStation').value = subStation;
+  }
+  renderEditControls();
+  renderEditDates();
+  message('editMessage', 'נבחר ' + (person.name || label) + ' בתאריך ' + dateLabel(date)
+    + '. אפשר לשנות תחנה/תפקיד, להוסיף לרשימה, לבדוק ולפרסם.', 'info');
+  try { $('editAction').focus(); } catch (_) {}
+}
+
+function handleBoardQuickEdit(event) {
+  const target = event.target && event.target.closest ? event.target.closest('.quick-edit-slot') : null;
+  if (!target) return;
+  if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  openQuickEditFromBoard({
+    uid: target.dataset.uid || '',
+    person: target.dataset.name || ''
+  }, target.dataset.date || '', target.dataset.station || '');
+}
+
 function editItemText(item) {
   const name = item.name;
   const when = item.dates.length === 1 ? dateLabel(item.dates[0]) : item.dates.length + ' ימים (' + dateLabel(item.dates[0]) + ' — ' + dateLabel(item.dates[item.dates.length - 1]) + ')';
   if (item.kind === 'assign') return name + ' · שיבוץ ל' + editStationLabel(item.sub_station) + (item.role ? ' כ' + (item.role_label || item.role) : '') + ' · ' + when;
   if (item.kind === 'unassign') return name + ' · הסרה מהסידור · ' + when;
   if (item.kind === 'role') return name + ' · תפקיד: ' + (item.role ? (item.role_label || item.role) : 'ללא') + ' · ' + when;
+  if (item.kind === 'note') return name + ' · ' + (item.remove ? 'הסרת הערת סידור' : 'הערת סידור: ' + item.text) + ' · ' + when;
   if (item.absence === null) return name + ' · ביטול היעדרות · ' + when;
   return name + ' · ' + EDIT_ABSENCE_HE[item.absence.kind] + (item.absence.location ? ' (' + ABSENCE_LOCATIONS.get(item.absence.location) + ')' : '') + ' · ' + when;
 }
@@ -3799,6 +4367,7 @@ function editPayload() {
       if (item.kind === 'assign') { out.sub_station = item.sub_station; out.role = item.role || null; }
       if (item.kind === 'role') out.role = item.role || null;
       if (item.kind === 'absence') out.absence = item.absence;
+      if (item.kind === 'note') { out.text = item.text || null; out.remove = item.remove === true; }
       return out;
     })
   };
@@ -3833,6 +4402,10 @@ function addEditItem() {
   } else if (action === 'absence') {
     const kind = $('editAbsence').value;
     item.absence = kind ? Object.assign({ kind }, kind === 'leave' && $('editLocation').value ? { location: $('editLocation').value } : {}) : null;
+  } else if (action === 'note') {
+    item.remove = $('editNoteRemove').checked;
+    item.text = $('editNote').value.replace(/\s+/g, ' ').trim();
+    if (!item.remove && !item.text) { message('editMessage', 'יש לכתוב הערה או לבחור בהסרת ההערה הקיימת.', 'err'); return; }
   }
   if (item.role) {
     const requirement = editStations().flatMap((s) => s.requirements || []).find((r) => r.role === item.role);
@@ -3840,6 +4413,7 @@ function addEditItem() {
   }
   state.editList = state.editList || [];
   state.editList.push(item);
+  if (action === 'note') { $('editNote').value = ''; $('editNoteRemove').checked = false; $('editNote').disabled = false; }
   state.editFormDirty = false;
   message('editMessage', '', 'info');
   invalidateEditReport();
@@ -3862,7 +4436,10 @@ function renderEditReport(report) {
   (report.changes || []).forEach((change) => {
     const row = node('div', 'editchange');
     row.appendChild(node('b', '', change.name + ' · ' + dateLabel(change.date)));
-    row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
+    if (change.kind === 'note') {
+      row.appendChild(node('span', '', change.before.note && !change.after.note ? 'הערת הסידור תוסר'
+        : (change.before.note ? 'הערת הסידור תעודכן' : 'תתווסף הערת סידור')));
+    } else row.appendChild(node('span', '', describe(change.before) + ' ← ' + describe(change.after)));
     changes.appendChild(row);
   });
   if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
@@ -3970,14 +4547,16 @@ async function applyEdit() {
     state.editPending = null;
     state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     const deliveryText = state.status && state.status.mode === 'shadow'
-      ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של אלדד.'
+      ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של התחנה.'
       : (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת.';
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
       + deliveryText + ' אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
     await refreshStatusAfterEdit(task);
     if (!authTaskCurrent(task)) return;
     invalidateRange();
-    await Promise.all([loadMine(), loadMineRange(), loadStationRange()]);
+    // loadMineRange already calls loadMine (non-displayOnly). Do not also
+      // invoke loadMine() here - that double-fired getMyScheduleV2 on refresh.
+      await Promise.all([loadMineRange(), loadStationRange()]);
     if (!authTaskCurrent(task)) return;
   } catch (error) {
     if (!authTaskCurrent(task)) return;
@@ -4029,6 +4608,8 @@ $('editAction').addEventListener('change', () => { state.editFormDirty = true; r
 $('editStation').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
 $('editRole').addEventListener('change', () => { state.editFormDirty = true; });
 $('editAbsence').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editNoteRemove').addEventListener('change', () => { state.editFormDirty = true; renderEditControls(); });
+$('editNote').addEventListener('input', () => { state.editFormDirty = true; });
 $('editAdd').addEventListener('click', managerAction(addEditItem));
 $('editCheck').addEventListener('click', managerAction(checkEdit));
 $('editApply').addEventListener('click', managerAction(applyEdit));
@@ -4258,6 +4839,8 @@ $('qualSearch').addEventListener('input', renderQualPeople);
 async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration) return;
   state.user = user;
+  state.managerSetupReady = false;
+  managerSetupNotice('', false);
   let claims = knownClaims;
   if (claims === undefined) {
     try { claims = (await user.getIdTokenResult()).claims || {}; } catch (_) { claims = {}; }
@@ -4265,13 +4848,14 @@ async function boot(user, generation, knownClaims, knownStatus) {
   if (generation !== state.authGeneration || state.user !== user) return;
   applyPageRoleView(user, claims);
   state.claims = claims;
-  await refreshBoardSlotKeys(claims);
+  if (!await refreshBoardSlotKeys(claims, user, generation)) return;
+  if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
   state.authScope = authScopeKey(user, claims);
   renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
   $('who').textContent = user.displayName || user.email || '';
   try {
     const status = knownStatus === undefined ? (await call.status({})).data : knownStatus;
-    if (generation !== state.authGeneration || state.user !== user) return;
+    if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
     state.status = status;
     setMode(state.status || {});
 
@@ -4288,16 +4872,42 @@ async function boot(user, generation, knownClaims, knownStatus) {
     if (!$('importMonth').value) $('importMonth').value = monthStart();
     state.month = monthStart();
     showScheduleViews();
-    const [setupLoaded] = await Promise.all([loadSetup(generation), loadModeOptions(generation),
-      loadImportDisplayStatus($('importMonth').value, generation)]);
-    if (generation !== state.authGeneration || state.user !== user) return;
-    if (canManageSchedule() && setupLoaded === false) {
-      throw new Error('לא ניתן לטעון את הגדרות התחנה הנוכחית.');
+    // A viewer's board does not depend on the command/cutover options. Keep
+    // that authoritative request (commanders may lack the manager appointment),
+    // but do not hold the board behind its network latency. loadModeOptions
+    // checks authGeneration before it can paint a late response.
+    if (!hasManagerAccess()) {
+      void loadModeOptions(generation);
+      chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
+      $('appMain').classList.remove('hide');
+      return;
     }
-    updateImportDisplayAvailability();
-    updateEditAvailability();
-    chooseTab(new URLSearchParams(location.search).get('tab') || 'station');
+    const requestedTab = new URLSearchParams(location.search).get('tab') || 'station';
+    const tabRevision = state.tabChoiceRevision;
+    // Only fetch the signed range when a board was requested. A manager deep
+    // link must not add a full-month read just to fill the setup wait.
+    const wantsBoard = requestedTab === 'mine' || requestedTab === 'station';
+    if (wantsBoard) chooseTab(requestedTab, false);
+    else {
+      state.tab = null;
+      document.querySelectorAll('[data-tab]').forEach((button) => {
+        button.classList.remove('on');
+        button.setAttribute('aria-selected', 'false');
+      });
+      ['manageView', 'mineView', 'stationView', 'qualsView'].forEach((id) => { $(id).hidden = true; });
+    }
     $('appMain').classList.remove('hide');
+    managerSetupNotice(wantsBoard
+      ? 'כלי הניהול נטענים. הסידור זמין בינתיים לקריאה.'
+      : 'כלי ניהול הסידור נטענים. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', false);
+    // Command options and imported-display status are independent of manager
+    // setup. Their handlers own error states and auth-generation guards.
+    void loadModeOptions(generation);
+    void loadImportDisplayStatus($('importMonth').value, generation);
+    const setupLoaded = await loadManagerSetup(generation);
+    if (generation !== state.authGeneration || state.user !== user || auth.currentUser?.uid !== user.uid) return;
+    if (setupLoaded === true) finishManagerSetup(requestedTab, tabRevision);
+    else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
   } catch (error) {
     if (generation !== state.authGeneration || state.user !== user) return;
     state.status = null;
@@ -4311,7 +4921,10 @@ async function boot(user, generation, knownClaims, knownStatus) {
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) =>
-  button.addEventListener('click', () => chooseTab(button.dataset.tab)));
+  button.addEventListener('click', () => {
+    state.tabChoiceRevision += 1;
+    chooseTab(button.dataset.tab);
+  }));
 $('previewPrev').addEventListener('click', () => {
   if (!state.draftPreview || $('previewPrev').disabled) return;
   loadDraftPreview(shiftDate(state.previewStart, -7), false);
@@ -4499,7 +5112,76 @@ $('sourceParse').addEventListener('click', () => {
 $('sourceAccept').addEventListener('change', updateSourceButtons);
 $('sourceCheck').addEventListener('click', managerAction(checkSource));
 $('sourceSave').addEventListener('click', managerAction(saveSource));
+$('rosterSourceLoad').addEventListener('click', managerAction(loadRosterSource));
+$('rosterSourceSearch').addEventListener('input', () => {
+  state.rosterVisible = 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceNeeds').addEventListener('change', () => {
+  state.rosterVisible = 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceMore').addEventListener('click', () => {
+  state.rosterVisible += 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceConfirm').addEventListener('change', updateRosterSourceButtons);
+$('rosterSourceCheck').addEventListener('click', managerAction(checkRosterSource));
+$('rosterSourceSave').addEventListener('click', managerAction(saveRosterSource));
 addEventListener('resize', refitAll);
+
+function managerSetupNotice(text, retry) {
+  $('managerSetupNotice').hidden = !text;
+  $('managerSetupNoticeText').textContent = text || '';
+  $('managerSetupRetry').hidden = retry !== true;
+  if (!text || retry === true) $('managerSetupRetry').disabled = false;
+}
+
+// A token refresh invalidates an in-flight setup response. Wait for that
+// request to settle before starting the current generation's request, so a
+// single station does not receive overlapping setup reads.
+async function loadManagerSetup(generation = state.authGeneration) {
+  const scope = state.authScope;
+  while (generation === state.authGeneration && state.authScope === scope && hasManagerAccess()) {
+    const flight = managerSetupFlight;
+    if (flight && flight.scope === scope) {
+      const loaded = await flight.promise;
+      if (flight.generation === generation) return loaded;
+      continue;
+    }
+    const next = { scope, generation, promise:null };
+    next.promise = loadSetup(generation).finally(() => {
+      if (managerSetupFlight === next) managerSetupFlight = null;
+    });
+    managerSetupFlight = next;
+    return next.promise;
+  }
+  return undefined;
+}
+
+function finishManagerSetup(requestedTab, tabRevision) {
+  state.managerSetupReady = true;
+  managerSetupNotice('', false);
+  showScheduleViews();
+  setRollbackAvailability();
+  updateImportDisplayAvailability();
+  updateEditAvailability();
+  if (state.tabChoiceRevision === tabRevision && state.tab !== requestedTab) chooseTab(requestedTab);
+}
+
+$('managerSetupRetry').addEventListener('click', async () => {
+  if (!hasManagerAccess() || state.managerSetupReady || state.authResolving) return;
+  const generation = state.authGeneration;
+  const tabRevision = state.tabChoiceRevision;
+  const requestedTab = new URLSearchParams(location.search).get('tab') || 'manage';
+  $('managerSetupRetry').disabled = true;
+  managerSetupNotice('בודק מחדש את הגדרות התחנה. אפשר לצפות בסידור בזמן ההמתנה.', false);
+  const loaded = await loadManagerSetup(generation);
+  if (generation !== state.authGeneration || !hasManagerAccess()) return;
+  $('managerSetupRetry').disabled = false;
+  if (loaded) finishManagerSetup(requestedTab, tabRevision);
+  else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
+});
 
 // כל המידע הבא שייך לזהות ולתחנה שאושרו בשרת. החלפת scope אינה
 // רק החלפת לוח: היא מוחקת גם טיוטות, מדיניות, מקור, התאמות שמות,
@@ -4508,6 +5190,7 @@ addEventListener('resize', refitAll);
 function resetScopedWorkspace() {
   Object.assign(state, {
     authContextVersion: state.authContextVersion + 1,
+    managerSetupReady: false, tabChoiceRevision: 0,
     setup: null, draft: null, draftPreview: null, previewStart: null,
     publishRequestId: null, publishRequestKey: null,
     plannerPending: null, rollbackPending: null,
@@ -4517,6 +5200,9 @@ function resetScopedWorkspace() {
     pendingCutover: null,
     sourceTable: null, sourceMap: null, sourceActive: null,
     sourcePlan: null, sourceBusy: false, sourceDirty: false,
+    rosterSource: null, rosterPlan: null, rosterPending: null,
+    rosterRevision: 0, rosterPlanRevision: null,
+    rosterBusy: false, rosterDirty: false, rosterVisible: 50,
     importAliases: {}, importMatrix: null, importLabelSpans: null,
     importFileName: null, importSelectedFile: null, importedDraft: null,
     importStationMap: null, importDisplay: null, importReport: null,
@@ -4539,6 +5225,7 @@ function resetScopedWorkspace() {
   [
     'modeTargets', 'modeMessage', 'policySubs', 'policySteps', 'policyChanges',
     'policyMessage', 'sourceMap', 'sourceActiveValues', 'sourceCounts',
+    'rosterSourceMessage', 'rosterSourceCounts', 'rosterSourceRows',
     'sourceReport', 'sourceMessage', 'importStationMapGrid', 'importCounts',
     'importBlocks', 'importUnresolved', 'importDuplicates', 'importMessage',
     'overrideList', 'draftSummary', 'gapSummary', 'gapDays', 'gapMessage',
@@ -4550,7 +5237,7 @@ function resetScopedWorkspace() {
   ].forEach((id) => { const element = $(id); if (element) clear(element); });
 
   ['sourceMap', 'sourceActive', 'sourceCounts', 'sourceAcceptWrap',
-    'sourceReportWrap', 'importStationMap', 'importReport', 'gapCard',
+    'sourceReportWrap', 'rosterSourceEditor', 'importStationMap', 'importReport', 'gapCard',
     'editCard', 'editReport', 'editPolicyChanged', 'editGaps', 'draftGaps']
     .forEach((id) => { const element = $(id); if (element) element.hidden = true; });
   $('modeCard').hidden = true;
@@ -4564,6 +5251,9 @@ function resetScopedWorkspace() {
   $('draftBadge').hidden = true;
   $('sourceSummary').textContent = 'טוען מדיניות ומקור נתונים…';
   $('sourceSummaryLine').textContent = 'אין מקור כוח-אדם פעיל.';
+  $('rosterSourceSearch').value = '';
+  $('rosterSourceNeeds').checked = false;
+  $('rosterSourceConfirm').checked = false;
   $('policyVersion').textContent = '';
   $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
   $('importDisplayStatus').textContent = 'הייבוא אינו מפעיל את המנוע ואינו שולח התראות.';
@@ -4580,6 +5270,7 @@ async function handleIdToken(user) {
   state.authResolving = true;
   state.authGeneration += 1;
   const generation = state.authGeneration;
+  clearMineInflight();
   invalidateRange();
   state.status = null;
   state.mine = null;
@@ -4642,7 +5333,8 @@ async function handleIdToken(user) {
   if (interruptedOperation) {
     state.user = user;
     state.claims = claims;
-    await refreshBoardSlotKeys(claims);
+    if (!await refreshBoardSlotKeys(claims, user, generation)) return;
+    if (generation !== state.authGeneration || state.user !== user) return;
     state.authScope = nextScope;
     state.status = status;
     renderNav(state.claims, 'schedule-management.html', user.displayName || user.email || '', state.roleView.presentation);
@@ -4665,6 +5357,21 @@ async function handleIdToken(user) {
     showUnavailable('הסידור החדש עדיין אינו פעיל',
       'לא ניתן לקבוע איזו תצוגת סידור בטוחה להצגה. נסה/י לרענן או לפנות לאחראי/ת הסידור.');
     $('appMain').classList.remove('hide');
+    return;
+  }
+  if (hasManagerAccess() && !state.managerSetupReady) {
+    const requestedTab = state.tab || new URLSearchParams(location.search).get('tab') || 'station';
+    const tabRevision = state.tabChoiceRevision;
+    showScheduleViews();
+    if (requestedTab === 'station' || requestedTab === 'mine') chooseTab(requestedTab, false);
+    managerSetupNotice('מאמת מחדש את כלי ניהול הסידור. אפשר לצפות בסידור בזמן ההמתנה.', false);
+    $('appMain').classList.remove('hide');
+    void loadModeOptions(generation);
+    void loadImportDisplayStatus($('importMonth').value, generation);
+    const loaded = await loadManagerSetup(generation);
+    if (generation !== state.authGeneration || state.authScope !== nextScope) return;
+    if (loaded === true) finishManagerSetup(requestedTab, tabRevision);
+    else managerSetupNotice('לא ניתן לטעון את כלי הניהול. אפשר לבחור סידור התחנה או הסידור שלי לצפייה.', true);
     return;
   }
   setRollbackAvailability();

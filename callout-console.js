@@ -1,9 +1,16 @@
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { CREW_HE } from './rotation.js?v=42h20';
+import { CREW_HE } from './rotation.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
+import { isTrial, TRIAL_BROADCAST_WARNING } from './mode-bar.js?v=42h42';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h42';
 
 const ALLOWED_ROLES = Object.freeze(['commander', 'deputy']);
+const ROSTER_LOAD_TIMEOUT_MS = 7000;
 let active = null;
+// Only an in-memory handoff across an ID-token refresh on this page. Never
+// persist the callout text or recipients in browser storage.
+let pendingTransfer = null;
 
 function text(value, max) {
   return String(value == null ? '' : value).normalize('NFC').trim().slice(0, max);
@@ -22,9 +29,164 @@ function setMessage(element, value, kind) {
   element.className = 'msg ' + (value ? (kind || '') : '');
 }
 
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(label || 'timeout');
+      error.code = 'deadline-exceeded';
+      reject(error);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function rosterLoadTimeoutMs() {
+  const override = Number(globalThis.__CALLOUT_RECIPIENT_TIMEOUT_MS);
+  return Number.isFinite(override) && override >= 10 ? override : ROSTER_LOAD_TIMEOUT_MS;
+}
+
+function firstSuccessful(promises) {
+  return new Promise((resolve, reject) => {
+    let left = promises.length;
+    const errors = [];
+    promises.forEach(promise => Promise.resolve(promise).then(resolve, error => {
+      errors.push(error);
+      left -= 1;
+      if (!left) reject(errors[0] || error);
+    }));
+  });
+}
+
 function rosterName(session, uid) {
   const person = session.roster.get(uid);
   return person && person.name ? person.name : 'לא בסגל';
+}
+
+function crewRosterRows(session) {
+  return Array.from(session.roster, ([uid, person]) => ({ uid, ...person }))
+    .filter(person => session.isSuper || person.crew === session.crew)
+    .filter(person => session.isSuper ? person.crew === session.crew : true)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+}
+
+function rosterRows(session) {
+  const query = text(session.recipientQuery, 80).toLocaleLowerCase('he');
+  const rows = crewRosterRows(session);
+  if (!query) return rows;
+  return rows.filter(person => {
+    const name = String(person.name || '').toLocaleLowerCase('he');
+    const uid = String(person.uid || '').toLocaleLowerCase('he');
+    return name.includes(query) || uid.includes(query);
+  });
+}
+
+function selectedUids(session) {
+  if (!session.selectedRecipients) return null;
+  return Array.from(session.selectedRecipients).filter(uid => uid === session.uid || session.roster.has(uid));
+}
+
+function syncRecipientMode(session, picked) {
+  const selfOnly = Array.isArray(picked) && picked.length === 1 && picked[0] === session.uid;
+  if (session.elements.recipientAll) {
+    session.elements.recipientAll.setAttribute('aria-pressed', session.selectedRecipients ? 'false' : 'true');
+  }
+  if (session.elements.recipientNone) {
+    session.elements.recipientNone.setAttribute('aria-pressed',
+      session.selectedRecipients && !selfOnly ? 'true' : 'false');
+  }
+  if (session.elements.recipientSelf) {
+    session.elements.recipientSelf.setAttribute('aria-pressed', selfOnly ? 'true' : 'false');
+  }
+}
+
+function selectionLabel(session, uids) {
+  if (!Array.isArray(uids)) return CREW_HE[session.crew] || ('משמרת ' + session.crew);
+  if (uids.length === 1 && uids[0] === session.uid) return 'בדיקת עצמי';
+  return 'נבחרו ' + uids.length + ' לוחמים';
+}
+
+function renderRecipients(session) {
+  const list = session.elements.recipientList;
+  if (!list || active !== session) return;
+  const crewRows = crewRosterRows(session);
+  const rows = rosterRows(session);
+  list.setAttribute('aria-busy', session.rosterLoaded ? 'false' : 'true');
+  if (session.elements.recipientNone) {
+    session.elements.recipientNone.disabled = !session.rosterLoaded || session.rosterFailed || !crewRows.length;
+  }
+  if (session.elements.recipientSearch) {
+    session.elements.recipientSearch.disabled = !session.rosterLoaded || session.rosterFailed || !crewRows.length;
+  }
+  list.replaceChildren();
+  if (!session.rosterLoaded) {
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    notice.textContent = 'טוען רשימת לוחמים לבחירה פרטנית…';
+    list.appendChild(notice);
+  } else if (session.rosterFailed) {
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'secondary';
+    retry.textContent = 'טען רשימה שוב';
+    retry.onclick = () => reloadRoster(session);
+    notice.append('רשימת הלוחמים לא נטענה. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ', retry);
+    list.appendChild(notice);
+  } else if (!rows.length) {
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    const hasQuery = !!text(session.recipientQuery, 80);
+    notice.textContent = hasQuery
+      ? 'אין לוחמים שתואמים לחיפוש. נסו שם אחר או נקו את השדה.'
+      : 'לא נמצאו לוחמים פעילים במשמרת זו. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי במצב אימון.';
+    list.appendChild(notice);
+  }
+  rows.forEach(person => {
+    const label = document.createElement('label');
+    label.className = 'recipient-item';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = person.uid;
+    input.checked = !session.selectedRecipients || session.selectedRecipients.has(person.uid);
+    label.classList.toggle('is-picked', input.checked);
+    input.onchange = () => {
+      if (!session.selectedRecipients) {
+        // Preserve full-crew selection when leaving "all" while a search filter is active.
+        session.selectedRecipients = new Set(crewRosterRows(session).map(row => row.uid));
+      }
+      if (input.checked) session.selectedRecipients.add(person.uid);
+      else session.selectedRecipients.delete(person.uid);
+      renderRecipients(session);
+    };
+    const mark = document.createElement('span');
+    mark.className = 'recipient-check';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = '✓';
+    const name = document.createElement('span');
+    name.textContent = person.name || person.uid;
+    const meta = document.createElement('small');
+    meta.textContent = person.uid === session.uid ? 'אני' : (CREW_HE[person.crew] || person.crew || '');
+    label.append(input, mark, name, meta);
+    list.appendChild(label);
+  });
+  const picked = selectedUids(session);
+  syncRecipientMode(session, picked);
+  if (session.elements.recipientSummary) {
+    session.elements.recipientSummary.textContent = session.rosterFailed
+      ? 'רשימת הלוחמים לא זמינה כרגע. אפשר לנסות שוב, לשלוח לכל המשמרת או לבצע בדיקת עצמי.'
+      : picked
+      ? (picked.length
+        ? 'בחירה פרטנית פעילה: הקריאה תישלח ל־' + selectionLabel(session, picked) + '.'
+        : 'בחירה פרטנית פעילה: לא נבחרו נמענים.')
+      : (session.rosterLoaded
+        ? 'ברירת מחדל: כל אנשי ' + (CREW_HE[session.crew] || ('משמרת ' + session.crew)) + '. אפשר לבחור לוחמים ספציפיים מהרשימה.'
+        : 'טוען רשימת לוחמים לבחירה פרטנית…');
+    if (session.rosterSource === 'cache' && session.rosterLoaded) {
+      session.elements.recipientSummary.textContent += ' הרשימה השמורה מתעדכנת כעת ברקע.';
+    }
+  }
 }
 
 function renderLive(session, list) {
@@ -34,12 +196,19 @@ function renderLive(session, list) {
   box.replaceChildren();
 
   list.forEach(({ id, value }) => {
-    const uids = Array.isArray(value.uids) ? value.uids : [];
+    const rehearsal = value.rehearsal === true;
+    const uids = rehearsal && Array.isArray(value.rehearsal_uids)
+      ? value.rehearsal_uids : (Array.isArray(value.uids) ? value.uids : []);
     const legacy = value.acks && typeof value.acks === 'object' ? value.acks : {};
     const modern = value.responses && typeof value.responses === 'object' ? value.responses : {};
     const acks = { ...legacy, ...modern };
+    // A response is evidence for this callout only when its uid belongs to the
+    // immutable dispatch audience. Old/corrupt response rows must not inflate
+    // a commander's live totals. Legacy rows without uids keep their historical
+    // behaviour until they are closed.
+    const canonical = uids.length ? new Set(uids) : null;
     const coming = [], unavailable = [], seenOnly = [];
-    Object.keys(acks).forEach(uid => {
+    Object.keys(acks).filter(uid => !canonical || canonical.has(uid)).forEach(uid => {
       const answer = acks[uid] || {};
       if (answer.resp === 'coming') {
         coming.push(rosterName(session, uid));
@@ -54,19 +223,45 @@ function renderLive(session, list) {
       return answer.resp === 'coming' || answer.resp === 'no' || Boolean(answer.seen_at);
     }));
     const pendingNames = uids.filter(uid => !answered.has(uid)).map(uid => rosterName(session, uid));
+    const sentNames = uids.map(uid => rosterName(session, uid));
+    const viewedCount = coming.length + unavailable.length + seenOnly.length;
 
     const card = document.createElement('article');
-    card.className = 'callout-row';
+    card.className = 'callout-row' + (rehearsal ? ' rehearsal' : '');
     const heading = document.createElement('strong');
     heading.textContent = (value.target_he || ('משמרת ' + session.crew)) +
-      (value.active === false ? ' · סגורה' : '');
+      (rehearsal ? ' · תרגול ללא שידור' : (value.active === false ? ' · סגורה' : ''));
     const body = document.createElement('p');
     body.textContent = text(value.text, 300);
     const tally = document.createElement('div');
     tally.className = 'tally';
-    tally.textContent = 'טרם הוצג ' + pendingNames.length + ' · הוצג, טרם ענה ' + seenOnly.length +
-      ' · אישר הגעה ' + coming.length + ' · דחה ' + unavailable.length;
-    card.append(heading, body, tally);
+    tally.textContent = 'טרם הוצג ' + pendingNames.length + ' · הוצג, טרם ענה ' + seenOnly.length;
+    const metrics = document.createElement('div');
+    metrics.className = 'callout-metrics';
+    [
+      [rehearsal ? 'נבחרו לתרגול' : 'נשלח אל', uids.length],
+      ['נצפה', viewedCount],
+      ['אישרו / בדרך', coming.length],
+      ['דחו', unavailable.length]
+    ].forEach(([label, count]) => {
+      const metric = document.createElement('div');
+      const number = document.createElement('strong');
+      const caption = document.createElement('span');
+      number.textContent = String(count);
+      caption.textContent = label;
+      // Label precedes the number in DOM order so screen readers announce
+      // the meaning before the value; CSS still gives the number emphasis.
+      metric.append(caption, number);
+      metrics.appendChild(metric);
+    });
+    card.append(heading, body, metrics, tally);
+
+    if (sentNames.length) {
+      const row = document.createElement('small');
+      row.className = 'callout-sent-to';
+      row.textContent = (rehearsal ? 'נבחרו לתרגול: ' : 'נשלח אל: ') + sentNames.join(', ');
+      card.appendChild(row);
+    }
 
     if (coming.length) {
       const row = document.createElement('small');
@@ -102,7 +297,7 @@ function renderLive(session, list) {
         } catch (error) {
           close.disabled = false;
           setMessage(session.elements.message,
-            'סגירת הקריאה נכשלה. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+            (logError('callout close', error), 'סגירת הקריאה נכשלה. ' + errorText(error)), 'err');
         }
       };
       card.appendChild(close);
@@ -111,16 +306,98 @@ function renderLive(session, list) {
   });
 }
 
-async function loadRoster(session) {
-  // This function is reached only after initCalloutConsole has accepted the
-  // signed claims. A denied role never starts a roster read.
-  const snap = await getDocs(collection(session.db, 'stations', session.sid, 'roster'));
-  if (active !== session) return;
+function applyRosterRows(session, rows) {
+  session.roster.clear();
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const uid = text(row && row.uid, 128);
+    const crew = text(row && row.crew, 1);
+    if (!uid || crew !== session.crew) return;
+    session.roster.set(uid, { name:text(row && row.name, 120), crew });
+  });
+}
+
+async function loadRosterFromServer(session) {
+  const payload = { crew:session.crew, ...(session.isSuper ? { target_station_id:session.sid } : {}) };
+  const response = await withTimeout(session.listCalloutRecipients(payload),
+    rosterLoadTimeoutMs(), 'callout-recipients-timeout');
+  const data = response && response.data ? response.data : {};
+  return Array.isArray(data.recipients) ? data.recipients : [];
+}
+
+async function loadRosterFromFirestore(session) {
+  // Fallback only. The authoritative picker path is the callable above; this
+  // keeps older deployments usable while functions and hosting roll forward.
+  const rosterQuery = query(collection(session.db, 'stations', session.sid, 'roster'),
+    where('crew', '==', session.crew));
+  const snap = await withTimeout(getDocs(rosterQuery),
+    rosterLoadTimeoutMs(), 'callout-roster-timeout');
+  const rows = [];
   snap.forEach(doc => {
     const value = doc.data() || {};
-    if (value.is_active === false) return;
-    session.roster.set(doc.id, { name:text(value.full_name, 120) });
+    rows.push({ uid:doc.id, name:value.full_name, crew:value.crew, is_active:value.is_active });
   });
+  return rows.filter(row => row.is_active !== false);
+}
+
+async function loadRoster(session) {
+  // This function is reached only after initCalloutConsole has accepted the
+  // signed claims. A denied role never starts a recipient read.
+  //
+  // The callable is the authoritative picker path, but a cold Cloud Function
+  // must not leave the commander staring at "טוען" while the roster is already
+  // readable. Start both safe reads together and paint the first successful
+  // answer; if the authoritative callable returns later it refreshes the same
+  // list. The send path still goes through `sendCallout`, which re-filters all
+  // selected uids server-side before delivery.
+  const loadId = Number(session.rosterLoadId || 0) + 1;
+  session.rosterLoadId = loadId;
+  session.rosterSource = '';
+  const source = async (label, loader) => {
+    try {
+      const rows = await loader(session);
+      if (active !== session || session.rosterLoadId !== loadId) return label;
+      // Firestore is a quick availability fallback. Once the callable has
+      // returned, a slower/stale fallback must never replace its authoritative
+      // answer. If fallback wins the race it may paint immediately; the
+      // callable is still allowed to refresh it when it arrives.
+      if (label === 'firestore' && session.rosterSource === 'server') return label;
+      applyRosterRows(session, rows);
+      session.rosterSource = label;
+      session.rosterFailed = false;
+      session.rosterLoaded = true;
+      writeCalloutRosterCache(session, rows);
+      renderRecipients(session);
+      return label;
+    } catch (error) {
+      logError('callout recipients ' + label, error);
+      throw error;
+    }
+  };
+  await firstSuccessful([
+    source('server', loadRosterFromServer),
+    source('firestore', loadRosterFromFirestore)
+  ]);
+}
+
+async function reloadRoster(session) {
+  if (active !== session) return;
+  const hasCachedRows = session.rosterSource === 'cache' && session.roster.size > 0;
+  session.rosterFailed = false;
+  session.rosterLoaded = hasCachedRows;
+  renderRecipients(session);
+  try {
+    await loadRoster(session);
+  } catch (error) {
+    if (active !== session) return;
+    session.rosterFailed = !hasCachedRows;
+    session.rosterLoaded = true;
+    renderRecipients(session);
+    setMessage(session.elements.message,
+      hasCachedRows
+        ? 'מוצגת רשימה שמורה. הרענון נכשל, והשרת יאמת מחדש כל נמען בזמן השליחה. ' + errorText(error)
+        : 'רשימת השמות לא נטענה כרגע. אפשר לשלוח לכל המשמרת או לבצע בדיקת עצמי. ' + errorText(error),
+      hasCachedRows ? 'info' : 'err');
+  }
 }
 
 function watchOwnCallouts(session) {
@@ -136,12 +413,14 @@ function watchOwnCallouts(session) {
       session.callouts.set(doc.id, value);
       rows.push({ id:doc.id, value:{ ...value, responses:session.responses.get(doc.id) || {} } });
       watchResponses(session, doc.id);
-      if (value.by_uid === session.uid && value.target === 'crew:' + session.crew &&
+      if (value.by_uid === session.uid &&
+          (value.target === 'crew:' + session.crew || value.target === 'people') &&
           !session.pendingRequest && value.active !== false &&
           ['reserved','delivering','partial'].includes(String(value.delivery_state || '')) &&
           /^[A-Za-z0-9_-]{16,80}$/.test(String(value.request_id || '')) && text(value.text, 300)) {
         session.pendingRequest = {
-          id:String(value.request_id), message:text(value.text, 300), retries:0
+          id:String(value.request_id), message:text(value.text, 300), retries:0, uncertain:true,
+          uids:value.target === 'people' && Array.isArray(value.uids) ? value.uids.slice() : null
         };
         session.elements.input.value = session.pendingRequest.message;
         session.elements.input.readOnly = true;
@@ -162,7 +441,7 @@ function watchOwnCallouts(session) {
   }, error => {
     if (active === session) {
       setMessage(session.elements.message,
-        'מעקב התגובות אינו זמין כרגע. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+        'מעקב התגובות אינו זמין כרגע. ' + errorText(error), 'err');
     }
   });
 }
@@ -181,18 +460,40 @@ function watchResponses(session, calloutId) {
     renderLive(session, rows);
   }, error => {
     if (active === session) setMessage(session.elements.message,
-      'תגובות הקריאה אינן זמינות כרגע. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+      'תגובות הקריאה אינן זמינות כרגע. ' + errorText(error), 'err');
   });
   session.responseStops.set(calloutId, stop);
 }
 
-export function destroyCalloutConsole() {
+export function destroyCalloutConsole(options = {}) {
   const prior = active;
   active = null;
+  if (options.discardPending === true) pendingTransfer = null;
   if (!prior) return;
+  if (options.discardPending !== true && prior.pendingRequest) {
+    pendingTransfer = { uid:prior.uid, sid:prior.sid, crew:prior.crew, isSuper:prior.isSuper,
+      request:{ ...prior.pendingRequest,
+        uids:Array.isArray(prior.pendingRequest.uids) ? prior.pendingRequest.uids.slice() : null } };
+  }
   try { prior.stop(); } catch (_) {}
-  prior.elements.send.onclick = null;
-  prior.elements.live.replaceChildren();
+  try { clearTimeout(prior.retryTimer); } catch (_) {}
+  const els = prior.elements || {};
+  if (els.send) els.send.onclick = null;
+  if (els.rehearse) els.rehearse.onclick = null;
+  if (els.recipientAll) els.recipientAll.onclick = null;
+  if (els.recipientNone) els.recipientNone.onclick = null;
+  if (els.recipientSelf) els.recipientSelf.onclick = null;
+  if (els.recipientSearch) {
+    els.recipientSearch.oninput = null;
+    els.recipientSearch.value = '';
+  }
+  if (els.recipientList) {
+    els.recipientList.replaceChildren();
+    els.recipientList.setAttribute('aria-busy', 'false');
+  }
+  if (els.recipientSummary) els.recipientSummary.textContent = '';
+  if (els.live) els.live.replaceChildren();
+  if (els.liveCard) els.liveCard.classList.add('hide');
 }
 
 export async function initCalloutConsole(options = {}) {
@@ -214,42 +515,125 @@ export async function initCalloutConsole(options = {}) {
   const session = {
     db:options.db, sid, crew, role, isSuper, uid:String(options.user.uid), elements:options.elements,
     roster:new Map(), callouts:new Map(), responses:new Map(), responseStops:new Map(), stop:() => {},
-    pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
+    selectedRecipients:null, recipientQuery:'', rosterLoaded:false, rosterFailed:false, pendingRequest:null, retryTimer:null, resumeStarted:false, resumeDelivery:null,
     sendCallout:options.sdk.httpsCallable(options.functions, 'sendCallout'),
+    listCalloutRecipients:options.sdk.httpsCallable(options.functions, 'listCalloutRecipients'),
     closeCallout:options.sdk.httpsCallable(options.functions, 'closeCallout')
   };
+  if (pendingTransfer) {
+    if (pendingTransfer.uid === session.uid && pendingTransfer.sid === session.sid &&
+        pendingTransfer.crew === session.crew && pendingTransfer.isSuper === session.isSuper) {
+      session.pendingRequest = pendingTransfer.request;
+      session.elements.input.value = session.pendingRequest.message;
+      session.elements.input.readOnly = true;
+    }
+    // A different identity or target must never inherit a pending send.
+    pendingTransfer = null;
+  }
   active = session;
+  const cachedRows = readCalloutRosterCache(session);
+  if (cachedRows.length) {
+    applyRosterRows(session, cachedRows);
+    session.rosterSource = 'cache';
+    session.rosterLoaded = true;
+  }
   session.elements.crew.textContent = CREW_HE[crew] || ('משמרת ' + crew);
-  const sendPending = async autoRetry => {
+  if (session.elements.recipientSearch) {
+    session.elements.recipientSearch.value = '';
+    session.elements.recipientSearch.oninput = () => {
+      if (active !== session) return;
+      session.recipientQuery = session.elements.recipientSearch.value || '';
+      renderRecipients(session);
+    };
+  }
+  if (session.elements.recipientAll) session.elements.recipientAll.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = null;
+    renderRecipients(session);
+  };
+  if (session.elements.recipientNone) session.elements.recipientNone.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = new Set();
+    renderRecipients(session);
+  };
+  if (session.elements.recipientSelf) session.elements.recipientSelf.onclick = () => {
+    if (session.pendingRequest) {
+      setMessage(session.elements.message, 'שליחה קודמת ממתינה; אי אפשר לשנות נמענים עד שתסתיים.', 'info');
+      return;
+    }
+    session.selectedRecipients = new Set([session.uid]);
+    renderRecipients(session);
+    setMessage(session.elements.message,
+      isTrial()
+        ? 'בדיקת עצמי מוכנה. שלח קריאה כדי לשמוע את צליל קריאת הפתע במכשיר הזה.'
+        : 'בדיקת עצמי מיועדת למצב אימון. במצב חי המזעיק אינו מקבל קריאה לעצמו.', 'info');
+  };
+  const sendPending = async (autoRetry, rehearsalRequested) => {
     if (active !== session) return;
     const typedMessage = text(session.elements.input.value, 300);
-    const message = autoRetry && session.pendingRequest
+    const message = session.pendingRequest
       ? session.pendingRequest.message : typedMessage;
     if (!message) {
       setMessage(session.elements.message, 'צריך לכתוב את הודעת הקריאה.', 'err');
       return;
     }
-    if (!autoRetry && !window.confirm('להזעיק את ' + (CREW_HE[crew] || crew) + ' בתחנה ' + sid + '?\n\n' + message)) return;
-    if (session.pendingRequest && session.pendingRequest.message !== message) {
+    const currentUids = session.pendingRequest
+      ? (Array.isArray(session.pendingRequest.uids) ? session.pendingRequest.uids.slice() : null)
+      : selectedUids(session);
+    if (Array.isArray(currentUids) && currentUids.length === 0) {
+      setMessage(session.elements.message, 'יש לבחור לפחות נמען אחד לקריאת פתע.', 'err');
+      return;
+    }
+    const targetName = selectionLabel(session, currentUids);
+    const rehearsal = session.pendingRequest
+      ? session.pendingRequest.rehearsal === true : rehearsalRequested === true;
+    if (!session.pendingRequest && !window.confirm(rehearsal
+      ? 'לשמור תרגול עבור ' + targetName + '?\n\nלא תישלח התראה, לא יושמע צליל והעובדים לא יראו את התרגול.\n\n' + message
+      : 'להזעיק את ' + targetName + ' בתחנה ' + sid + '?\n\n' + message)) return;
+    const priorUids = session.pendingRequest && Array.isArray(session.pendingRequest.uids)
+      ? session.pendingRequest.uids.slice().sort().join('\0') : null;
+    const nextUids = Array.isArray(currentUids) ? currentUids.slice().sort().join('\0') : null;
+    if (session.pendingRequest && (session.pendingRequest.message !== message || priorUids !== nextUids)) {
       session.elements.input.value = session.pendingRequest.message;
       setMessage(session.elements.message,
         'קריאה קודמת עדיין ממתינה למסירה; ממשיכים אותה לפני יצירת קריאה חדשה.', 'info');
       return;
     }
+    /* ⭐ תגית קטנה בכותרת מספיקה כדי לזכור שהמערכת בניסוי. היא אינה
+     * מספיקה כדי לא לשדר לתחנה בטעות, ולכן לפני שידור הניסוח המלא
+     * עדיין מוצג — ודורש אישור מפורש. */
+    if (!session.pendingRequest && !rehearsal && isTrial() && !window.confirm(TRIAL_BROADCAST_WARNING)) {
+      setMessage(session.elements.message, 'השידור בוטל. לא נשלחה קריאה.', 'info');
+      return;
+    }
     if (!session.pendingRequest) {
       const raw = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
         ? globalThis.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
-      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_') };
+      session.pendingRequest = { message, id:String(raw).replace(/[^A-Za-z0-9_-]/g, '_'), rehearsal,
+        uids:Array.isArray(currentUids) ? currentUids.slice() : null, uncertain:false };
     }
     session.elements.input.readOnly = true;
     session.elements.send.disabled = true;
-    setMessage(session.elements.message, 'שולח קריאת פתע…', 'info');
+    if (session.elements.rehearse) session.elements.rehearse.disabled = true;
+    setMessage(session.elements.message, rehearsal ? 'שומר תרגול ללא שידור…' : 'שולח קריאת פתע…', 'info');
     try {
-      const response = await session.sendCallout({ target:'crew:' + crew, text:message,
-        request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) });
+      const payload = Array.isArray(session.pendingRequest.uids)
+        ? { target:'people', crew, uids:session.pendingRequest.uids.slice(), text:message,
+            request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) }
+        : { target:'crew:' + crew, text:message,
+            request_id:session.pendingRequest.id, ...(isSuper ? { target_station_id:sid } : {}) };
+      if (rehearsal) payload.rehearsal = true;
+      const response = await session.sendCallout(payload);
       if (active !== session) return;
       const data = response && response.data ? response.data : {};
       if (data.ok === false && data.retryable === true) {
+        session.pendingRequest.uncertain = true;
         const wait = Math.max(500, Math.min(120000, Number(data.retry_after_ms) || 1000));
         session.pendingRequest.retries = Number(session.pendingRequest.retries || 0) + 1;
         if (session.pendingRequest.retries <= 3) {
@@ -280,35 +664,81 @@ export async function initCalloutConsole(options = {}) {
             : 'הקריאה לא נשלחה. נסה שוב.', 'err');
         return;
       }
-      setMessage(session.elements.message,
-        'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' אנשי משמרת.', 'ok');
+      setMessage(session.elements.message, data.rehearsal === true
+        ? 'התרגול נשמר. לא נשלחה התראה לאף עובד.'
+        : 'הקריאה נשלחה ל־' + Number(data.sent || 0) + ' נמענים.', 'ok');
       if (text(session.elements.input.value, 300) === message) session.elements.input.value = '';
       session.elements.input.readOnly = false;
       session.pendingRequest = null;
       session.resumeStarted = false;
     } catch (error) {
-      if (active === session) setMessage(session.elements.message,
-        'שליחת הקריאה נכשלה. (' + (error.code || error.message || 'שגיאה') + ')', 'err');
+      if (active === session) {
+        logError('callout send', error);
+        const code = String(error && error.code || '').replace(/^functions\//, '');
+        if (['permission-denied','invalid-argument','failed-precondition'].includes(code)) {
+          if (session.pendingRequest && session.pendingRequest.uncertain) {
+            // A prior attempt may have committed before a network failure.
+            // A later terminal error does not prove that it did not.
+            setMessage(session.elements.message,
+              'הקריאה הקודמת עדיין אינה מאומתת. לא תיפתח קריאה חדשה; פנה למעקב הקריאות או למנהל. ' + errorText(error), 'err');
+          } else {
+            // First-attempt terminal rejection: no server send took place.
+            session.pendingRequest = null;
+            session.resumeStarted = false;
+            session.elements.input.readOnly = false;
+            setMessage(session.elements.message, 'הקריאה לא נשלחה. ' + errorText(error), 'err');
+          }
+        } else {
+          // Network/timeout is ambiguous. A retry MUST keep request_id and
+          // recipients; otherwise it may create a second live callout.
+          if (session.pendingRequest) session.pendingRequest.uncertain = true;
+          setMessage(session.elements.message,
+            'לא ניתן לאמת אם הקריאה נקלטה. נסה שוב — אותו מזהה שליחה יישמר. ' + errorText(error), 'err');
+        }
+      }
     } finally {
-      if (active === session) session.elements.send.disabled = false;
+      if (active === session) {
+        session.elements.send.disabled = false;
+        if (session.elements.rehearse) session.elements.rehearse.disabled = false;
+      }
     }
   };
-  session.resumeDelivery = () => sendPending(true);
-  session.elements.send.onclick = () => sendPending(false);
+  session.resumeDelivery = () => sendPending(true, false);
+  session.elements.send.onclick = () => sendPending(false, false);
+  if (session.elements.rehearse) session.elements.rehearse.onclick = () => sendPending(false, true);
+  if (session.pendingRequest) {
+    setMessage(session.elements.message, 'בודק מחדש שליחה קודמת עם אותו מזהה קריאה…', 'info');
+    session.resumeStarted = true;
+    setTimeout(() => { if (active === session) session.resumeDelivery(); }, 0);
+  }
 
   // Both reads begin only after the actual signed role, station and crew have
   // passed the fail-closed gate above.
-  const stopCallouts = watchOwnCallouts(session);
+  // בורר הנמענים הוא הפעולה הראשית. כשל סינכרוני בהפעלת המעקב
+  // לא רשאי לעצור את ציור הרשימה ולהשאיר "טוען" לנצח.
+  renderRecipients(session);
+  void reloadRoster(session);
+  let stopCallouts = () => {};
+  try {
+    stopCallouts = watchOwnCallouts(session) || stopCallouts;
+  } catch (error) {
+    logError('callout tracking start', error);
+    if (session.elements.tracking) {
+      setMessage(session.elements.tracking,
+        'מעקב הקריאות אינו זמין כרגע. בחירת נמענים ושיגור עדיין זמינים.', 'err');
+    }
+  }
   session.stop = () => {
     try { stopCallouts(); } catch (_) {}
     clearTimeout(session.retryTimer);
     session.responseStops.forEach(stop => { try { stop(); } catch (_) {} });
     session.responseStops.clear();
   };
-  try { await loadRoster(session); } catch (error) {
-    if (active === session) setMessage(session.elements.message,
-      'רשימת השמות לא נטענה; מוני התגובות ימשיכו להתעדכן.', 'info');
-  }
+  // The callout console is operational before the optional name list arrives.
+  // Full-crew dispatch and trial self-test stay available, while individual
+  // selection is enabled only after a bounded roster read paints real rows.
+  // This prevents a cold function or a stale Firestore connection from
+  // holding the whole screen behind an indefinite loading state.
   return Object.freeze({ hasPending:() => active === session && !!session.pendingRequest,
     destroy:() => { if (active === session) destroyCalloutConsole(); } });
 }

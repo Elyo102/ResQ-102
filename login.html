@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
-<link rel="stylesheet" href="./bulletin.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
+<link rel="stylesheet" href="./bulletin.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -63,6 +63,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
               margin-top:7px }
   .ver .note.new{ color:var(--accent-txt); font-weight:700 }
   .ver button{ margin-top:9px }
+  .preauth-update{margin-top:16px;border:1px solid var(--line);border-radius:12px;
+                  padding:12px 13px;background:var(--panel);text-align:start}
+  .preauth-update .vrow{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+  .preauth-update .vrow b{margin-inline-start:auto;color:var(--txt);font-variant-numeric:tabular-nums}
+  .preauth-update button{margin-top:10px;background:transparent;color:var(--accent-txt);
+                         border:1px solid var(--accent);min-height:46px}
+  .preauth-update .note{min-height:20px;margin-top:8px}
   .link{background:none;border:0;color:var(--dim);font-size:14px;
         cursor:pointer;margin-top:10px;text-decoration:underline;font-family:inherit}
   .msg{margin-top:16px;padding:12px 14px;border:1px solid transparent;border-radius:10px;font-size:14px;
@@ -117,6 +124,10 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 #joinPanel .join-choice input{width:44px;height:44px;min-height:44px;margin:0;flex:0 0 auto}
 #joinPanel .join-qual-extra{padding:0 54px 8px 0;display:grid;gap:6px}
 #joinPanel .join-ack{align-items:flex-start;line-height:1.5;padding-top:6px}
+#joinPanel .join-legal{display:grid;gap:8px;margin-top:12px}
+#joinPanel .join-legal-doc{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:0 12px}
+#joinPanel .join-legal-doc summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:750;color:var(--accent)}
+#joinPanel .join-legal-doc p{font-size:13px;line-height:1.65;color:var(--dim);margin:0 0 10px}
 #joinPanel .join-ok{color:var(--ok-fg);font-weight:600}
 #joinStatusBox .join-status{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;font-size:14px;line-height:1.7;text-align:right}
 #joinStatusBox .join-status-title{font-weight:700}
@@ -209,6 +220,23 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   body.art .tab.on{ color:#fff }
   body.art .link{ color:#dbe4ee }
   body.art .login-credit{ color:#cbd5e1 }
+  /* The join card sits on a dark glass surface even in the light theme.
+     Override light-theme text tokens here, including the nested legal card. */
+  body.art #joinPanel,
+  body.art #joinPanel .join-title,
+  body.art #joinPanel .join-step h3,
+  body.art #joinPanel .join-choice,
+  body.art #joinPanel label,
+  body.art #joinPanel legend,
+  body.art #joinPanel #joinWho{ color:#f8fafc }
+  body.art #joinPanel .join-text,
+  body.art #joinPanel .join-hint,
+  body.art #joinPanel .join-legal-doc p{ color:#dbe4ee }
+  body.art #joinPanel button.ghost{ color:#f8fafc; border-color:rgba(255,255,255,.45) }
+  body.art #joinPanel button.link,
+  body.art #joinPanel .join-legal-doc summary{ color:#bfdbfe }
+  body.art #joinPanel .join-legal-doc{ background:rgba(9,14,24,.88); border-color:rgba(255,255,255,.35) }
+  body.art #joinPanel .join-ok{ color:#86efac }
   body.art #btnLogin, body.art #btnFirst{ box-shadow:0 6px 18px rgba(232,89,12,.42) }
 
   /* מי שביקש פחות תנועה מקבל את המסך מיד. */
@@ -218,7 +246,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   }
 </style>
 </head>
-<body class="art">
+<body class="art" data-resq-shell="v1" data-resq-page="login">
 <div id="bgArt"></div>
 <div id="bgScrim"></div>
 
@@ -232,21 +260,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 // בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
 // והמסך נראה תקין לגמרי.
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -275,21 +315,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
   <section id="joinPanel" class="hide" aria-labelledby="joinTitle"></section>
   <details id="invitationPanel" class="hide">
-    <summary>הצטרפות באמצעות הזמנה</summary>
-    <p>קיבלת הזמנה ממנהל־על? אין צורך למלא בקשת הרשמה רגילה. הזן את שני הפרטים בערוץ פרטי בלבד; הם אינם נשמרים בדפדפן.</p>
-    <label for="invitationId">מזהה הזמנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
-    <label for="invitationSecret">סוד הזמנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    <summary>הצטרפות מהזמנה אישית</summary>
+    <p id="personalInviteHint">פתחו את קישור ההזמנה שנשלח אליכם. אם קיבלתם בעבר מזהה וסוד בנפרד, אפשר להזין אותם כאן.</p>
+    <div id="legacyInviteFields">
+      <label for="invitationId">מזהה הזמנה ישנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
+      <label for="invitationSecret">סוד הזמנה ישנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    </div>
     <div id="invitationAccount">
       <label for="invitationEmail">המייל שאליו נשלחה ההזמנה</label><input id="invitationEmail" type="email" dir="ltr" autocomplete="username">
       <label for="invitationPassword">סיסמה</label><input id="invitationPassword" type="password" autocomplete="current-password">
       <p>לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.</p>
       <button type="button" id="invitationSignIn">כניסה לחשבון קיים</button>
       <button type="button" id="invitationCreate">יצירת חשבון למימוש הזמנה</button>
+      <button type="button" class="back" id="invitationChoosePassword">החשבון כבר קיים? בחר/י סיסמה במייל</button>
     </div>
     <div id="invitationVerified" class="hide">
       <p id="invitationWho"></p>
       <button type="button" id="invitationVerify">שלח מייל אימות</button>
-      <button type="button" id="invitationRedeem">אימתתי את המייל — ממש הזמנה</button>
+      <p>לפני מימוש ההזמנה, קרא/י את <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>. אישור התקנון מתועד ואינו מהווה הסכמה להצעות שיווקיות.</p>
+      <button type="button" id="invitationRedeem">אני מסכים לתקנון</button>
     </div>
     <button type="button" id="invitationReset">נקה פרטי הזמנה</button>
     <p id="invitationStatus" class="msg" role="status" aria-live="polite"></p>
@@ -298,6 +342,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <div class="wait">
       <div class="icon">⏳</div>
       <div class="ttl">רגע…</div>
+      <p class="note">אפשר לקרוא את <a href="terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a> בזמן שהמערכת נטענת.</p>
     </div>
   </div>
 
@@ -313,6 +358,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <input type="text" id="loginEmp" inputmode="numeric" autocomplete="username">
       <label for="loginPass">סיסמה</label>
       <input type="password" id="loginPass" autocomplete="current-password">
+      <p class="note" id="loginTermsNotice">
+        הכניסה לשירות מותנית באישור <a href="terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a>
+        ו<a href="privacy.html" target="_blank" rel="noopener">הודעת הפרטיות</a>.
+        לאחר אימות הזהות, מי שטרם אישר יעבור למסך אישור בלבד ולא יוכל להשתמש ב־ResQ עד שהסכמתו תישמר בשרת.
+      </p>
       <button id="btnLogin">כניסה</button>
       <button class="link" id="btnForgot">שכחתי סיסמה</button>
       <div class="note">
@@ -368,7 +418,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <input type="password" id="fPass2" autocomplete="new-password">
       </div>
 
-      <button id="btnFirst">שלח בקשה</button>
+      <div class="note" id="registrationLegalNotice">
+        מפעיל השירות ובעל השליטה במידע: אלדד יונה ·
+        <a href="mailto:fire102.shits@gmail.com">fire102.shits@gmail.com</a>.<br>
+        <a href="./terms.html" target="_blank" rel="noopener">תקנון ותנאי שימוש · גרסה 1.3</a> ·
+        <a href="./privacy.html" target="_blank" rel="noopener">הודעת פרטיות · גרסה 2026-09-24</a>.
+        שליחת הבקשה מאשרת את תנאי השימוש; היא אינה הסכמה להצעות שיווקיות.
+      </div>
+      <button id="btnFirst">שלח בקשה ואשר תקנון</button>
       <button type="button" class="back hide" id="btnResubmitCancel">חזרה למסך החשבון</button>
       <div class="note">
         מספר העובד יוקצה לך אוטומטית עם אישור הבקשה. אין צורך למלא אותו.
@@ -376,6 +433,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="msg" id="msg" aria-live="polite"></div>
+    <section class="preauth-update" aria-labelledby="preAuthUpdateTitle">
+      <div class="vrow"><strong id="preAuthUpdateTitle">גרסת ResQ במכשיר</strong><b id="preAuthVersion">…</b></div>
+      <button type="button" id="preAuthUpdate">↻ עדכן את ResQ</button>
+      <div class="note" id="preAuthUpdateStatus" role="status" aria-live="polite">אפשר לבדוק ולעדכן גרסה לפני הכניסה.</div>
+    </section>
     <p class="login-credit">פיתוח וייצור: אלדד יונה</p>
   </div>
 
@@ -391,10 +453,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
       <div class="txt" id="waitWho" style="margin-top:14px;font-size:13px;opacity:.75"></div>
       <div id="joinStatusBox" class="hide"></div>
+      <div id="pendingTermsPanel" class="hide" role="group" aria-label="אישור תקנון מעודכן">
+        <p>כדי שמנהל המערכת יוכל לאשר את בקשתך, יש לקרוא ולאשר את
+          <a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת
+          <a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.</p>
+        <button type="button" id="pendingTermsNoMarketing">אני מסכים לתקנון</button>
+        <div id="pendingTermsStatus" class="msg" role="status" aria-live="polite"></div>
+      </div>
     </div>
     <div class="msg" id="bootMsg" aria-live="polite"></div>
     <button id="btnBootstrap" class="hide">הפעל את חשבון מנהל המערכת</button>
     <button id="btnResubmit" class="hide">מלא ושלח בקשה מחדש</button>
+    <button type="button" id="btnRetryTerms" class="hide">בדוק שוב את ההסכמה</button>
     <button id="btnLogoutWait">התנתק</button>
   </div>
 
@@ -403,8 +473,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     <header class="home-command-header" aria-labelledby="homeCommandTitle">
       <div class="home-command-brand" aria-hidden="true"><b>Res<span>Q</span></b><small>102</small></div>
       <div>
-        <h2 id="homeCommandTitle">כל מה שחשוב בתחנה, במקום אחד</h2>
-        <p>הודעות ועדכונים לפני תחילת המשמרת, ואחריהם התקלות הפתוחות שחשוב להכיר.</p>
+        <h2 id="homeCommandTitle">המשמרת שלי</h2>
+        <p id="homeCommandIntro">מה דורש ממך טיפול, עדכוני התחנה ותקלות שחשוב להכיר.</p>
       </div>
     </header>
     <section id="roleViewControl" class="role-view-control hide" aria-labelledby="roleViewLabel">
@@ -422,13 +492,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <a id="homeUrgentLink">פתח</a>
       </section>
 
-      <section id="homeTasks" class="home-panel home-tasks" aria-labelledby="homeTasksTitle">
+      <section id="homeTasks" class="home-panel home-tasks" aria-labelledby="homeTasksTitle" aria-busy="true">
         <header class="home-panel-head"><div>
-          <p class="home-eyebrow">לפני תחילת המשמרת</p>
+          <p id="homeTasksEyebrow" class="home-eyebrow">בשבילי היום</p>
           <h2 id="homeTasksTitle">דורש ממני</h2>
-          <p>משימות ופעולות שממתינות לטיפול שלך.</p>
+          <p id="homeTasksText">משימות ופעולות אישיות שממתינות לך.</p>
         </div></header>
         <div id="homeCommandStatus" class="home-command-status" aria-live="polite"></div>
+        <button type="button" id="homeCommandRetry" class="bulletin-retry hide">נסה שוב</button>
         <div id="homeTaskList" class="home-task-list"></div>
         <div id="homeTaskEmpty" class="home-task-empty hide">אין כרגע פעולות שממתינות לך.</div>
       </section>
@@ -546,9 +617,9 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           <p id="homeShiftLabel">המשמרת הנוכחית</p>
         </div></header>
         <div class="home-shift-metrics">
-          <div data-shift-metric="on_duty"><b>0</b><span>במשמרת</span></div>
-          <div data-shift-metric="open_faults"><b>0</b><span>תקלות פתוחות</span></div>
-          <div data-shift-metric="missing"><b>0</b><span>חסרים</span></div>
+          <div data-shift-metric="on_duty"><b>—</b><span>במשמרת</span></div>
+          <div data-shift-metric="open_faults"><b>—</b><span>תקלות פתוחות</span></div>
+          <div data-shift-metric="missing"><b>—</b><span>חסרים</span></div>
         </div>
       </section>
 
@@ -604,39 +675,41 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
 import { DISTRICTS, stationsInDistrict, stationName, districtName,
-         subStationsForStation } from './stations.js?v=42h20';
+         subStationsForStation } from './stations.js?v=42h42';
 import { renderNav, clearNav, clearNavigationTrail, recoverNativeBack }
-  from './nav.js?v=42h20';
-import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h20';
+  from './nav.js?v=42h42';
+import { ROLE_HE as ROLES_HE, VALID_ROLES, isMember } from './roles.js?v=42h42';
 import {
-  initPWA, applyReadyUpdate, registerPwaUpdateGuard, retryPendingPwaUpdate
-} from './pwa.js?v=42h20';
-import { APP_VERSION, APP_DATE } from './version.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
-import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h20';
-import { loadAlertsFeed } from './alerts-feed.js?v=42h20';
-import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h20';
-import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h20';
-import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h20';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
-import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h20';
+  initPWA, applyReadyUpdate, dismissUpdateReady, registerPwaUpdateGuard, retryPendingPwaUpdate
+} from './pwa.js?v=42h42';
+import { APP_VERSION, APP_DATE } from './version.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { initBulletin, destroyBulletin, setBulletinReadOnly, messageTimeMs } from './bulletin.js?v=42h42';
+import { clearCalloutRosterCache } from './callout-roster-cache.js?v=42h42';
+import { loadAlertsFeed } from './alerts-feed.js?v=42h42';
+import { initHomeFaults, destroyHomeFaults } from './home-faults.js?v=42h42';
+import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h42';
+import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h42';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h42';
+import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h42';
+import { consumePersonalInvitation } from './invitation-link.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
          deleteUser, updatePassword, reauthenticateWithCredential,
          EmailAuthProvider, setPersistence, browserLocalPersistence, sendEmailVerification, reload }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, getDocFromServer, setDoc, collection, query, where,
+import { getFirestore, doc, getDoc, getDocFromServer, setDoc, writeBatch, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -692,12 +765,21 @@ const callReset = httpsCallable(fns, 'requestPasswordReset');
 const callBoot  = httpsCallable(fns, 'bootstrapSuperAdmin');
 const callWho   = httpsCallable(fns, 'whoAmI');
 const callRedeemInvitation = httpsCallable(fns, 'redeemInvitation');
+const callRegistrationTerms = httpsCallable(fns, 'registrationTermsConsent');
 // קליטה בקישור קבוצתי (42H.21)
 const callInspectJoin = httpsCallable(fns, 'inspectJoinCampaign');
 const callRedeemJoin = httpsCallable(fns, 'redeemJoinCampaign');
 const callMyJoinStatus = httpsCallable(fns, 'getMyJoinStatus');
 const callMyReadiness = httpsCallable(fns, 'getMyReadiness');
 const JOIN_TOKEN = readJoinToken(location.search);
+const PERSONAL_INVITE = consumePersonalInvitation(window);
+if (PERSONAL_INVITE) {
+  $('invitationId').value = PERSONAL_INVITE.invite_id;
+  $('invitationSecret').value = PERSONAL_INVITE.secret;
+  $('legacyInviteFields').classList.add('hide');
+  $('personalInviteHint').textContent = 'הקישור נקלט. בחרו סיסמה, אמתו את המייל ואשרו את התקנון כדי לשלוח את הבקשה. ההרשאה תינתן רק אחרי אישור התחנה.';
+  $('invitationPanel').open = true;
+}
 let joinPanel = null, joinRegistered = false;
 function ensureJoinPanel(){
   if (!JOIN_TOKEN || joinPanel) return joinPanel;
@@ -707,7 +789,20 @@ function ensureJoinPanel(){
     redeem: async data => (await callRedeemJoin(data)).data,
     currentUser: () => auth.currentUser,
     createAccount: async (email, password) => { onboarding = true; try { const c = await createUserWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
-    signIn: async (email, password) => { onboarding = true; try { const c = await signInWithEmailAndPassword(auth, email, password); invitationUid = c.user.uid; return c; } finally { onboarding = false; } },
+    signIn: async (email, password) => {
+      onboarding = true; loginTransitionPending = true;
+      let credential;
+      try { credential = await signInWithEmailAndPassword(auth, email, password); }
+      catch (error) { loginTransitionPending = false; throw error; }
+      finally { onboarding = false; }
+      invitationUid = credential.user.uid;
+      let claims = {};
+      try { claims = (await credential.user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+      if (claims.super === true || hasCompleteServerAssignment(claims)) joinRegistered = true;
+      await startRoute(credential.user);
+      return credential;
+    },
+    requestPasswordReset: async email => (await callReset({ id: email })).data,
     sendVerification: () => sendEmailVerification(auth.currentUser),
     refreshUser: async () => { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } },
     claims: async () => auth.currentUser ? ((await auth.currentUser.getIdTokenResult()).claims || {}) : {},
@@ -821,7 +916,7 @@ function clearInvitation(){
   invitationControls();
 }
 function invitationControls(){
-  ['invitationSignIn','invitationCreate','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
+  ['invitationSignIn','invitationCreate','invitationChoosePassword','invitationVerify','invitationRedeem','invitationReset'].forEach(id=>$(id).disabled=invitationBusy);
   ['invitationId','invitationSecret'].forEach(id=>$(id).disabled=invitationBusy||!!invitationIntent);
   $('invitationAccount').classList.toggle('hide',!!auth.currentUser);
   $('invitationVerified').classList.toggle('hide',!auth.currentUser);
@@ -834,12 +929,18 @@ async function invitationAction(action){
   const current=()=>epoch===invitationEpoch && (auth.currentUser?.uid||'')===expectedUid;
   invitationBusy=true; invitationControls();
   try{
-    if(action==='create'||action==='signin'){
+    if(action==='choose-password'){
+      const email=$('invitationEmail').value.trim().toLowerCase();
+      if(!email)throw new Error('יש להזין את המייל שאליו נשלחה ההזמנה.');
+      await callReset({ id:email });
+      if(current())invitationMessage('אם החשבון קיים, נשלח למייל קישור לבחירת סיסמה. לאחר מכן חזור/י להזמנה והיכנס/י לחשבון הקיים.');
+    }else if(action==='create'||action==='signin'){
       if(auth.currentUser)throw new Error('כבר מחובר חשבון. התנתק כדי להשתמש בחשבון אחר.');
       const email=$('invitationEmail').value.trim().toLowerCase(), password=$('invitationPassword').value;
       if(!email||!password)throw new Error('יש להזין מייל וסיסמה.');
       if(action==='create'&&!pwOk(password))throw new Error('הסיסמה אינה עומדת בכללים המוצגים.');
       onboarding=true;
+      if(action==='signin')loginTransitionPending=true;
       const credential=await (action==='create'?createUserWithEmailAndPassword(auth,email,password):signInWithEmailAndPassword(auth,email,password));
       expectedUid=credential.user.uid;
       if(!current())return;
@@ -861,7 +962,9 @@ async function invitationAction(action){
         if(!invitationIntent){
           const invite_id=$('invitationId').value.trim(),secret=$('invitationSecret').value.trim();
           if(!invite_id||!secret)throw new Error('יש להזין מזהה הזמנה וסוד הזמנה.');
-          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret});
+          invitationIntent=Object.freeze({request_id:newRequestId(),invite_id,secret,ack:{
+            terms_version:'1.3',privacy_version:'2026-09-24',marketing_opt_in:false
+          }});
         }
         const result=(await callRedeemInvitation(invitationIntent)).data;
         if(!current())return;
@@ -871,7 +974,7 @@ async function invitationAction(action){
         await startRoute(user);
       }
     }
-  }catch(error){if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
+  }catch(error){if(action==='signin')loginTransitionPending=false;if(current())invitationMessage('הפעולה לא הושלמה. '+(error.message||'בדוק חיבור ונסה שוב.'),true);}
   finally{
     if(action==='create'||action==='signin')onboarding=false;
     if(current()){invitationBusy=false;invitationControls();if(action==='create'||action==='signin'){if(auth.currentUser)await startRoute(auth.currentUser);}}
@@ -879,6 +982,7 @@ async function invitationAction(action){
 }
 $('invitationSignIn').onclick=()=>invitationAction('signin');
 $('invitationCreate').onclick=()=>invitationAction('create');
+$('invitationChoosePassword').onclick=()=>invitationAction('choose-password');
 $('invitationVerify').onclick=()=>invitationAction('verify');
 $('invitationRedeem').onclick=()=>invitationAction('redeem');
 $('invitationReset').onclick=()=>{if(!invitationBusy)clearInvitation();};
@@ -895,7 +999,7 @@ function resetRegistrationMode(){
   $('authTabs').classList.remove('hide');
   $('newPasswordFields').classList.remove('hide');
   $('fEmail').readOnly = false;
-  $('btnFirst').textContent = 'שלח בקשה';
+  $('btnFirst').textContent = 'שלח בקשה ואשר תקנון';
   $('btnResubmitCancel').classList.add('hide');
 }
 
@@ -931,17 +1035,45 @@ function showView(name){
 // רשת ביטחון: אם Firebase לא עונה בכלל, אסור להשאיר את המשתמש
 // מול "רגע..." לנצח. אחרי שש שניות נופלים חזרה לטופס הכניסה.
 let authSettled = false;
+const HOME_NAVIGATION = (function () {
+  try { return new URLSearchParams(location.search).get('home') === '1'; }
+  catch (ignore) { return false; }
+})();
+// The join form is rebuilt after token refresh. Keep a user-interaction marker
+// on its stable panel so a changed shift/qualification cannot disappear during
+// a PWA activation merely because its replacement controls have no DOM default.
+['input', 'change'].forEach(function (type) {
+  $('joinPanel').addEventListener(type, function (event) {
+    if (event.target && event.target.closest('#joinForm')) {
+      $('joinPanel').dataset.joinDraftDirty = 'true';
+    }
+  });
+});
 registerPwaUpdateGuard(function () {
   if (!authSettled) return 'הכניסה למערכת עדיין נטענת.';
   if (onboarding || loginTransitionPending) return 'פעולת הכניסה או ההרשמה עדיין מתבצעת.';
-  const home = $('homeView');
-  if (!home || home.classList.contains('hide')) {
-    return 'השלם את הכניסה לפני הפעלת העדכון.';
+  const join = $('joinPanel');
+  if (join && !join.classList.contains('hide') && join.dataset.joinDraftDirty === 'true') {
+    return 'יש פרטי הצטרפות שטרם נשמרו. סיים/י או נקה/י אותם לפני העדכון.';
   }
-  return true;
+  const authView = $('authView');
+  if (authView && !authView.classList.contains('hide')) {
+    const protectedIds = ['loginEmp','loginPass','invitationId','invitationSecret','invitationEmail','invitationPassword',
+      'fName','fEmail','fPhone','fDistrict','fStation','fShift','fPass','fPass2',
+      'joinEmail','joinPassword','joinName','joinPhone','joinNote'];
+    if (protectedIds.some(function (id) { const el = $(id); return el && String(el.value || '').trim(); })) {
+      return 'יש פרטים שמולאו במסך. נקה אותם לפני העדכון כדי שלא יאבדו.';
+    }
+    return true;
+  }
+  const home = $('homeView');
+  return home && !home.classList.contains('hide')
+    ? true : 'המסך עדיין נטען. המתן רגע ונסה שוב.';
 });
 initPWA({ offer: true });
-setTimeout(function(){ if (!authSettled) showView('auth'); }, 6000);
+// בניווט מתוך האפליקציה לא מציגים טופס כניסה בזמן ש-Firebase משחזר
+// את ההתחברות. אם אין משתמש, onIdTokenChanged יציג אותו מיד ובאופן אמין.
+setTimeout(function(){ if (!authSettled && !HOME_NAVIGATION) showView('auth'); }, 6000);
 
 function esc(s){
   return String(s == null ? '' : s)
@@ -1069,7 +1201,10 @@ $('btnForgot').onclick = async () => {
 
 // ---------- הרשמה ----------
 
-$('btnFirst').onclick = async () => {
+const REGISTRATION_TERMS_VERSION = '1.3';
+const REGISTRATION_PRIVACY_VERSION = '2026-09-24';
+async function submitFirst() {
+  if (onboarding) return;
   const btn = $('btnFirst');
   clearMsg();
 
@@ -1162,8 +1297,15 @@ $('btnFirst').onclick = async () => {
 
   const requestRef = doc(db, 'registration_requests', applicant.uid);
   try {
-    await setDoc(requestRef, {
-      request_id: newRequestId(),
+    const requestId = newRequestId();
+    const consent = {
+      terms_version: REGISTRATION_TERMS_VERSION,
+      privacy_version: REGISTRATION_PRIVACY_VERSION,
+      marketing_opt_in: false
+    };
+    const batch = writeBatch(db);
+    batch.set(requestRef, {
+      request_id: requestId,
       full_name:  name,
       email:      email,
       phone:      phone,
@@ -1173,9 +1315,18 @@ $('btnFirst').onclick = async () => {
       // הכללים והשרת מטפלים בו כמי שאינו נעול לאף משמרת,
       // ולא כמשמרת בשם "none".
       shift:      shift === 'none' ? '' : shift,
+      legal_consent: consent,
       status:     'pending',
       created_at: serverTimestamp()
     });
+    batch.set(doc(db, 'registration_consents', applicant.uid, 'events', requestId), {
+      uid: applicant.uid, request_id: requestId,
+      terms_version: consent.terms_version,
+      privacy_version: consent.privacy_version,
+      marketing_opt_in: consent.marketing_opt_in,
+      accepted_at: serverTimestamp()
+    });
+    await batch.commit();
     onboarding = false; btn.disabled = false;
     showWaiting();
   } catch (e) {
@@ -1213,7 +1364,8 @@ $('btnFirst').onclick = async () => {
 
     show('שגיאה בשליחת הבקשה: ' + (e.code || e.message), 'err');
   }
-};
+}
+$('btnFirst').onclick = submitFirst;
 
 // ---------- ניתוב ----------
 
@@ -1235,6 +1387,7 @@ function returnToCaller(){
 function logout(){
   destroyHomeRuntime();
   try { sessionStorage.removeItem(ROLE_VIEW_STORAGE); } catch (ignore) {}
+  clearCalloutRosterCache();
   clearNavigationTrail();
   return signOut(auth);
 }
@@ -1249,8 +1402,12 @@ let nativeBackArrival = (function () {
   } catch (ignore) { return false; }
 })();
 let nativeBackRecoveryAttempted = false;
+let approvedClaimRefreshUid = '';
 
 onIdTokenChanged(auth, user => {
+  if (!user || (approvedClaimRefreshUid && approvedClaimRefreshUid !== user.uid)) {
+    approvedClaimRefreshUid = '';
+  }
   if(invitationUid && invitationUid!==(user?.uid||''))clearInvitation();
   invitationUid=user?.uid||'';
   authSettled = true;
@@ -1302,6 +1459,34 @@ async function route(user, epoch){
   } catch (ignore) {}
   if (!routeIsCurrent(user, epoch)) return;
 
+  if (claims.super === true || hasCompleteServerAssignment(claims)) {
+    // The server-owned marker is checked before native-back recovery, profile
+    // reads or any member screen. Offline/error is deliberately fail-closed.
+    try {
+      const response = await callRegistrationTerms({action:'status'});
+      if (!routeIsCurrent(user, epoch)) return;
+      if (!response.data?.ok || !response.data.accepted) {
+        // A restored pre-cutover session must authenticate again once before
+        // recording the new consent. A fresh login stays on the consent view.
+        if (!loginTransitionPending) {
+          try {
+            await signOut(auth);
+            show('נדרש אישור תקנון 1.3. התחבר/י מחדש כדי לקרוא ולאשר אותו.', 'ok');
+          } catch (error) {
+            if (routeIsCurrent(user, epoch)) showApprovedTerms(user, true);
+          }
+          return;
+        }
+        showApprovedTerms(user, false);
+        return;
+      }
+    } catch (error) {
+      if (!routeIsCurrent(user, epoch)) return;
+      showApprovedTerms(user, true);
+      return;
+    }
+  }
+
   if ((claims.super === true || hasCompleteServerAssignment(claims)) &&
       returnFromNativeBack(claims)) return;
 
@@ -1329,7 +1514,25 @@ async function route(user, epoch){
     catch (ignore) {}
     if (!routeIsCurrent(user, epoch)) return;
 
-    if (req && req.exists()) { showWaiting(user, req.data() || {}); return; }
+    if (req && req.exists()) {
+      const request = req.data() || {};
+      if (request.status === 'approved') {
+        if (approvedClaimRefreshUid !== user.uid) {
+          approvedClaimRefreshUid = user.uid;
+          try {
+            await user.getIdToken(true);
+            if (routeIsCurrent(user, epoch)) startRoute(user);
+          } catch (error) {
+            if (routeIsCurrent(user, epoch)) showRegistrationRecovery(user);
+          }
+        } else {
+          showAssignmentRecovery(user);
+        }
+        return;
+      }
+      showWaiting(user, request);
+      return;
+    }
     if (!requestChecked) { showRegistrationRecovery(user); return; }
     showNotLinked(user);
     return;
@@ -1421,9 +1624,11 @@ function writeRoleViewStorage(record){
 
 function homeCommandElements(){
   return {
+    root:$('bulletinBoard'), title:$('homeCommandTitle'), intro:$('homeCommandIntro'),
     urgent:$('homeUrgent'), urgentTitle:$('homeUrgentTitle'), urgentText:$('homeUrgentText'), urgentLink:$('homeUrgentLink'),
-    status:$('homeCommandStatus'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
-    shiftLabel:$('homeShiftLabel'),
+    tasks:$('homeTasks'), tasksEyebrow:$('homeTasksEyebrow'), tasksTitle:$('homeTasksTitle'), tasksText:$('homeTasksText'),
+    status:$('homeCommandStatus'), retry:$('homeCommandRetry'), taskList:$('homeTaskList'), taskEmpty:$('homeTaskEmpty'),
+    shiftTitle:$('homeShiftTitle'), shiftLabel:$('homeShiftLabel'),
     shiftMetrics:{
       on_duty:document.querySelector('[data-shift-metric="on_duty"] b'),
       open_faults:document.querySelector('[data-shift-metric="open_faults"] b'),
@@ -1498,6 +1703,7 @@ function showNotLinked(user){
 }
 
 function showWaiting(user, request){
+  approvedTermsUserUid = '';
   loginTransitionPending = false;
   if (request) joinRegistered = true;
   const status = String((request || {}).status || 'pending');
@@ -1523,7 +1729,67 @@ function showWaiting(user, request){
   $('btnResubmit').classList.add('hide');
   showView('wait');
   void refreshJoinStatus(user);
+  $('pendingTermsPanel').classList.add('hide');
+  $('pendingTermsPanel').querySelectorAll('button').forEach(button=>button.disabled=false);
+  if (status === 'pending' || status === 'processing' || status === 'needs_recovery') {
+    const pendingUid = user && user.uid;
+    void callRegistrationTerms({action:'status'}).then(({data})=>{
+      if (auth.currentUser?.uid === pendingUid && data && data.ok && !data.accepted) {
+        $('pendingTermsPanel').classList.remove('hide');
+      }
+    }).catch(()=>{});
+  }
 }
+
+let approvedTermsUserUid = '';
+function showApprovedTerms(user, failed){
+  // Keep the fresh-login marker until consent is recorded or the identity
+  // changes. Auth and invitation routing can race; a second status response
+  // must not mistake this same sign-in for a restored old session.
+  approvedTermsUserUid = user.uid;
+  clearNav();
+  document.body.classList.remove('with-nav');
+  $('waitIcon').textContent = failed ? '⚠️' : '📜';
+  $('waitTtl').textContent = failed ? 'לא ניתן לבדוק את ההסכמה' : 'נדרש אישור תקנון 1.3';
+  $('waitTxt').textContent = failed
+    ? 'לא ניתן לאמת כרגע את התקנון מול השרת. בדוק חיבור ונסה שוב; הגישה למערכת חסומה עד לאימות.'
+    : 'התקנון המעודכן חל על כל המשתמשים. יש לקרוא ולאשר אותו כדי להמשיך להשתמש בשירות.';
+  showWho(user);
+  $('btnBootstrap').classList.add('hide');
+  $('btnResubmit').classList.add('hide');
+  $('btnRetryTerms').classList.toggle('hide', !failed);
+  $('pendingTermsPanel').classList.toggle('hide', !!failed);
+  $('pendingTermsPanel').querySelectorAll('button').forEach(button=>button.disabled=false);
+  $('pendingTermsPanel').querySelector('p').innerHTML = 'לפני המשך השימוש יש לקרוא ולאשר את ' +
+    '<a href="terms.html" target="_blank" rel="noopener">תקנון 1.3</a> ואת ' +
+    '<a href="privacy.html" target="_blank" rel="noopener">מדיניות הפרטיות</a>.';
+  $('pendingTermsStatus').textContent = '';
+  showView('wait');
+}
+$('btnRetryTerms').onclick=()=>{ if(auth.currentUser) startRoute(auth.currentUser); };
+
+async function acceptPendingTerms(marketingOptIn){
+  const panel=$('pendingTermsPanel'), status=$('pendingTermsStatus');
+  const user=auth.currentUser, epoch=routeEpoch;
+  if (!routeIsCurrent(user,epoch)) return;
+  const stillCurrent=()=>routeIsCurrent(user,epoch);
+  panel.querySelectorAll('button').forEach(button=>button.disabled=true);
+  status.textContent='שומר הסכמה…';
+  try{
+    const response=await callRegistrationTerms({action:'accept',marketing_opt_in:marketingOptIn});
+    if (!stillCurrent()) return;
+    if(!response.data?.accepted)throw new Error('לא התקבל אישור מהשרת.');
+    status.textContent='ההסכמה נשמרה. הבקשה יכולה לעבור לאישור מנהל המערכת.';
+    panel.classList.add('hide');
+    if (approvedTermsUserUid === user.uid) {
+      approvedTermsUserUid = '';
+      startRoute(user);
+    }
+  }catch(error){
+    if (stillCurrent()) status.textContent='לא ניתן לשמור את ההסכמה: '+(error.message||'נסה שוב.');
+  }finally{if (stillCurrent()) panel.querySelectorAll('button').forEach(button=>button.disabled=false);}
+}
+$('pendingTermsNoMarketing').onclick=()=>acceptPendingTerms(false);
 
 function showRegistrationRecovery(user){
   showWaiting(user);
@@ -1751,9 +2017,10 @@ async function loadProfile(user, claims, epoch){
 // מקורות שונים.
 
 $('verNow').textContent = APP_VERSION + ' · ' + APP_DATE;
+$('preAuthVersion').textContent = APP_VERSION + ' · ' + APP_DATE;
 
-$('btnUpdate').onclick = async function () {
-  const b = $('btnUpdate'), m = $('verMsg');
+async function runVisibleUpdate(button, message) {
+  const b = button, m = message;
   b.disabled = true;
   m.className = 'note';
   m.textContent = 'בודק מול השרת…';
@@ -1765,19 +2032,23 @@ $('btnUpdate').onclick = async function () {
       return;
     }
     if (outcome.reason === 'version-not-advanced') {
+      dismissUpdateReady({ document });
       m.textContent = 'אתה על הגרסה האחרונה.';
     } else if (outcome.blocked) {
       m.textContent = outcome.blocked + ' שמור או סיים אותה ואז נסה שוב.';
     } else if (outcome.reason === 'version-unavailable') {
-      m.textContent = 'לא הצלחתי להגיע לשרת. בדוק חיבור לאינטרנט ונסה שוב.';
+      m.textContent = 'שרת הגרסאות אינו זמין כרגע. נסה שוב בעוד רגע.';
     } else {
-      m.textContent = 'הגרסה החדשה נמצאה אך עדיין לא הופעלה. סגור את ResQ לגמרי, פתח מחדש ונסה שוב.';
+      m.textContent = 'הגרסה החדשה נמצאה אך טרם קיבלה שליטה. סגור את ResQ לגמרי, פתח מחדש ולחץ שוב.';
     }
   } catch (e) {
-    m.textContent = 'העדכון לא הושלם. בדוק חיבור לאינטרנט ונסה שוב.';
+    m.textContent = 'העדכון לא הושלם. נסה שוב; אם זה חוזר, סגור את ResQ ופתח מחדש.';
   }
   b.disabled = false;
-};
+}
+
+$('btnUpdate').onclick = function () { return runVisibleUpdate($('btnUpdate'), $('verMsg')); };
+$('preAuthUpdate').onclick = function () { return runVisibleUpdate($('preAuthUpdate'), $('preAuthUpdateStatus')); };
 
 // ---------- שינוי סיסמה ----------
 

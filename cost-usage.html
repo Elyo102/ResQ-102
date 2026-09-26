@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1b33" media="(prefers-color-scheme: dark)">
+  <title>ResQ · עלות ושימוש</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <script>
+  (function(){try{var t=localStorage.getItem('resq_theme');
+  if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}})();
+  </script>
+  <link rel="stylesheet" href="./theme.css?v=42h42">
+  <link rel="manifest" href="./manifest.json">
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif;padding:18px}
+    @media(max-width:620px){body{padding:12px}}
+    .cu-shell{max-width:960px;margin:0 auto}
+    .cu-hidden{display:none !important}
+    .cu-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:14px}
+    .cu-title{font-size:21px;margin:0 0 4px}
+    .cu-sub{color:var(--muted);font-size:13px;margin:0;line-height:1.6}
+    .cu-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .cu-toolbar select,.cu-toolbar button{min-height:44px;min-width:44px;font-size:14px;font-family:inherit;border-radius:var(--radius-sm,8px);padding:8px 14px}
+    .cu-toolbar select{background:var(--input);color:var(--txt);border:1px solid var(--line)}
+    .cu-toolbar button{background:var(--accent);color:var(--on-accent,#fff);border:0;cursor:pointer}
+    .cu-toolbar button:disabled,.cu-toolbar select:disabled{opacity:.5;cursor:not-allowed}
+    .cu-start{min-height:44px;margin-top:10px;padding:8px 14px;border:1px solid var(--line);border-radius:var(--radius-sm,8px);background:var(--panel);color:var(--txt);font:inherit;cursor:pointer}
+    .cu-start:disabled{opacity:.5;cursor:not-allowed}
+    .cu-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg,14px);padding:16px;margin-bottom:14px}
+    .cu-section-title{font-size:16px;margin:0 0 10px}
+    .cu-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .cu-fact{background:var(--panel);border:1px solid var(--line-soft,var(--line));border-radius:var(--radius-sm,8px);padding:10px;min-width:0}
+    .cu-fact span{display:block;font-size:12px;color:var(--muted)}
+    .cu-fact strong{display:block;font-size:14px;margin-top:4px;overflow-wrap:anywhere}
+    .cu-flags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+    .cu-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px}
+    .cu-row{background:var(--panel);border:1px solid var(--line-soft,var(--line));border-radius:var(--radius-sm,8px);padding:12px;min-width:0}
+    .cu-row[data-available="false"] .cu-value{color:var(--muted);font-weight:500}
+    .cu-row-head{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;align-items:center}
+    .cu-label{font-size:13px;color:var(--muted)}
+    .cu-value{display:block;font-size:20px;margin:6px 0 2px;overflow-wrap:anywhere}
+    .cu-meta{font-size:12px;color:var(--muted);min-height:1em;overflow-wrap:anywhere}
+    .cu-badges{display:inline-flex;flex-wrap:wrap;gap:4px}
+    .cu-badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--chip);color:var(--txt)}
+    .cu-badge.partial,.cu-badge.warn,.cu-badge.estimated{background:var(--warn-bg);color:var(--warn);border-color:var(--warn)}
+    .cu-badge.nosource,.cu-badge.actual{background:var(--chip);color:var(--muted)}
+    .cu-note{margin-top:12px;padding:10px;border-radius:var(--radius-sm,8px);font-size:13px;line-height:1.6;background:var(--panel);color:var(--muted)}
+    .cu-note.safe{background:var(--ok-bg);color:var(--ok-fg)}
+    .cu-note.warn{background:var(--warn-bg);color:var(--warn)}
+    .cu-users{display:grid;gap:0;margin-top:10px;border:1px solid var(--line);border-radius:var(--radius-sm,8px);overflow:hidden}
+    .cu-user{display:grid;grid-template-columns:1.4fr 1fr 1fr 1.2fr;gap:8px;padding:10px;border-bottom:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
+    .cu-user:last-child{border-bottom:0}
+    .cu-user-head{background:var(--panel);color:var(--muted);font-size:12px}
+    @media(max-width:720px){.cu-user{grid-template-columns:1fr 1fr}}
+    .cu-deny{text-align:center;padding:28px 16px}
+    .cu-deny h1{font-size:18px;margin:0 0 8px}
+  </style>
+</head>
+<body data-resq-shell="v1" data-resq-page="cost-usage">
+<main id="main" class="cu-shell cu-hidden">
+  <div class="cu-head">
+    <div>
+      <h1 class="cu-title">עלות ושימוש</h1>
+      <p class="cu-sub">שלושה אזורים נפרדים: עלות בפועל (Billing בלבד), עומס ושיוך משוער (חלקי), ומשתמשים מאז תחילת מדידה. שיוך אינו חשבונית. מנהל-על בלבד — לא saas-admin.</p>
+    </div>
+    <div class="cu-toolbar">
+      <label class="cu-sub" for="range">טווח</label>
+      <select id="range" aria-label="טווח ימים"><option value="1">יום אחרון</option><option value="7" selected>7 ימים</option><option value="14">14 ימים</option><option value="30">30 ימים</option></select>
+      <button id="btnRefresh" type="button">רענון</button>
+    </div>
+  </div>
+  <section class="cu-card" aria-labelledby="scopeTitle">
+    <h2 id="scopeTitle" class="cu-section-title">היקף ואמינות</h2>
+    <div class="cu-facts">
+      <div class="cu-fact"><span>טווח</span><strong id="rangeLabel">—</strong></div>
+      <div class="cu-fact"><span>תחילת מדידה</span><strong id="measurement">—</strong></div>
+      <div class="cu-fact"><span>שיוך (HMAC)</span><strong id="attribution">—</strong></div>
+    </div>
+    <button id="btnStartMeasurement" class="cu-start cu-hidden" type="button">התחל מדידת קריאות מעכשיו</button>
+    <div id="flags" class="cu-flags"></div>
+    <div id="message" class="cu-note">טוען…</div>
+  </section>
+  <section class="cu-card" aria-labelledby="actualTitle">
+    <h2 id="actualTitle" class="cu-section-title">עלות בפועל</h2>
+    <div id="actual"></div>
+  </section>
+  <section class="cu-card" aria-labelledby="loadTitle">
+    <h2 id="loadTitle" class="cu-section-title">עומס ושיוך</h2>
+    <div id="loadLegend" class="cu-flags"></div>
+    <div id="load"></div>
+  </section>
+  <section class="cu-card" aria-labelledby="stationCallsTitle">
+    <h2 id="stationCallsTitle" class="cu-section-title">קריאות שרת שנמדדו לפי תחנה ויום</h2>
+    <label class="cu-sub" for="stationDay">יום לפי שעון ישראל</label>
+    <input id="stationDay" type="date" aria-label="יום למדידת קריאות לפי תחנה">
+    <div id="stationCalls"></div>
+    <button id="btnNextStations" type="button" class="cu-hidden">עוד תחנות</button>
+  </section>
+  <section class="cu-card" aria-labelledby="usersTitle">
+    <h2 id="usersTitle" class="cu-section-title">משתמשים</h2>
+    <div id="users"></div>
+    <div class="cu-toolbar" style="margin-top:10px"><button id="btnNextUsers" class="cu-hidden" type="button">הבא</button></div>
+  </section>
+  <section class="cu-note" id="selfCost">קריאת הלוח עצמה כרוכה בעלות מדידה עצמית (Auth + metrics חלקי + config).</section>
+</main>
+<section id="deny" class="cu-card cu-deny cu-hidden"><h1>אין הרשאה למסך</h1><p class="cu-sub">לוח עלות ושימוש זמין למנהל-העל בלבד (לא saas-admin).</p></section>
+<script type="module">
+import { firebaseConfig } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { createCostUsageUi } from './cost-usage-ui.js?v=42h42';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+
+const app=initializeApp(firebaseConfig); await initAppCheck(app);
+const auth=getAuth(app), fns=getFunctions(app,'europe-west1'), $=id=>document.getElementById(id);
+let identity=null, epoch=0;
+renderStuckNav(''); initPWA({offer:false});
+const elements={
+  refresh:$('btnRefresh'), range:$('range'), rangeLabel:$('rangeLabel'),
+  measurement:$('measurement'), attribution:$('attribution'), flags:$('flags'),
+  message:$('message'), actual:$('actual'), load:$('load'), loadLegend:$('loadLegend'),
+  users:$('users'), stationCalls:$('stationCalls'), stationDay:$('stationDay'), nextStationPage:$('btnNextStations'), nextPage:$('btnNextUsers'), startMeasurement:$('btnStartMeasurement'), selfCost:$('selfCost')
+};
+const ui=createCostUsageUi({
+  elements,
+  currentIdentity:()=>identity,
+  onIdentityLost:()=>location.replace('./login.html'),
+  confirmAction:message=>window.confirm(message),
+  call:async(name,data)=>(await httpsCallable(fns,name)(data||{})).data
+});
+elements.refresh.addEventListener('click',()=>{ui.resetPaging();ui.refresh();});
+elements.range.addEventListener('change',()=>{ui.setDays(elements.range.value);ui.refresh();});
+elements.nextPage.addEventListener('click',ui.nextPage);
+elements.stationDay.addEventListener('change',()=>{ui.setStationDay(elements.stationDay.value);ui.refresh();});
+elements.nextStationPage.addEventListener('click',ui.nextStationPage);
+elements.startMeasurement.addEventListener('click',ui.activateMeasurement);
+onIdTokenChanged(auth,async user=>{
+  const mine=++epoch;
+  identity=null;
+  ui.invalidate();
+  $('main').classList.add('cu-hidden');
+  $('deny').classList.add('cu-hidden');
+  if(!user){location.replace('./login.html');return;}
+  const token=await user.getIdTokenResult();
+  if(mine!==epoch||auth.currentUser!==user)return;
+  const claims=token.claims||{};
+  identity={uid:user.uid,epoch:mine,super:claims.super===true};
+  renderNav(claims,'cost-usage.html',user.email||'');
+  if(claims.super!==true){$('deny').classList.remove('cu-hidden');return;}
+  $('main').classList.remove('cu-hidden'); ui.refresh();
+});
+</script>
+</body>
+</html>

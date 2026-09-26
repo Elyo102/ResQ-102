@@ -9,33 +9,41 @@
 // ההסתרה כאן היא נוחות, לא הגנה.
 
 // נקודת הצבע היא זיהוי מהיר של מדור, לא קישוט. כפתור צבעוני
-// שלם לכל מדור היה גורם לארבעה כפתורים להתחרות זה בזה, ואז
+// שלם לכל מדור היה גורם לכפתורים להתחרות זה בזה, ואז
 // אף אחד לא בולט.
 const ITEMS = [
   { href: 'login.html',    label: 'לוח מודעות',  who: 'any',    dot: '#e8590c', group: 'mine' },
   { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
+  // The read-only vehicle view is under construction; do not advertise it
+  // before compartment data and write authorization are implemented.
+  { href: 'operational-vehicles.html', label: 'רכבים מבצעיים', who: 'member', dot: '#e8590c', group: 'mine' },
   { href: 'callout.html',  label: 'קריאת פתע',   who: 'shift_command', dot: '#f0523f', group: 'mine' },
-  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station' },
+  // The board still backs scheduling and operational vehicles. Keep this
+  // route for existing links and native-back history, but omit its menu item.
+  { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station', hiddenFromMenu: true },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
   { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
   { href: 'hr-requests.html', label: 'פנייה למשאבי אנוש', who: 'member', dot: '#0099cc', group: 'mine' },
   { href: 'hr-documents.html', label: 'נהלים ומסמכים', who: 'member', dot: '#0099cc', group: 'mine' },
-  { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342', group: 'station' },
+  { href: 'guards.html',   label: 'אבטחות',      who: 'station_view', dot: '#7cb342', group: 'station' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043', group: 'mine' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },
-  { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd', group: 'station' },
+  { href: 'sign.html',     label: 'חתימות',      who: 'station_view', dot: '#9575cd', group: 'station' },
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1', group: 'mine' },
   { href: 'feedback.html', label: 'חוות דעת',    who: 'member', dot: '#f06292', group: 'mine' },
-  { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c', group: 'station' },
-  { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5', group: 'station' },
-  { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63', group: 'station' },
+  { href: 'quals.html',    label: 'כשירויות',    who: 'station_view', dot: '#e0a23c', group: 'station' },
+  { href: 'alerts.html',   label: 'התראות',      who: 'station_view', dot: '#b0bec5', group: 'station' },
+  { href: 'people.html',   label: 'עובדים',      who: 'station_view', dot: '#8d6e63', group: 'station' },
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b', group: 'admin' },
-  { href: 'admin.html',    label: 'ניהול',       who: 'staff',  dot: '#f0523f', group: 'admin' },
+  { href: 'admin.html',    label: 'ניהול',       who: 'super',  dot: '#f0523f', group: 'admin' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
   { href: 'import.html',   label: 'קליטה',       who: 'super',  dot: '#66bb6a', group: 'admin' },
   { href: 'check.html',    label: 'בדיקה', who: 'super',  dot: '#9aa0a6', group: 'admin' },
-  { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' }
+  { href: 'maintenance.html', label: 'תחזוקת מערכת', who: 'super', dot: '#00a884', group: 'admin' },
+  { href: 'saas-admin.html', label: 'ארגונים ומנויים', who: 'super', dot: '#5c6bc0', group: 'admin' },
+  { href: 'metrics.html', label: 'מדדים תפעוליים', who: 'super', dot: '#7e57c2', group: 'admin' },
+  { href: 'cost-usage.html', label: 'עלות ושימוש', who: 'super', dot: '#00897b', group: 'admin' }
 ];
 
 // שלוש קבוצות תצוגה בלבד. ההרשאה נשארת בשדה who של כל פריט.
@@ -53,9 +61,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h20';
-import { assertPresentationOnly } from './role-view.js?v=42h20';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h20';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h42';
+import { attachModeChip } from './mode-bar.js?v=42h42';
+import { assertPresentationOnly } from './role-view.js?v=42h42';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h42';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -78,6 +87,10 @@ function allowed(who, claims, presentation) {
   if (who === 'super')  return isSuper;
   if (who === 'hr') return isSuper || display.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
+  // Navigation-only partition: existing direct-page/Firestore permissions are
+  // deliberately unchanged. Firefighters use My Shift, officers and HR also
+  // see Station and Team.
+  if (who === 'station_view') return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
   if (who === 'shift_command') {
     return isSuper || display.role === 'commander' || display.role === 'deputy';
   }
@@ -269,7 +282,6 @@ function styleOnce() {
     '  line-height:16px;text-align:center;padding:0 3px;pointer-events:none}',
     // במצב ניסוי פס המצב הוא בעל ה-safe-area העליון. הסרגל שמתחתיו
     // מקבל ריפוד רגיל בלבד, כדי שה-inset לא ייספר פעמיים.
-    'body.has-mode-bar #appNav{top:calc(var(--resq-safe-top) + var(--resq-mode-bar-height,0px));padding-top:12px}',
     // במסך רחב המכולה שקופה: הקישורים נשארים ילדים ישירים של
     // הסרגל, ומתנהגים בדיוק כמו קודם. שום שינוי במחשב.
     '#navLinks{display:contents}',
@@ -303,7 +315,6 @@ function styleOnce() {
     '  #appNav{gap:6px;padding:calc(8px + var(--resq-safe-top))',
     '    calc(10px + var(--resq-safe-right)) 8px',
     '    calc(10px + var(--resq-safe-left))}',
-    '  body.has-mode-bar #appNav{padding-top:8px}',
     '  #appNav .brand{font-size:15px;margin-inline-end:0}',
     '  #appNav button.back{padding:8px 10px;font-size:13px}',
     '  #navToggle{display:inline-flex;align-items:center;gap:6px;min-height:44px;',
@@ -339,15 +350,30 @@ function styleOnce() {
     '@media (max-width:620px){',
     'body.has-resq-dock{padding-bottom:calc(82px + env(safe-area-inset-bottom,0px))!important}',
     '#resqDock{position:fixed;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;',
-    'inset:auto 0 0;z-index:970;padding:8px',
+    'top:auto;right:0;bottom:0;left:0;width:100%;box-sizing:border-box;z-index:970;padding:8px',
     ' calc(10px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
     ' calc(8px + env(safe-area-inset-bottom,0px))',
     ' calc(10px + var(--resq-safe-left-override,env(safe-area-inset-left,0px)));',
-    'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);direction:rtl}',
-    '#resqDock a,#resqDock button{display:flex;align-items:center;justify-content:center;min-width:0;',
-    'min-height:52px;margin:0;padding:6px 4px;border:0;border-radius:12px;background:transparent;',
+    'gap:6px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.1);',
+    'direction:rtl;transform:translate3d(0,0,0);backface-visibility:hidden;will-change:transform}',
+    /* הטקסט יושב מתחת לאייקון בכל רוחב. אייקון בלי מילה
+       הוא חידה — וכבאי בשתיים בלילה אינו פותר חידות. */
+    '#resqDock a,#resqDock button{display:flex;flex-direction:column;align-items:center;',
+    'justify-content:center;gap:3px;min-width:44px;min-height:52px;margin:0;padding:6px 2px;',
+    'border:0;border-radius:12px;background:transparent;overflow:hidden;',
     'color:var(--dim);font:700 12px/1.2 "Segoe UI",Arial,sans-serif;text-decoration:none}',
+    '#resqDock .dockIco{display:block;width:22px;height:22px;flex:none;',
+    // הצבע מגיע מהפריט דרך משתנה אחד, וה-SVG מצייר ב-currentColor.
+    '  color:var(--dock-ico,var(--dim))}',
+    '#resqDock .dockLbl{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;',
+    '  white-space:nowrap}',
+    /* ⭐ הפריט הפעיל אינו נושא צבע אזור. הוא כתום ResQ על רקע
+       כתום רך, וזו ההבחנה שחייבת להישאר החזקה ביותר בסרגל.
+       משטרת הצבע של האזור מבוטלת על ידו במפורש. */
     '#resqDock .on{background:var(--accent-soft);color:var(--accent-txt)}',
+    '#resqDock .on .dockIco{color:var(--accent-txt)}',
+    '#resqDock a:focus-visible,#resqDock button:focus-visible{outline:3px solid var(--accent);',
+    '  outline-offset:-3px}',
     '#resqDockPanel{position:fixed;display:flex;inset:0;z-index:980;align-items:flex-end;',
     'background:rgba(7,12,20,.46);padding:14px',
     ' calc(14px + var(--resq-safe-right-override,env(safe-area-inset-right,0px)))',
@@ -368,6 +394,73 @@ function styleOnce() {
 
 // current — שם הקובץ הנוכחי, למשל 'admin.html'.
 // who     — טקסט קצר שמזהה את המשתמש, מוצג בקצה הסרגל.
+/* ======================================================================
+ *  אייקוני התפריט התחתון — „סט A"
+ *
+ *  חמישה אייקונים בקו אחד (lucide): בית, סידור, דיווח שעות, בניין,
+ *  ושלוש נקודות. כולם מצוירים ב-`currentColor`, ולכן צבע האזור הוא
+ *  מאפיין CSS אחד ולא חמישה קבצים.
+ *
+ *  למה inline ולא קובץ אייקונים: חמישה אייקונים אינם שווים בקשת רשת
+ *  נוספת בסרגל שנטען בכל מסך, ובוודאי לא בטלפון ברשת של תחנה.
+ *  ולמה `createElementNS` ולא `innerHTML`: SVG חי במרחב שמות אחר,
+ *  ו-`innerHTML` על מחרוזת קבועה הוא הרגל שמישהו יעתיק מחר על
+ *  מחרוזת שאינה קבועה.
+ * ====================================================================== */
+const DOCK_ICONS = {
+  // home
+  home: ['m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M9 22V12h6v10'],
+  // calendar-days
+  schedule: ['M8 2v4', 'M16 2v4', 'M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+    'M8 14h.01', 'M12 14h.01', 'M16 14h.01', 'M8 18h.01', 'M12 18h.01'],
+  // calendar-clock
+  hours: ['M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5',
+    'M16 2v4', 'M8 2v4', 'M3 10h5', 'M16 14v2.5l1.5 1.5',
+    'M16 22a6 6 0 1 0 0-12 6 6 0 0 0 0 12z'],
+  // building-2
+  station: ['M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18',
+    'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2',
+    'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2',
+    'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'],
+  // more-horizontal
+  more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01']
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function dockIcon(id) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'dockIco');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  // האייקון הוא קישוט: השם הנגיש מגיע מהטקסט ומ-aria-label של הפריט.
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  (DOCK_ICONS[id] || []).forEach(function (d) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+/** בונה פריט סרגל: אייקון למעלה, טקסט מתחתיו, ושם נגיש מפורש. */
+function fillDockItem(element, id, label) {
+  element.replaceChildren();
+  element.appendChild(dockIcon(id));
+  const text = document.createElement('span');
+  text.className = 'dockLbl';
+  text.textContent = label;
+  element.appendChild(text);
+  element.setAttribute('aria-label', label);
+  element.dataset.dockId = id;
+  element.style.setProperty('--dock-ico', 'var(--dock-' + id + ')');
+}
+
 export function renderNav(claims, current, who, presentation, unreadCount) {
   styleOnce();
   claims = claims || {};
@@ -383,6 +476,9 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   const nav = document.createElement('nav');
   nav.id = 'appNav';
   nav.setAttribute('aria-label', 'ניווט ראשי');
+  /* ⭐ הסרגל נבנה מחדש בכל שינוי זהות, והישן נמחק. תגית המצב יושבת
+   * בתוכו, ולכן היא מוחזרת למקומה בסוף הבנייה. בלי זה החיווי נעלם
+   * בדיוק ברגע שמישהו מתחלף — והמסך חוזר להיראות חי. */
 
   const brand = document.createElement('div');
   brand.className = 'brand';
@@ -485,7 +581,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
 
   GROUPS.forEach(function (g) {
     const items = ITEMS.filter(function (it) {
-      return it.group === g.id && allowed(it.who, claims, presentation);
+      return !it.hiddenFromMenu && it.group === g.id && allowed(it.who, claims, presentation);
     });
     if (!items.length) return;
 
@@ -557,6 +653,14 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   });
 
   document.body.insertBefore(nav, document.body.firstChild);
+  attachModeChip();
+  // Firebase stays outside the navigation module's synchronous dependency
+  // graph. This preserves the navigation in offline/static fixtures while the
+  // singleton controller attaches one authenticated mode listener in the real
+  // app. A failed controller load never invents a "live" state.
+  import('./mode-controller.js?v=42h42')
+    .then(module => module.startModeController(claims))
+    .catch(error => console.error('mode controller unavailable', error));
 
   const dock = document.createElement('nav');
   dock.id = 'resqDock';
@@ -581,20 +685,29 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
     if (restore) restore.focus();
   }
 
+  const directDockPages = new Set(['schedule-management.html', 'attendance.html']);
+  function dockMoreItems(){
+    return ITEMS.filter(function (item) {
+      if (item.hiddenFromMenu || item.href === 'login.html' || directDockPages.has(item.href)) return false;
+      return (item.group === 'mine' || item.group === 'admin')
+        && allowed(item.who, claims, presentation);
+    });
+  }
+
   function openDockPanel(groupId, trigger){
     const group = GROUPS.find(function (item) { return item.id === groupId; });
-    const items = ITEMS.filter(function (item) {
-      return item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims, presentation);
+    const items = groupId === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
+      return !item.hiddenFromMenu && item.href !== 'login.html' && item.group === groupId && allowed(item.who, claims, presentation);
     });
     dockSheet.replaceChildren();
     const title = document.createElement('h2');
     title.id = 'resqDockTitle';
-    title.textContent = group ? group.label : 'עוד';
+    title.textContent = groupId === 'more' ? 'עוד פעולות' : (group ? group.label : 'עוד');
     dockSheet.appendChild(title);
     const grid = document.createElement('div');
     grid.className = 'dockGrid';
     items.forEach(function (item) { grid.appendChild(linkFor(item)); });
-    if (groupId === 'admin') {
+    if (groupId === 'more') {
       const theme = themeButton('dockThemeBtn');
       theme.classList.add('dockTheme');
       grid.appendChild(theme);
@@ -614,26 +727,45 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   }
 
   const home = document.createElement('a');
-  home.href = './login.html';
-  home.textContent = 'בית';
+  // login.html הוא גם דף הכניסה וגם דף הבית המחובר. הסמן מונע
+  // מטיימר האתחול להציג לרגע את טופס הכניסה בזמן שחזור session.
+  home.href = './login.html?home=1';
+  fillDockItem(home, 'home', 'בית');
   if (current === 'login.html') {
     home.className = 'on';
     home.setAttribute('aria-current', 'page');
   }
   dock.appendChild(home);
 
+  function directDockLink(href, id, label, accessibleLabel, targetHref) {
+    const item = ITEMS.find(function (candidate) { return candidate.href === href; });
+    if (!item || !allowed(item.who, claims, presentation)) return;
+    const link = linkFor(item);
+    if (link.getAttribute('aria-disabled') !== 'true') link.href = './' + (targetHref || href);
+    fillDockItem(link, id, label);
+    link.setAttribute('aria-label', accessibleLabel || label);
+    if (current === href) {
+      link.className = 'on';
+      link.setAttribute('aria-current', 'page');
+    }
+    dock.appendChild(link);
+  }
+
+  directDockLink('schedule-management.html', 'schedule', 'סידור', 'סידור עבודה',
+    'schedule-management.html?tab=mine');
+  directDockLink('attendance.html', 'hours', 'שעות', 'דיווח שעות');
+
   [
-    { id:'mine', label:'המשמרת' },
     { id:'station', label:'התחנה' },
-    { id:'admin', label:'עוד' }
+    { id:'more', label:'עוד' }
   ].forEach(function (entry) {
-    const permitted = ITEMS.filter(function (item) {
-      return item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims, presentation);
+    const permitted = entry.id === 'more' ? dockMoreItems() : ITEMS.filter(function (item) {
+      return !item.hiddenFromMenu && item.href !== 'login.html' && item.group === entry.id && allowed(item.who, claims, presentation);
     });
-    if (!permitted.length && entry.id !== 'admin') return;
+    if (!permitted.length && entry.id !== 'more') return;
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = entry.label;
+    fillDockItem(button, entry.id, entry.label);
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'resqDockPanel');
     if (permitted.some(function (item) { return item.href === current; })) {
@@ -734,6 +866,9 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
+  import('./mode-controller.js?v=42h42')
+    .then(module => module.stopModeController())
+    .catch(() => {});
 }
 
 // סרגל מינימלי למסכי "אין הרשאה". בלעדיו המשתמש תקוע עם

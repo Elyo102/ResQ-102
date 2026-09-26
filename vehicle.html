@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -137,9 +137,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           font-size:30px; cursor:pointer; line-height:1 }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="vehicle">
 <div id="errBar" role="alert" aria-live="assertive"></div>
 <div class="wrap">
+  <div class="card hide" id="loadError" role="alert">
+    <p>לא ניתן לטעון את נתוני הרכב והתקלות. אין להסתמך על תצוגה חלקית.</p>
+    <button class="btn" id="retryLoad" type="button">נסה שוב</button>
+  </div>
 
   <div id="denyCard" class="card hide">
     <h2>אין הרשאה</h2>
@@ -191,24 +195,26 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
          viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=42h20';
+  from './vmap.js?v=42h42';
 import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, sevBgColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
-         vehicleState, sortFaults, dmy, reportedLine, shrinkImage }
-  from './faults.js?v=42h20';
+         vehicleState, sortFaults, dmy, reportedLine, shrinkImage, createPhotoQueue }
+  from './faults.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         deleteDoc, serverTimestamp }
+         deleteDoc, serverTimestamp, query, orderBy, documentId, limit, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
@@ -219,13 +225,40 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const createFaultReport = httpsCallable(getFunctions(app, 'europe-west1'), 'createFaultReport',
+  { timeout:60000 });
+const appendFaultPhotos = httpsCallable(getFunctions(app, 'europe-west1'), 'appendFaultPhotos',
+  { timeout:60000 });
 
 let SID = '', ME = { uid:'', name:'', crew:'' }, CAN_MANAGE = false;
-let faults = [], views = [], fleet = [], shots = {};
+let faults = [], views = [], fleet = [], shots = {}, shotsInflight = {}, shotsPages = {};
+let AUTH_GEN = 0;
+let LOAD_GEN = 0, DETAIL_GEN = 0;
+const shotObjectUrls = [];
+
+function bumpIdentity(){
+  NEW_FAULT_MODAL_GEN += 1;
+  NEW_FAULT_UPLOAD_LOCKED = false;
+  AUTH_GEN += 1;
+  LOAD_GEN += 1;
+  DETAIL_GEN += 1;
+  SID = ''; ME = { uid:'', name:'', crew:'' }; CAN_MANAGE = false;
+  faults = []; views = []; fleet = [];
+  shots = {}; shotsInflight = {}; shotsPages = {};
+  $('work').classList.add('hide');
+  $('loadError').classList.add('hide');
+  $('ov').classList.remove('on');
+  $('dlgBody').replaceChildren();
+  $('lb').classList.remove('on');
+  while (shotObjectUrls.length) {
+    try { URL.revokeObjectURL(shotObjectUrls.pop()); } catch (ignore) {}
+  }
+  return AUTH_GEN;
+}
 let vid = '', side = 'right', vehicleRequested = false;
 const photoTargets = new Map();
 
@@ -255,10 +288,14 @@ function actionError(error){
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
+  // F-01: clear photo cache / inflight on every auth edge (logout, station,
+  // user switch) so a late getDocs cannot paint foreign photos.
+  const gen = bumpIdentity();
   if (!user) { location.replace('./login.html?next=vehicle.html'); return; }
 
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
+  if (gen !== AUTH_GEN) return;
 
   const isSuper = c.super === true;
   const isMember = isSuper ||
@@ -275,7 +312,6 @@ onAuthStateChanged(auth, async user => {
     return;
   }
 
-  $('work').classList.remove('hide');
   renderNav(c, 'vehicle.html', user.email || '');
   watchCallouts(db, SID, user.uid, { name: user.email || '' });
 
@@ -294,32 +330,53 @@ $('btnOutDeny').onclick = () => signOut(auth);
 // ---------- טעינה ----------
 
 async function loadAll(){
-  faults = []; views = []; let boardVehicles = [], anchors = [];
-  const safe = p => p.catch(() => null);
+  const reqSid = SID, reqGen = AUTH_GEN, reqLoad = ++LOAD_GEN;
+  if (!reqSid) return;
+  const nextFaults = [], nextViews = [];
+  let boardVehicles = [], anchors = [];
+  $('retryLoad').disabled = true;
+  let fs_, bd, vs, vw;
+  try {
+    [fs_, bd, vs, vw] = await Promise.all([
+      getDocs(collection(db, 'stations', reqSid, 'faults')),
+      getDoc(doc(db, 'stations', reqSid, 'config', 'board')),
+      getDocs(collection(db, 'stations', reqSid, 'vehicles')),
+      getDocs(collection(db, 'stations', reqSid, 'vehicle_views'))
+    ]);
+  } catch (error) {
+    if (reqSid !== SID || reqGen !== AUTH_GEN || reqLoad !== LOAD_GEN) return false;
+    close();
+    $('lb').classList.remove('on');
+    $('work').classList.add('hide');
+    $('loadError').classList.remove('hide');
+    $('retryLoad').disabled = false;
+    return false;
+  }
+  if (reqSid !== SID || reqGen !== AUTH_GEN || reqLoad !== LOAD_GEN) return;
 
-  const [fs_, bd, vs, vw] = await Promise.all([
-    safe(getDocs(collection(db, 'stations', SID, 'faults'))),
-    safe(getDoc(doc(db, 'stations', SID, 'config', 'board'))),
-    safe(getDocs(collection(db, 'stations', SID, 'vehicles'))),
-    safe(getDocs(collection(db, 'stations', SID, 'vehicle_views')))
-  ]);
-
-  if (fs_) fs_.forEach(d => faults.push(Object.assign({ id:d.id }, d.data() || {})));
+  fs_.forEach(d => nextFaults.push(Object.assign({ id:d.id }, d.data() || {})));
   if (bd && bd.exists()) boardVehicles = (bd.data() || {}).vehicles || [];
-  if (vs) vs.forEach(d => {
+  vs.forEach(d => {
     const v = d.data() || {};
     if (v.kind && v.kind !== 'anchor') return;
     anchors.push(Object.assign({ id:d.id }, v));
   });
-  if (vw) vw.forEach(d => views.push(Object.assign({ id:d.id }, d.data() || {})));
+  vw.forEach(d => nextViews.push(Object.assign({ id:d.id }, d.data() || {})));
 
+  faults = nextFaults; views = nextViews;
   fleet = mergeFleet(boardVehicles, anchors, { includeInactive:true });
   // A deep link is an identity, not a suggestion. Never replace an explicit
   // archived/missing vehicle with a different one that happens to be first.
   if (!vid && !vehicleRequested) vid = (fleet.find(v => v.active !== false) || {}).id || '';
 
   render();
+  $('loadError').classList.add('hide');
+  $('retryLoad').disabled = false;
+  $('work').classList.remove('hide');
+  return true;
 }
+
+$('retryLoad').onclick = () => { void loadAll(); };
 
 // ---------- ציור ----------
 
@@ -402,7 +459,7 @@ function renderVehicles(){
 // **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
 // פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
 // פתיחה של המסך, לכולם, לנצח.
-const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h20' };
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h42' };
 
 function renderImport(){
   const box = $('importRow');
@@ -626,8 +683,11 @@ $('baseGallery').onchange = function () { return uploadBasePhoto(this); };
 
 // ---------- דיווח חדש בנקודה ----------
 
+let NEW_FAULT_MODAL_GEN = 0;
+let NEW_FAULT_UPLOAD_LOCKED = false;
 function newAt(pt){
   if (!canAddToVehicle()) return;
+  const modalGen = ++NEW_FAULT_MODAL_GEN;
   const target = captureVehicleTarget();
   const kinds = FAULT_KINDS.filter(k => k.needsVehicle);
   $('dlgTitle').textContent = 'דיווח חדש · ' + sideHe(side);
@@ -637,81 +697,133 @@ function newAt(pt){
     '<label>סוג</label><select id="nKind">' +
       kinds.map(k => '<option value="' + k.id + '">' + esc(k.he) + '</option>').join('') +
     '</select>' +
-    '<label>כותרת קצרה</label>' +
-    '<input type="text" id="nTitle" maxlength="80" ' +
+    '<label>כותרת התקלה</label>' +
+    '<input type="text" id="nTitle" maxlength="240" ' +
       'placeholder="למשל: מכה בדופן מאחורי הגלגל">' +
     '<label>תיאור</label><textarea id="nDesc" maxlength="600"></textarea>' +
-    '<label>צילום המכה (לא חובה)</label>' +
+    '<label>צילומים (לא חובה, ללא מגבלה כוללת)</label>' +
     '<div class="row"><button type="button" class="btn sm" id="nShotCameraBtn">' +
       'צלם במצלמה</button>' +
     '<button type="button" class="btn sm" id="nShotGalleryBtn">' +
       'בחר מהגלריה</button>' +
-    '<span class="note" id="nShotName">לא נבחרה תמונה</span></div>' +
+    '<span class="note" id="nShotName" aria-live="polite">לא נבחרו תמונות</span></div>' +
+    '<div id="nShotList"></div>' +
     '<input type="file" id="nShot" accept="image/*" capture="environment" class="hide">' +
-    '<input type="file" id="nShotGallery" accept="image/*" class="hide">' +
+    '<input type="file" id="nShotGallery" accept="image/*" multiple class="hide">' +
     '<div class="row"><button class="btn go" id="nSave">שמור דיווח</button>' +
     '<button class="btn" id="nCancel">ביטול</button></div>' +
     '<div class="msg" id="nMsg"></div>';
   $('ov').classList.add('on');
 
-  let selectedShot = null;
-  function chooseShot(picker, other){
-    const file = picker.files && picker.files[0];
-    if (!file) return;
-    selectedShot = file;
-    other.value = '';
-    $('nShotName').textContent = file.name || 'נבחרה תמונה';
+  const photos = createPhotoQueue(Number.POSITIVE_INFINITY);
+  const reportId = doc(collection(db, 'stations', target.sid, 'faults')).id;
+  const upload = { baseCreated:false, baseSent:false, basePhotos:null, next:0, batch:null, formKey:'' };
+  function paintPhotos(){
+    const selected = photos.list();
+    $('nShotName').textContent = selected.length
+      ? selected.length + ' תמונות נבחרו. הן יישמרו באצוות עם התקדמות.'
+      : 'לא נבחרו תמונות. אפשר לצלם ולהוסיף אחת בכל פעם.';
+    $('nShotList').replaceChildren();
+    selected.forEach((file, index) => {
+      const row = document.createElement('div'); row.className = 'row';
+      const name = document.createElement('span');
+      name.textContent = file.name || 'תמונה ' + (index + 1);
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'btn sm'; remove.textContent = 'הסר';
+      remove.onclick = () => {
+        if (upload.baseCreated) {
+          msg('הדיווח כבר נוצר. השלימו את העלאת התמונות.', 'err', 'nMsg'); return;
+        }
+        photos.remove(index); paintPhotos();
+      };
+      row.append(name, remove); $('nShotList').appendChild(row);
+    });
+  }
+  function chooseShots(picker){
+    if (upload.baseCreated) {
+      msg('הדיווח כבר נוצר. השלימו את העלאת התמונות.', 'err', 'nMsg');
+      picker.value = ''; return;
+    }
+    if (!photos.add(picker.files)) msg('לא ניתן לצרף את הקבצים שנבחרו.', 'err', 'nMsg');
+    picker.value = '';
+    paintPhotos();
   }
   $('nShotCameraBtn').onclick = () => $('nShot').click();
   $('nShotGalleryBtn').onclick = () => $('nShotGallery').click();
-  $('nShot').onchange = function () { chooseShot(this, $('nShotGallery')); };
-  $('nShotGallery').onchange = function () { chooseShot(this, $('nShot')); };
+  $('nShot').onchange = function () { chooseShots(this); };
+  $('nShotGallery').onchange = function () { chooseShots(this); };
 
-  $('nCancel').onclick = close;
+  $('nCancel').onclick = () => close();
   $('nSave').onclick = async function (){
     const b = $('nSave');
     const title = $('nTitle').value.trim();
     if (!title) { msg('נא להזין כותרת.', 'err', 'nMsg'); return; }
+    const formKey = JSON.stringify({ kind:$('nKind').value, title,
+      desc:$('nDesc').value.trim(), count:photos.list().length });
+    if (upload.formKey && upload.formKey !== formKey) {
+      msg('שליחת הדיווח הקודם טרם הוכרעה. החזירו את פרטי הטופס ונסו שוב.', 'err', 'nMsg');
+      return;
+    }
+    upload.formKey = formKey;
+    NEW_FAULT_UPLOAD_LOCKED = true;
     b.disabled = true;
     msg('שומר…', 'info', 'nMsg');
     try {
       requireVehicleTarget(target);
-      const now = new Date();
-      const ref = await addDoc(collection(db, 'stations', target.sid, 'faults'), {
-        kind: $('nKind').value,
-        vehicle_id: target.id,
-        vehicle_name: (fleet.find(v => v.id === target.id) || {}).name || '',
-        side: target.side, x: pt.x, y: pt.y,
-        title: title,
-        desc: $('nDesc').value.trim(),
-        severity: 'unset', status: 'open', photos: 0,
-        by_uid: target.uid, by_name: target.name, crew: target.crew,
-        date: toKey(now), created_key: now.toISOString(),
-        created_at: serverTimestamp()
-      });
-
-      const file = selectedShot;
-      if (file) {
-        try {
-          const im = await shrinkImage(file);
-          requireVehicleTarget(target);
-          await addDoc(collection(db, 'stations', target.sid, 'faults', ref.id, 'photos'),
-                       { data: im.data, w: im.w, h: im.h, by_uid: target.uid,
-                         created_key: new Date().toISOString() });
-          requireVehicleTarget(target);
-          await setDoc(doc(db, 'stations', target.sid, 'faults', ref.id),
-                       { photos: 1 }, { merge:true });
-        } catch (pe) {
-          // הדיווח כבר נשמר. צילום שנכשל אינו סיבה לאבד אותו.
-          msg('הדיווח נשמר, אבל הצילום לא עלה. (' +
-              (pe.message || '') + ')', 'info', 'nMsg');
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      const files = photos.list();
+      if (!upload.baseCreated) {
+        if (!upload.basePhotos) {
+          const prepared = [];
+          for (const file of files.slice(0, 3)) {
+            requireVehicleTarget(target);
+            const image = await shrinkImage(file);
+            prepared.push({ data:image.data, w:image.w, h:image.h });
+          }
+          upload.basePhotos = prepared;
         }
+        requireVehicleTarget(target);
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.baseSent = true;
+        await createFaultReport({
+          stationId:target.sid, expectedUid:target.uid, reportId,
+          kind:$('nKind').value, vehicleId:target.id, title,
+          desc:$('nDesc').value.trim(), severity:'unset',
+          point:{ side:target.side, x:pt.x, y:pt.y }, photos:upload.basePhotos
+        });
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.baseCreated = true;
+        upload.next = upload.basePhotos.length; upload.basePhotos = null;
       }
+      while (upload.next < files.length) {
+        requireVehicleTarget(target);
+        if (!upload.batch) {
+          const prepared = [];
+          for (const file of files.slice(upload.next, upload.next + 3)) {
+            const image = await shrinkImage(file);
+            requireVehicleTarget(target);
+            prepared.push({ data:image.data, w:image.w, h:image.h });
+          }
+          upload.batch = { photos:prepared,
+            requestId:reportId + '_' + String(upload.next).padStart(8, '0') };
+        }
+        await appendFaultPhotos({ stationId:target.sid, expectedUid:target.uid,
+          reportId, requestId:upload.batch.requestId, photos:upload.batch.photos });
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.next += upload.batch.photos.length;
+        upload.batch = null;
+        msg('נשמרו ' + upload.next + ' מתוך ' + files.length + ' תמונות…', 'info', 'nMsg');
+      }
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      NEW_FAULT_UPLOAD_LOCKED = false;
       close();
       await loadAll();
     } catch (e) {
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      if (!upload.baseSent) NEW_FAULT_UPLOAD_LOCKED = false;
       b.disabled = false;
-      msg('השמירה נכשלה. (' + (e.code || e.message || '') + ')', 'err', 'nMsg');
+      msg('ההעלאה לא הושלמה. נשמרו ' + upload.next + ' מתוך ' + photos.list().length +
+        ' תמונות. הטופס נשמר; נסו שוב להמשך מאותה אצווה.', 'err', 'nMsg');
     }
   };
 }
@@ -722,7 +834,18 @@ function toKey(d){
   return d.getFullYear() + '-' + m + '-' + a;
 }
 
-function close(){ $('ov').classList.remove('on'); }
+function close(){
+  if (NEW_FAULT_UPLOAD_LOCKED) {
+    const status = $('nMsg');
+    if (status) status.textContent = 'הדיווח נשלח או נמצא בהעלאה. השלימו את התמונות או נסו שוב; אל תסגרו את הטופס.';
+    return;
+  }
+  NEW_FAULT_MODAL_GEN += 1;
+  DETAIL_GEN += 1;
+  shotsInflight = {};
+  $('ov').classList.remove('on');
+  $('dlgBody').replaceChildren();
+}
 $('dlgX').onclick = close;
 $('ov').onclick = e => { if (e.target === $('ov')) close(); };
 $('lbX').onclick = () => $('lb').classList.remove('on');
@@ -731,14 +854,19 @@ $('lb').onclick = e => { if (e.target !== $('lbImg')) $('lb').classList.remove('
 // ---------- כרטיס נקודה ----------
 
 function openFault(f, n){
-  $('dlgTitle').textContent = 'נקודה ' + n + ' · ' + sideHe(f.side);
+  DETAIL_GEN += 1;
+  shotsInflight = {};
+  $('dlgTitle').textContent = hasPoint(f)
+    ? 'נקודה ' + n + ' · ' + sideHe(f.side)
+    : 'דיווח רכב ללא מיקום';
   $('dlgHint').textContent = kindHe(f.kind);
   $('dlgBody').innerHTML = '';
-  $('dlgBody').appendChild(faultCard(f, n));
+  $('dlgBody').appendChild(faultCard(f, n, { loadPhotos:true }));
   $('ov').classList.add('on');
 }
 
-function faultCard(f, n){
+function faultCard(f, n, opts){
+  opts = opts || {};
   const target = captureFaultTarget(f);
   const open = isOpen(f);
   // בג'ר לרקע רווי (עיגול המספר, פס הצבע בצד הכרטיס) לעומת בג'ר
@@ -763,13 +891,83 @@ function faultCard(f, n){
         esc(open ? sevHe(f.severity) : 'טופלה') + '</span>' +
     '</div>' +
     (f.desc ? '<div class="desc">' + esc(f.desc) + '</div>' : '') +
-    '<div class="shots"><span class="ld">טוען צילומים…</span></div>' +
+    '<div class="shots"></div>' +
     '<div class="rep">דווח: ' + esc(reportedLine(f)) + '</div>';
 
-  loadShots(f, el.querySelector('.shots'));
+  const shotsBox = el.querySelector('.shots');
+  const photoCount = Number(f.photos || 0);
+  if (opts.loadPhotos) {
+    shotsBox.innerHTML = photoCount
+      ? '<span class="ld">טוען ' + photoCount + ' תמונות…</span>'
+      : '<span class="ld">אין צילום.</span>';
+    if (photoCount) loadShots(f, shotsBox);
+  } else if (photoCount > 0) {
+    // F-01: list / renderList — count-only skeleton, no getDocs(/photos).
+    shotsBox.innerHTML = '<span class="ld">' + photoCount + ' תמונות</span>';
+  }
 
   const acts = document.createElement('div');
   acts.className = 'acts';
+  if (!opts.loadPhotos) {
+    const detail = btn('הצג פרטים ותמונות', 'btn sm', () => openFault(f, n));
+    detail.setAttribute('aria-label', 'הצג פרטים ותמונות · ' + String(f.title || 'דיווח רכב'));
+    acts.appendChild(detail);
+  }
+  if (opts.loadPhotos && f.by_uid === ME.uid) {
+    const detailGen = DETAIL_GEN;
+    const picker = document.createElement('input');
+    picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true;
+    picker.hidden = true;
+    const status = document.createElement('span');
+    status.className = 'note'; status.setAttribute('role', 'status');
+    let upload = null;
+    const uploadButton = btn('צרף תמונות לתקלה זו', 'btn sm', () => {
+      if (upload) void send(); else picker.click();
+    });
+    async function send() {
+      if (!upload) return;
+      uploadButton.disabled = true;
+      try {
+        requireFaultTarget(target);
+        while (upload.next < upload.files.length) {
+          if (detailGen !== DETAIL_GEN) return;
+          const offset = upload.next;
+          if (!upload.batch) {
+            const photos = [];
+            for (const file of upload.files.slice(offset, offset + 3)) {
+              const image = await shrinkImage(file);
+              requireFaultTarget(target);
+              if (detailGen !== DETAIL_GEN) return;
+              photos.push({ data:image.data, w:image.w, h:image.h });
+            }
+            upload.batch = { photos, requestId:upload.id + '_' + offset };
+          }
+          await appendFaultPhotos({ stationId:target.sid, expectedUid:target.uid,
+            reportId:target.id, requestId:upload.batch.requestId,
+            photos:upload.batch.photos });
+          if (detailGen !== DETAIL_GEN) return;
+          requireFaultTarget(target);
+          upload.next += upload.batch.photos.length;
+          upload.batch = null;
+          if (status.isConnected) status.textContent = 'נשמרו ' + upload.next +
+            ' מתוך ' + upload.files.length + ' תמונות.';
+        }
+        upload = null;
+        if (detailGen === DETAIL_GEN) await loadAll();
+      } catch (error) {
+        if (detailGen === DETAIL_GEN && status.isConnected) status.textContent =
+          'ההעלאה לא הושלמה. לחצו שוב להמשך; אחרי רענון בחרו רק את התמונות החסרות.';
+      } finally { if (detailGen === DETAIL_GEN) uploadButton.disabled = false; }
+    }
+    picker.onchange = () => {
+      if (!picker.files?.length || detailGen !== DETAIL_GEN) return;
+      upload = { id:crypto.randomUUID(), files:Array.from(picker.files),
+        next:0, batch:null };
+      picker.value = '';
+      void send();
+    };
+    acts.append(uploadButton, picker, status);
+  }
 
   // דירוג — סגל בלבד. הכבאי מתאר מה ראה; כמה זה חמור זו
   // החלטה מבצעית של ראש המשמרת.
@@ -801,14 +999,81 @@ function btn(t, cls, fn){
 }
 
 async function loadShots(f, box){
-  if (!f.photos) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
-  if (shots[f.id]) { paint(shots[f.id], box); return; }
+  // F-01: cache key MUST be stationId+faultId (match faults.html).
+  // AUTH_GEN + late-response discard before cache write AND before paint.
+  if (!Number(f.photos || 0)) { box.innerHTML = '<span class="ld">אין צילום.</span>'; return; }
+  const reqSid = SID;
+  const reqGen = AUTH_GEN;
+  const reqDetail = DETAIL_GEN;
+  const key = String(reqSid || '') + ':' + String(f.id || '');
+  if (shots[key]) { paint(shots[key], box); moreShots(key, f, box, reqSid, reqGen, reqDetail); return; }
+  if (!shotsInflight[key]) {
+    const request = getDocs(query(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'),
+      orderBy(documentId()), limit(11)))
+      .then(function (s) {
+        const page = s.docs.slice(0, 10);
+        const list = page.map(d => d.data() || {});
+        if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail ||
+            shotsInflight[key] !== request) {
+          return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
+        }
+        shots[key] = list;
+        shotsPages[key] = { cursor:page.at(-1) || null, more:s.docs.length > 10 };
+        return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
+      })
+      .finally(function () {
+        if (shotsInflight[key] === request) delete shotsInflight[key];
+      });
+    shotsInflight[key] = request;
+  }
   try {
-    const s = await getDocs(
-      collection(db, 'stations', SID, 'faults', f.id, 'photos'));
-    const list = []; s.forEach(d => list.push(d.data() || {}));
-    shots[f.id] = list; paint(list, box);
-  } catch (e) { box.innerHTML = '<span class="ld">הצילומים לא נטענו.</span>'; }
+    const result = await shotsInflight[key];
+    if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen ||
+        DETAIL_GEN !== reqDetail || !box.isConnected ||
+        result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
+      return;
+    }
+    paint(result.list, box);
+    moreShots(key, f, box, reqSid, reqGen, reqDetail);
+  } catch (e) {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+    box.replaceChildren();
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn sm';
+    retry.textContent = 'הצילומים לא נטענו · נסה שוב';
+    retry.onclick = () => {
+      if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+      box.textContent = 'טוען תמונות…';
+      void loadShots(f, box);
+    };
+    box.appendChild(retry);
+  }
+}
+
+function moreShots(key, fault, box, reqSid, reqGen, reqDetail) {
+  const state = shotsPages[key];
+  if (!state?.more || !state.cursor) return;
+  const button = btn('עוד תמונות', 'btn sm', async () => {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+    button.disabled = true;
+    try {
+      const snap = await getDocs(query(collection(db, 'stations', reqSid,
+        'faults', fault.id, 'photos'), orderBy(documentId()),
+        startAfter(state.cursor), limit(11)));
+      if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail ||
+          !box.isConnected || shotsPages[key] !== state) return;
+      const page = snap.docs.slice(0, 10);
+      state.cursor = page.at(-1) || null; state.more = snap.docs.length > 10;
+      shots[key].push(...page.map(d => d.data() || {}));
+      paint(shots[key], box); moreShots(key, fault, box, reqSid, reqGen, reqDetail);
+    } catch (error) {
+      if (SID === reqSid && AUTH_GEN === reqGen && DETAIL_GEN === reqDetail && box.isConnected) {
+        button.textContent = 'לא נטען · נסו שוב'; button.disabled = false;
+      }
+    }
+  });
+  box.append(button);
 }
 
 function paint(list, box){
@@ -864,7 +1129,7 @@ async function wipe(f, target){
     } catch (ignore) {}
     requireFaultTarget(target);
     await deleteDoc(doc(db, 'stations', target.sid, 'faults', target.id));
-    delete shots[target.id];
+    delete shots[String(target.sid || SID || '') + ':' + String(target.id || '')];
     close(); await loadAll();
   } catch (e) { actionError(e); }
 }

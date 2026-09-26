@@ -36,7 +36,7 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
   }
   function setBusy(value){
     busy = value === true;
-    [elements.refresh, elements.analyze, elements.mode].forEach((button) => { if (button) button.disabled = busy; });
+    [elements.refresh, elements.analyze, elements.mode, elements.handoff].forEach((button) => { if (button) button.disabled = busy; });
   }
   function message(value, kind){
     if (!elements.message) return;
@@ -52,6 +52,9 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
     text(elements.modeBadge, '—'); text(elements.mode, '—');
     text(elements.operationalState, '—'); text(elements.healthState, '—'); text(elements.freshnessState, '—'); text(elements.platformState, '—');
     if (elements.list) elements.list.replaceChildren();
+    if (elements.handoffPanel) elements.handoffPanel.classList.add('maintenance-hidden');
+    if (elements.handoffText) elements.handoffText.value = '';
+    if (elements.handoffMeta) elements.handoffMeta.textContent = '';
     message('', '');
   }
   function render(dto){
@@ -108,7 +111,12 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
       const result = await call(name, data || {});
       if (mine !== generation) return;
       if (!sameIdentity(before)) { onIdentityLost(); return; }
-      render(result || {}); message(name === 'runMaintenanceAnalysis' ? 'האבחון הושלם ללא שינוי בנתונים העסקיים.' : 'הנתונים עודכנו.', 'safe');
+      if (name === 'prepareMaintenanceHandoff') {
+        renderHandoff(result || {});
+        message('חבילת הטיפול הוכנה להעתקה. לא בוצע שינוי בנתוני הייצור.', 'safe');
+      } else {
+        render(result || {}); message(name === 'runMaintenanceAnalysis' ? 'האבחון הושלם ללא שינוי בנתונים העסקיים.' : 'הנתונים עודכנו.', 'safe');
+      }
     } catch (error) {
       if (mine !== generation) return;
       if (!sameIdentity(before)) { onIdentityLost(); return; }
@@ -116,7 +124,19 @@ export function createMaintenanceUi({ elements, call, currentIdentity, onIdentit
       message(code.includes('permission-denied') ? 'השרת דחה את הפעולה: נדרשת הרשאת מנהל־על חיה.' : 'הפעולה נכשלה. ' + (code || 'שגיאה'), 'warn');
     } finally { if (mine === generation) setBusy(false); }
   }
-  return Object.freeze({ render, invalidate, refresh:() => invoke('getMaintenanceDashboard'), analyze:() => invoke('runMaintenanceAnalysis'), setMode:(mode) => invoke('setMaintenanceMode',{mode,expected_revision:revision}) });
+  function renderHandoff(dto) {
+    if (!elements.handoffPanel || !elements.handoffText || !elements.handoffMeta) return;
+    const prompt = typeof dto.prompt === 'string' ? dto.prompt : '';
+    elements.handoffText.value = prompt;
+    elements.handoffMeta.textContent = 'חומרה: ' + String(dto.severity || 'P3')
+      + ' · ממצאים: ' + asCount(dto.item_count)
+      + ' · כתיבות לייצור: ' + asCount(dto.writes_performed)
+      + ' · פריסה מאושרת: ' + (dto.deployment_authorized === true ? 'כן' : 'לא');
+    elements.handoffPanel.classList.remove('maintenance-hidden');
+  }
+  return Object.freeze({ render, invalidate, refresh:() => invoke('getMaintenanceDashboard'),
+    analyze:() => invoke('runMaintenanceAnalysis'), handoff:() => invoke('prepareMaintenanceHandoff'),
+    setMode:(mode) => invoke('setMaintenanceMode',{mode,expected_revision:revision}) });
 }
 
 export const MAINTENANCE_MODES = MODES;

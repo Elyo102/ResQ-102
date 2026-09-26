@@ -1,17 +1,17 @@
-import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, where, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { createHrHoursUI } from './hr-hours-ui.js?v=42h20';
-import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h20';
-import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h20';
-import { createLocalExportUI } from './hr-local-export-ui.js?v=42h20';
-import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h20';
-import { createHrOverHoursAlertUI } from './hr-over-hours-alert-ui.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { createHrHoursUI } from './hr-hours-ui.js?v=42h42';
+import { createMonthArchiveUI } from './hr-month-archive-ui.js?v=42h42';
+import { buildLocalMonthFiles } from './hr-month-archive.js?v=42h42';
+import { createLocalExportUI } from './hr-local-export-ui.js?v=42h42';
+import { createHrWorkforceUI } from './hr-workforce-ui.js?v=42h42';
+import { createHrOverHoursAlertUI, createHrMonthlyReportUI } from './hr-over-hours-alert-ui.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h42';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
@@ -26,8 +26,16 @@ const review = httpsCallable(functions, 'saveHrEmployeeReview');
 const nudge = httpsCallable(functions, 'requestHrHoursNudge');
 const nudgeStatus = httpsCallable(functions, 'getHrHoursNudgeStatus');
 const nudges = httpsCallable(functions, 'listHrHoursNudges');
+const countRequestBoxes = httpsCallable(functions, 'countHrRequestBoxes');
 const listWorkforce = httpsCallable(functions, 'listHrWorkforceCases');
-const overHoursCallable = httpsCallable(functions, 'getHrOverHoursAlert');
+/* ⭐ ההתראה עברה לדור הפעיל של הדוח החודשי החדש.
+ * `getHrOverHoursAlert` קורא את `hr_reports`, שאין לו כותב חי —
+ * ולכן הוא היה מציג או חודש ישן כאילו הוא עכשוו, או ריק
+ * שנקרא „אין חורגים". ה-callable הישן נשאר רשום בשרת
+ * ואינו נקרא מכאן בשום מסלול. */
+const overHoursStatusCallable = httpsCallable(functions, 'getHrMonthlyOverHours');
+const monthlySummaryCallable = httpsCallable(functions, 'getHrMonthlySummary');
+const buildMonthlyCallable = httpsCallable(functions, 'buildHrMonthlySummaryNow');
 const createWorkforce = httpsCallable(functions, 'createHrWorkforceCase');
 const updateWorkforce = httpsCallable(functions, 'updateHrWorkforceCase');
 const remindWorkforce = httpsCallable(functions, 'queueHrWorkforceReminder');
@@ -153,7 +161,60 @@ createHrWorkforceUI(document.querySelector('[data-hr-workforce]'), {
 });
 createHrOverHoursAlertUI(document.querySelector('[data-hr-workforce]'), {
   currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
-  overHoursAlert: () => call(overHoursCallable, {})
+  overHoursStatus: () => call(overHoursStatusCallable, {}),
+  buildMonthly: () => call(buildMonthlyCallable, {})
+});
+createHrMonthlyReportUI(document.querySelector('[data-hr-monthly]'), {
+  currentSession, subscribeIdentity(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+  monthlySummary: data => call(monthlySummaryCallable, data)
+}, { monthElement: document.querySelector('[data-hr="month"]') });
+const inboxRoot = document.querySelector('[data-hr-inbox]');
+const inboxMessage = inboxRoot?.querySelector('[data-hi="message"]');
+const inboxRefresh = inboxRoot?.querySelector('[data-hi="refresh"]');
+const inboxKinds = ['sick', 'reserve', 'vacation', 'extended_absence'];
+let inboxRun = 0;
+function clearInbox(message = 'ממתין לחיבור מאובטח.') {
+  ++inboxRun;
+  for (const kind of inboxKinds) {
+    const value = inboxRoot?.querySelector(`[data-hi="${kind}"]`);
+    if (value) value.textContent = '—';
+  }
+  if (inboxMessage) inboxMessage.textContent = message;
+  if (inboxRefresh) inboxRefresh.disabled = !currentSession();
+}
+function validCount(value) { return Number.isSafeInteger(value) && value >= 0; }
+function openCount(box) {
+  if (!box || typeof box !== 'object' || !box.status || typeof box.status !== 'object') throw new Error('Invalid inbox response.');
+  const values = ['open', 'in_progress', 'waiting_employee'].map(key => box.status[key] ?? 0);
+  if (!values.every(validCount)) throw new Error('Invalid inbox response.');
+  return values.reduce((sum, value) => sum + value, 0);
+}
+async function loadInbox() {
+  const origin = currentSession(), run = ++inboxRun;
+  if (!origin) { clearInbox(); return; }
+  if (inboxRefresh) inboxRefresh.disabled = true;
+  if (inboxMessage) inboxMessage.textContent = 'טוען את תיבות הטיפול…';
+  try {
+    const response = await call(countRequestBoxes, {});
+    if (run !== inboxRun || currentSession() !== origin || !response || response.drift === true || !response.boxes) return;
+    for (const kind of inboxKinds) {
+      const value = inboxRoot?.querySelector(`[data-hi="${kind}"]`);
+      if (value) value.textContent = String(openCount(response.boxes[kind]));
+    }
+    if (inboxMessage) inboxMessage.textContent = 'הספירה מעודכנת. לפתיחת הרשימות בחרו תיבה.';
+  } catch (_) {
+    if (run === inboxRun && currentSession() === origin) {
+      clearInbox('לא ניתן לטעון את התיבות כרגע. אפשר לנסות שוב.');
+      if (inboxRefresh) inboxRefresh.disabled = false;
+    }
+  } finally {
+    if (run === inboxRun && currentSession() === origin && inboxRefresh) inboxRefresh.disabled = false;
+  }
+}
+inboxRefresh?.addEventListener('click', loadInbox);
+listeners.add(() => {
+  clearInbox();
+  if (currentSession()) loadInbox();
 });
 onIdTokenChanged(auth, async candidate => {
   const generation = ++epoch;

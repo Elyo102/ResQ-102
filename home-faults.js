@@ -19,7 +19,7 @@ function normalize(doc) {
     return null;
   }
   if (!row || !['open','in_repair'].includes(row.status)) return null;
-  const title = text(row.title).slice(0, 80);
+  const title = text(row.title).slice(0, 240);
   if (!title) return null;
   const severity = row.severity === 'critical' || row.severity === 'blocking'
     ? 'blocking' : row.severity === 'major' || row.severity === 'limiting'
@@ -29,7 +29,16 @@ function normalize(doc) {
     group: groupOf(row),
     title,
     subject: text(row.vehicle_name).slice(0, 80),
-    date: text(row.date).slice(0, 10),
+    date: (() => {
+      let date = null;
+      try { date = row.created_at && row.created_at.toDate(); } catch (_) {}
+      if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return text(row.date).slice(0, 10);
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+      }).formatToParts(date);
+      const v = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      return v.year + '-' + v.month + '-' + v.day;
+    })(),
     severity
   });
 }
@@ -129,6 +138,8 @@ export function initHomeFaults(options) {
   const source = sdk.query(
     sdk.collection(db, 'stations', stationId, 'faults'),
     sdk.where('status', 'in', ['open','in_repair']),
+    // Legacy faults may not have created_at; ordering by it would silently
+    // remove those still-open reports from the home panel.
     sdk.orderBy('created_key', 'desc'),
     sdk.limit(OPEN_QUERY_LIMIT)
   );

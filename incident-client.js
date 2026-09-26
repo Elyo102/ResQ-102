@@ -11,9 +11,11 @@ export const TELEMETRY_SCREENS = Object.freeze([
   'forms.html', 'guards.html', 'import.html', 'index.html', 'login.html',
   'people.html', 'quals.html', 'maintenance.html', 'schedule-management.html', 'schedule.html',
   'sign.html', 'stats.html', 'swaps.html', 'unlock.html', 'vehicle.html',
-  'device-readiness.html'
+  'device-readiness.html', 'saas-admin.html', 'metrics.html', 'cost-usage.html',
+  'operational-vehicles.html'
 ]);
-export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20']);
+export const TELEMETRY_VERSIONS = Object.freeze(['unknown', '42G.0', '42H.2', '42H.3', '42H.4', '42H.5', '42H.6', '42H.7', '42H.8', '42H.10', '42H.11', '42H.13', '42H.16', '42H.18', '42H.19', '42H.19.1', '42H.20', '42H.21', '42H.22', '42H.23', '42H.24', '42H.25', '42H.26', '42H.27', '42H.28', '42H.29', '42H.30', '42H.31', '42H.32', '42H.33', '42H.34', '42H.35', '42H.36', '42H.37', '42H.38', '42H.42']);
+const HOSTING_TELEMETRY_ALIAS = Object.freeze({ visible: '42H.39', server: '42H.38' });
 export const TELEMETRY_CODES = Object.freeze([
   'unknown', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError',
   'URIError', 'EvalError', 'AggregateError',
@@ -26,11 +28,14 @@ export const TELEMETRY_CODES = Object.freeze([
 export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
-  'redeemInvitation', 'resumeOnboarding',
+  'redeemInvitation', 'resumeOnboarding', 'registrationTermsConsent',
   'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
   'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',
   'verifyQualificationDeclaration', 'sendReadinessTestPush', 'ackReadinessTestPush', 'getMyReadiness',
-  'activateScheduleMonthAuthority', 'applyScheduleEdit', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
+  'createOrganization', 'attachStationToOrganization', 'changeSubscriptionPlan', 'setSubscriptionStatus',
+  'getOrganizationOverview', 'simulateBillingWebhook', 'listOrganizations',
+  'recordMetrics', 'getMetricsDashboard', 'getCostUsageDashboard', 'setCostUsageMeasurementStart',
+  'activateScheduleMonthAuthority', 'applyScheduleEdit', 'approvalMailStatus', 'approveRegistration', 'assignGuard', 'backupToSheetNow',
   'bootstrapSuperAdmin', 'broadcastBulletinMessage', 'bulkImport',
   'cancelStationTransfer', 'checkTestMail', 'claimPushToken',
   'getPersonalLiveLabStatus', 'enablePersonalLiveLab',
@@ -48,27 +53,37 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listBulletinMessageViewers', 'listStationTransfers',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
   'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleEdit', 'previewScheduleImport', 'previewSchedulePolicy',
-  'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
-  'rejectRegistration', 'replyToBulletinMessage', 'reportIncident',
+  'getScheduleSourceRoster', 'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
+  'rejectRegistration', 'replyToBulletinMessage', 'reportIncident', 'createFaultReport',
+  'appendFaultPhotos', 'recordVehicleEquipmentEvent', 'saveVehicleCompartmentItem',
+  'saveVehicleCompartmentPhoto', 'restoreVehicleCompartmentPhoto', 'transitionVehicleEquipmentEvent',
+  'listOperationalVehicleStations',
   'requestPasswordReset', 'respondToSchedule', 'resumeIdentityOperation',
   'rollbackSchedule', 'runAttendanceShadowNow', 'runReportNow',
   'runSchedulePlanner', 'saveQualification', 'saveScheduleGapPolicy', 'saveSchedulePolicy', 'saveScheduleSource',
-  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout',
+  'searchStationTransferCandidates', 'sendBroadcast', 'sendCallout', 'listCalloutRecipients',
   'sendTestMail', 'setAttendanceShadowMode', 'setJoinCode', 'setPersonQualifications', 'setScheduleDisplay', 'setScheduleManagerAccess', 'setScheduleRuntimeMode', 'setSilentMode',
   'setUserRole', 'submitFeedback', 'submitStationForm', 'unlockAccount',
   'getHrMonthReports', 'getHrEmployeeReport', 'getHrOverHoursAlert',
   'saveHrEmployeeReview', 'correctAttendanceDay', 'correctAttendanceMonth',
-  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection',
+  'getAttendanceCorrectionContext', 'reopenAttendanceMonthForCorrection', 'approveAttendanceMonth', 'mutateMyAttendanceDay', 'getMyAttendanceMonth', 'mutateMyAttendanceMonth',
   'listAttendanceCorrectionAudit', 'getAttendanceCorrectionAudit',
   'createHrRequest', 'listMyHrRequests', 'listHrRequestsInbox', 'getHrRequest',
-  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest',
+  'replyHrRequest', 'setHrRequestStatus', 'nudgeHrRequest', 'removeMyRequestFile', 'decideMyStationReport',
   'publishHrDocument', 'reviseHrDocument', 'listMyHrDocuments', 'listHrProcedures',
   'listManagedHrDocuments', 'getHrDocument', 'markHrDocumentOpened', 'acknowledgeHrDocument',
-  'listHrDocumentReceipts', 'markBulletinMessageViewed', 'nudgeHrDocument',
+  'listHrDocumentReceipts', 'markBulletinMessageViewed', 'nudgeHrDocument', 'archiveHrProcedure',
   'reserveHrAttachment', 'uploadHrAttachment', 'resumeHrAttachment', 'listHrAttachments', 'downloadHrAttachment',
   'requestHrHoursNudge', 'getHrHoursNudgeStatus', 'listHrHoursNudges',
   'createHrWorkforceCase', 'updateHrWorkforceCase', 'listHrWorkforceCases', 'queueHrWorkforceReminder',
-  'getMaintenanceDashboard', 'setMaintenanceMode', 'runMaintenanceAnalysis',
+  /* חבילת ה-HR לפילוט: מוני התיבות, הדוח החודשי המאוחד וכלי ה-backfill.
+   * הרשימה הזו אינה רשות: `tests/ops-source.mjs` אוכף שהיא שווה בדיוק
+   * לרשימת ה-onCall הציבוריים, ולכן callable חדש שאינו כאן מפיל את השער.
+   * מה שנכנס לכאן הוא השם בלבד — הדוח עצמו נשאר חמישה שדות
+   * טכניים וללא שום תוכן פרטי. */
+  'countHrRequestBoxes', 'getHrMonthlySummary', 'getHrMonthlyOverHours',
+  'buildHrMonthlySummaryNow', 'backfillHrRequestMonths', 'getHrRequestMonthsBackfillStatus',
+  'getMaintenanceDashboard', 'setMaintenanceMode', 'runMaintenanceAnalysis', 'prepareMaintenanceHandoff',
   'whoAmI'
 ]);
 
@@ -89,7 +104,7 @@ export function buildReport(kind, error, context) {
   return Object.freeze({
     kind: allowed(kind, TELEMETRY_KINDS, 'manual'),
     screen: screenName(ctx.href),
-    version: allowed(ctx.version, TELEMETRY_VERSIONS),
+    version: allowed(ctx.version === HOSTING_TELEMETRY_ALIAS.visible ? HOSTING_TELEMETRY_ALIAS.server : ctx.version, TELEMETRY_VERSIONS),
     code: allowed(err.code, TELEMETRY_CODES, allowed(err.name, TELEMETRY_CODES)),
     callable: allowed(ctx.callable, TELEMETRY_CALLABLES)
   });

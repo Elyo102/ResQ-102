@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -112,7 +112,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 #spSecretBox{border:1px solid var(--line);border-radius:14px;padding:12px;margin-block:12px}
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="admin">
 <div id="errBar"><span class="x" onclick="this.parentNode.style.display='none'">&times;</span>
   <b>המערכת נתקלה בשגיאה</b>
   <span id="errWhat"></span>
@@ -123,21 +123,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 // בלי זה, שגיאה בטעינת הקוד גורמת לכך ששום כפתור לא מגיב,
 // והמסך נראה תקין לגמרי.
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -194,13 +206,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <label for="spEmail">מייל המוזמן</label><input id="spEmail" type="email" dir="ltr" autocomplete="off">
         <label for="spPhone">טלפון</label><input id="spPhone" type="tel" dir="ltr" autocomplete="off">
         <label for="spShift">משמרת</label><select id="spShift"><option value="A">א׳</option><option value="B">ב׳</option><option value="C">ג׳</option></select>
-        <button type="button" id="spIssue">צור ושלח הזמנה</button>
+        <button type="button" id="spIssue">צור קישור הזמנה</button>
         <button type="button" id="spIssueEdit" class="ghost">תקן פרטי הזמנה שלא נוצרה</button>
         <div id="spSecretBox" class="hide">
-          <p>שמור והעבר למוזמן בערוץ פרטי. הסוד מוצג פעם אחת בלבד ואינו ניתן לשחזור כאן.</p>
-          <label for="spInviteId">מזהה הזמנה</label><input id="spInviteId" readonly dir="ltr" autocomplete="off">
-          <label for="spSecret">סוד הזמנה</label><input id="spSecret" readonly dir="ltr" autocomplete="off">
-          <button type="button" id="spCopy">העתק פרטי הזמנה</button><button type="button" id="spHide" class="ghost">הסתר סוד</button>
+          <p>העתק את הקישור ושלח אותו למוזמן בלבד בערוץ פרטי. הקישור מוצג פעם אחת; יצירתו אינה שולחת הודעה אוטומטית.</p>
+          <label for="spInviteLink">קישור הצטרפות אישי</label><input id="spInviteLink" readonly dir="ltr" autocomplete="off">
+          <input id="spInviteId" type="hidden"><input id="spSecret" type="hidden">
+          <button type="button" id="spCopy">העתק קישור</button><button type="button" id="spHide" class="ghost">הסתר קישור</button>
         </div>
         <button type="button" id="spReady" class="ghost">בדיקת מוכנות והפעלה</button>
         <p>בדיקה זו מפעילה את התחנה רק אם כל תנאי המוכנות מתקיימים. מצב שקט אינו מוסר בפעולה זו.</p>
@@ -377,7 +389,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -386,19 +398,20 @@ import { getFirestore, doc, getDoc, collection,
          getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
-import { CREW_HE } from './rotation.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
+import { CREW_HE } from './rotation.js?v=42h42';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=42h20';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h20';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
+  from './stations.js?v=42h42';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h42';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { createJoinAdmin } from './join-admin-ui.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { createJoinAdmin } from './join-admin-ui.js?v=42h42';
+import { personalInvitationLink } from './invitation-link.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -457,6 +470,7 @@ function initJoinAdmin(claims){
 }
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
+const callApprovalMailStatus = httpsCallable(fns, 'approvalMailStatus');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 // הרשאות הסידור נקראות ונכתבות רק דרך השרת. הדפדפן אינו שולח
@@ -512,7 +526,7 @@ const stationUiCalls = {
 let stationUiEpoch = 0, stationUiUid = '', stationUiBusy = false;
 let stationUiIntent = null, stationUiIssueIntent = null, stationUiCreated = false;
 function clearStationSecret(){
-  $('spInviteId').value = ''; $('spSecret').value = '';
+  $('spInviteId').value = ''; $('spSecret').value = ''; $('spInviteLink').value = '';
   $('spSecretBox').classList.add('hide');
 }
 function resetStationUi(){
@@ -559,8 +573,9 @@ async function stationUiAction(kind){
       clearStationSecret();
       if (result.secret_available === true && typeof result.secret === 'string') {
         $('spInviteId').value = result.invite_id; $('spSecret').value = result.secret;
+        $('spInviteLink').value = personalInvitationLink(location.href, result.invite_id, result.secret);
         $('spSecretBox').classList.remove('hide');
-        msg('spStatus', 'ההזמנה נוצרה. העבר את שני השדות למוזמן; המימוש נמצא במסך הכניסה תחת הצטרפות באמצעות הזמנה.', 'ok');
+        msg('spStatus', 'הקישור נוצר. העתק אותו ושלח למוזמן בערוץ פרטי; לא נשלח מייל אוטומטי.', 'ok');
       } else msg('spStatus', 'ההזמנה כבר נוצרה. הסוד אינו זמין שוב; אין כאן שחזור או הנפקה חוזרת אוטומטית.', 'info');
     } else msg('spStatus', 'השרת אישר מוכנות והפעלה. התחנה עדיין במצב שקט.', 'ok');
   } catch (error) {
@@ -576,9 +591,9 @@ $('spIssueEdit').onclick=()=>{
 };
 $('spHide').onclick=clearStationSecret;
 $('spCopy').onclick=async()=>{
-  if (!$('spSecret').value) return;
-  try { await navigator.clipboard.writeText('מזהה הזמנה: '+$('spInviteId').value+'\nסוד הזמנה: '+$('spSecret').value); }
-  catch { msg('spStatus', 'העתקה אוטומטית אינה זמינה. ניתן לסמן ולהעתיק את שני השדות ידנית.', 'info'); }
+  if (!$('spInviteLink').value) return;
+  try { await navigator.clipboard.writeText($('spInviteLink').value); msg('spStatus','הקישור הועתק. יש לשלוח אותו למוזמן בערוץ פרטי.','ok'); }
+  catch { msg('spStatus', 'העתקה אוטומטית אינה זמינה. ניתן לסמן ולהעתיק את הקישור ידנית.', 'info'); }
 };
 window.addEventListener('pagehide', clearStationSecret);
 initPWA({ offer: false });
@@ -1282,7 +1297,9 @@ onAuthStateChanged(auth, async user => {
   try { scheduleRuntimeStatus = (await callGetScheduleRuntimeStatus({})).data || null; }
   catch (ignore) {}
   const isScheduleManager = !!(scheduleRuntimeStatus && scheduleRuntimeStatus.manager === true);
-  const roleOk  = isSuper || isStaff || isScheduleManager;
+  // מסך "ניהול" הוא מעטפת מנהל המערכת בלבד. סמכויות תחנתיות
+  // (גישה, HR וסידור) נשארות במסכים הייעודיים שלהן.
+  const roleOk  = isSuper;
   const label   = (isSuper ? 'מנהל מערכת' : (ROLE_HE[claims.role] || claims.role)) +
                   (claims.stationId ? ' · ' + stationName(claims.stationId) : '');
 
@@ -1661,6 +1678,39 @@ $('btnUsers').onclick = async () => {
         (u.email_verified
           ? '<div class="match found">המייל מאומת</div>'
           : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
+
+      if (c.emp && c.super !== true) {
+        const mailButton = document.createElement('button');
+        mailButton.type = 'button'; mailButton.className = 'ghost';
+        mailButton.textContent = 'בדוק מייל מספר עובד';
+        const mailState = document.createElement('p');
+        mailState.setAttribute('role', 'status');
+        mailButton.onclick = async () => {
+          mailButton.disabled = true; mailState.textContent = 'בודק מצב הודעה…';
+          try {
+            const result = (await callApprovalMailStatus({ uid:u.uid })).data;
+            const state = result.state;
+            mailState.textContent = ({ 'SUCCESS':'המייל נשלח.', 'PENDING':'המייל בתור.',
+              'PROCESSING':'המייל בשליחה.', 'SUPPRESSED':'המייל דוכא לפי מצב השקט של התחנה.',
+              'ERROR':'שליחת המייל נכשלה.', 'MISSING':'לא נמצא מייל אישור.' })[state] || 'מצב המייל אינו ידוע.';
+            if (['SUPPRESSED','ERROR','MISSING'].includes(state)) {
+              mailButton.textContent = 'נסה לשלוח שוב אחרי בדיקת מצב התחנה';
+              mailButton.onclick = async () => {
+                mailButton.disabled = true;
+                try {
+                  const retried = (await callApprovalMailStatus({ uid:u.uid, resend:true })).data;
+                  mailState.textContent = retried.state === 'PENDING'
+                    ? 'הודעה חדשה הוכנסה לתור; עדיין לא אושרה מסירה.'
+                    : 'לא נוצרה הודעה חדשה. מצב: ' + retried.state;
+                } catch (_) { mailState.textContent = 'הניסיון החוזר נכשל. בדקו את מצב התחנה.'; }
+                finally { mailButton.disabled = false; }
+              };
+            }
+          } catch (_) { mailState.textContent = 'לא ניתן לבדוק כעת את מצב המייל.'; }
+          finally { mailButton.disabled = false; }
+        };
+        row.append(mailButton, mailState);
+      }
 
       box.appendChild(row);
     });

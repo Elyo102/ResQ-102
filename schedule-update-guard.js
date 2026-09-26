@@ -18,8 +18,8 @@ function hasChecked(doc, id) {
 
 export function scheduleUpdateBlockReason(state, doc) {
   const s = state || {};
-  if (s.busy || s.policyBusy || s.sourceBusy || s.modeBusy) return 'schedule-operation';
-  if (s.plannerPending || s.rollbackPending || s.importPending || s.editPending ||
+  if (s.busy || s.policyBusy || s.sourceBusy || s.rosterBusy || s.modeBusy) return 'schedule-operation';
+  if (s.plannerPending || s.rollbackPending || s.rosterPending || s.importPending || s.editPending ||
       s.pendingCutover || s.displayPending || s.publishRequestId || hasValues(s.intentRequestIds)) {
     return 'schedule-retry-proof';
   }
@@ -29,7 +29,7 @@ export function scheduleUpdateBlockReason(state, doc) {
       || hasChecked(doc, 'draftGapAck')) {
     return 'schedule-draft';
   }
-  if (s.policyDirty || s.sourceDirty || s.sourcePlan) return 'schedule-settings';
+  if (s.policyDirty || s.sourceDirty || s.sourcePlan || s.rosterDirty || s.rosterPlan) return 'schedule-settings';
   if ((Array.isArray(s.editList) && s.editList.length) || s.editReport || s.editFormDirty) {
     return 'schedule-edit';
   }

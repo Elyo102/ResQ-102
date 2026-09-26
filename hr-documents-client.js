@@ -1,14 +1,14 @@
-import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, doc, query, where, limit, getDocsFromServer, getDocFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h20';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { createHrDocumentsUI } from './hr-documents-ui.js?v=42h42';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h42';
 
-import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h20';
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h42';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
@@ -17,7 +17,9 @@ await initAppCheck(app);
 const auth = getAuth(app), db = getFirestore(app), functions = getFunctions(app, 'europe-west1');
 const names = { publish: 'publishHrDocument', revise: 'reviseHrDocument', listMine: 'listMyHrDocuments',
   listProcedures: 'listHrProcedures', listManaged: 'listManagedHrDocuments', get: 'getHrDocument',
-  markOpened: 'markHrDocumentOpened', acknowledge: 'acknowledgeHrDocument', listReceipts: 'listHrDocumentReceipts', nudge: 'nudgeHrDocument' };
+  markOpened: 'markHrDocumentOpened', acknowledge: 'acknowledgeHrDocument', listReceipts: 'listHrDocumentReceipts', nudge: 'nudgeHrDocument',
+  // הסרת נוהל תחנה — הפעולה נבנתה בפריט 7 ולא היה לה מסך.
+  archive: 'archiveHrProcedure' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;

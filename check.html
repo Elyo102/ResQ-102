@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -52,7 +52,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   h2{font-size:15px;margin:0 0 10px;color:var(--accent-txt)}
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="check">
 <div class="wrap">
   <h1>בדיקת מערכת</h1>
   <div class="sub">
@@ -119,13 +119,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   <div class="card">
     <h2>7 · גיבוי לגיליון</h2>
     <div class="sub" style="margin-bottom:0">
-      PITR וגיבויים מתוזמנים משחזרים לתוך Firestore, ואי אפשר לקרוא
-      בהם. הגיליון הוא השכבה שאפשר לפתוח ולהסתכל בה — לשונית לכל
-      אוסף, נכתבת מחדש כל לילה ב-03:40.
-      <br>דורש הקמה חד-פעמית. ראה את ההערות בראש הפונקציה ב-index.js.
+      גיבוי הגיליון <b>לא פעיל</b> כל עוד מזהה הגיליון ריק
+      (retired/fail-closed — הרצה לא מדווחת הצלחה). זה אינו מחליף
+      PITR או גיבויים מתוזמנים, ואין להניח שהם מופעלים בלי ראיות OWNER.
+      <br>הפעלה עתידית רק אחרי אישור OWNER וגיליון + חשבון שירות ייעודי
+      (לא חשבון ברירת המחדל של Compute Engine). ראה BACKUP-ACTIVATION-PLAN.md.
     </div>
     <div style="margin-top:12px">
-      <button id="btnBk">הרץ גיבוי עכשיו</button>
+      <button id="btnBk">בדוק סטטוס גיבוי לגיליון (לא פעיל)</button>
     </div>
     <div id="bkOut"></div>
   </div>
@@ -139,12 +140,14 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <b>אבטחות אינן נכללות בקובץ הזה.</b> הן נקראות ונכתבות
       דרך מסלול השרת בלבד, כדי שלא ייצא מידע רגיש מהדפדפן.
       <br><br>
-      <b>זה גיבוי ידני, וזו לא ההגנה העיקרית.</b> ההגנה
-      האמיתית היא <b>Point-In-Time Recovery</b> ו-<b>Delete
-      Protection</b> בקונסולה של Firebase: הן מחזירות את בסיס
-      הנתונים לכל רגע בשבעת הימים האחרונים, והן חינם. שתיהן
-      כבויות כרגע, ו<b>אי אפשר להפעיל אותן רטרואקטיבית</b> —
-      גיבוי שלא היה קיים ברגע המחיקה לא יעזור.
+      <b>זה גיבוי ידני, וזו לא ההגנה העיקרית.</b>
+      <b>Point-In-Time Recovery (PITR)</b> ו-<b>Delete Protection</b>
+      בקונסולה של Firebase הם שכבות הגנה נפרדות שאינן מופעלות
+      מכאן. <b>PITR דורש הפעלת Billing ועלול להיות כרוך בעלויות
+      אחסון וקריאה. יש לבדוק את התמחור העדכני לפני הפעלה.</b>
+      Delete Protection גם דורש החלטה מפורשת בקונסולה.
+      אי אפשר להפעיל אותן רטרואקטיבית — גיבוי שלא היה קיים ברגע
+      המחיקה לא יעזור.
       <br><br>
       הקובץ הזה טוב למה שהן לא מכסות: להסתכל בנתונים בלי
       להיכנס למערכת, ולשמור עותק מחוץ לגוגל.
@@ -194,7 +197,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -202,14 +205,14 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          deleteDoc, query, where, orderBy, limit, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
-import { renderStuckNav, renderNav } from './nav.js?v=42h20';
-import * as SEED from './seed.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
+import { renderStuckNav, renderNav } from './nav.js?v=42h42';
+import * as SEED from './seed.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -361,8 +364,8 @@ async function roster(sid){
 //
 // **המגבלה, במפורש.** זה קורא כמנהל-על ולכן מקבל הכל — אבל
 // זה עדיין תצלום רגע, ידני, שמישהו צריך לזכור ללחוץ עליו.
-// לכן הטקסט במסך מפנה ל-PITR: זו ההגנה שעובדת בלי שאיש
-// יזכור.
+// לכן הטקסט במסך מפנה ל-PITR/Delete Protection כשכבות
+// נפרדות (PITR דורש Billing; לא נטען שהן פעילות).
 
 const BACKUP_COLS = [
   'roster', 'users', 'quals', 'member_quals',
@@ -1037,25 +1040,26 @@ $('btnMailCheck').onclick = async () => {
 $('btnBk').onclick = async () => {
   const b = $('btnBk'); b.disabled = true;
   $('bkOut').innerHTML = '';
-  line('bkOut', 'רץ', 'עד דקה. אל תסגור את הדף.', 'warn');
+  line('bkOut', 'בודק', 'גיבוי הגיליון אינו מוגדר כהגנה פעילה. ממתין לתשובת השרת…', 'warn');
   try {
     const res = await httpsCallable(fns, 'backupToSheetNow')({});
     const d = res.data || {};
     $('bkOut').innerHTML = '';
-    if (d.skipped) {
-      line('bkOut', 'דולג', d.reason, 'warn');
-      line('bkOut', 'מה לעשות',
-           'קבע את BACKUP_SHEET_ID בראש הפונקציה ב-functions/index.js, ' +
-           'ושתף את הגיליון עם חשבון השירות. הפרטים בהערות שם.', 'warn');
-    } else {
-      line('bkOut', 'אוספים שגובו', String(d.collections), 'ok');
-      line('bkOut', 'שורות', String(d.rows), 'ok');
+    if (d.ok === false || d.retired || d.success === false || d.skipped) {
+      line('bkOut', 'הגיבוי אינו פעיל/נכשל', d.reason || 'BACKUP_SHEET_ID ריק או הגיבוי נכשל', 'bad');
+      line('bkOut', 'סטטוס', 'אין לסמוך על גיבוי לגיליון כהגנה. ראה BACKUP-ACTIVATION-PLAN.md', 'bad');
+    } else if (d.ok === true) {
+      line('bkOut', 'הורץ', 'השרת דיווח ok=true — ודא OWNER שאישר הפעלה', 'warn');
+      line('bkOut', 'אוספים', String(d.collections == null ? '?' : d.collections), 'warn');
+      line('bkOut', 'שורות', String(d.rows == null ? '?' : d.rows), 'warn');
       const f = (d.failed || []);
-      line('bkOut', 'נכשלו', f.length ? f.join(' | ') : 'אין', f.length ? 'bad' : 'ok');
+      if (f.length) line('bkOut', 'נכשלו', f.join(' | '), 'bad');
+    } else {
+      line('bkOut', 'הגיבוי אינו פעיל/נכשל', 'תשובה לא צפויה מהשרת', 'bad');
     }
   } catch (e) {
     $('bkOut').innerHTML = '';
-    line('bkOut', 'הגיבוי נכשל', (e.code || '') + ' ' + (e.message || ''), 'bad');
+    line('bkOut', 'הגיבוי אינו פעיל/נכשל', (e.code || '') + ' ' + (e.message || ''), 'bad');
   }
   b.disabled = false;
 };

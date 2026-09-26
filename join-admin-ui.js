@@ -66,9 +66,29 @@ async function copy(text) {
   }
 }
 
-/** deps: { isSuper, stationId, stations:[{id,name}], stationName(id), calls:{create,setStatus,list,registrants,review,verify}, approveOne(row,campaign), rejectOne(row), base } */
+/** Client-only share: Web Share when available, else wa.me draft. Never claims sent. */
+async function openWhatsAppShare(text) {
+  const body = String(text || '');
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({ text: body });
+      return 'opened';
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return 'aborted';
+    }
+  }
+  try {
+    const url = 'https://wa.me/?text=' + encodeURIComponent(body);
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (win) return 'opened';
+  } catch (ignore) {}
+  return (await copy(body)) ? 'copied' : 'failed';
+}
+
+/** deps: { isSuper, canApprove, stationId, stations:[{id,name}], stationName(id), calls:{create,setStatus,list,registrants,review,verify}, approveOne(row,campaign), rejectOne(row), base } */
 export function createJoinAdmin(root, deps) {
   const d = deps || {};
+  d.canApprove = d.canApprove === true || d.isSuper === true;
   for (const name of ['approveOne', 'rejectOne', 'stationName']) if (typeof d[name] !== 'function') throw new TypeError('join admin dependency is required: ' + name);
   for (const name of ['create', 'setStatus', 'list', 'registrants', 'review', 'verify']) if (typeof (d.calls || {})[name] !== 'function') throw new TypeError('join admin call is required: ' + name);
   const calls = d.calls;
@@ -158,7 +178,7 @@ export function createJoinAdmin(root, deps) {
         tokenBox.appendChild(input);
         const row = el('div', { class: 'join-row' });
         row.append(button('העתק קישור', '', async () => message((await copy(link)) ? 'הקישור הועתק.' : 'ההעתקה נכשלה — סמן/י והעתק/י ידנית.', false)),
-          button('העתק הודעת WhatsApp', 'ghost', async () => message((await copy(whatsappText(fresh.station_name, link, fresh.expires_at_ms))) ? 'ההודעה הועתקה. הדבק/י בקבוצה.' : 'ההעתקה נכשלה.', false)),
+          button('שתף ב-WhatsApp', 'ghost', async () => { const result = await openWhatsAppShare(whatsappText(fresh.station_name, link, fresh.expires_at_ms)); if (result === 'opened') message('WhatsApp נפתח — יש להשלים את השליחה', false); else if (result === 'copied') message('ההודעה הועתקה. הדבק/י בקבוצה.', false); else if (result === 'aborted') message(''); else message('לא ניתן לפתוח WhatsApp. העתיקו את ההודעה ידנית.', true); }),
           button('הסתר', 'ghost', () => { state.lastToken = null; renderList(); }));
         tokenBox.appendChild(row); box.appendChild(tokenBox);
       }
@@ -220,7 +240,7 @@ export function createJoinAdmin(root, deps) {
     // פעולות מרוכזות
     const bulk = el('div', { class: 'join-row join-bulk' });
     const eligible = rows.filter(bulkEligible);
-    if (d.isSuper) {
+    if (d.canApprove) {
       bulk.appendChild(button('בחר את כל הכשירים לאישור (' + Math.min(eligible.length, BULK_LIMIT) + ')', 'ghost', () => { state.selected = new Set(eligible.slice(0, BULK_LIMIT).map((r) => r.uid)); renderRegistrants(); }));
       bulk.appendChild(button('אשר את הנבחרים (' + state.selected.size + ')', '', () => bulkApprove(), { id: 'jrBulkApprove' }));
     }
@@ -231,7 +251,7 @@ export function createJoinAdmin(root, deps) {
     if (!rows.length) { regBox.appendChild(el('div', { class: 'empty' }, 'אין נרשמים תואמים.')); return; }
     const table = el('table', { class: 'join-table' });
     const thead = el('thead', {}); const hr = el('tr', {});
-    (d.isSuper ? ['', 'שם', 'קשר', 'משמרת', 'מצב', 'כשירויות', 'ביקורת', 'פעולות'] : ['שם', 'קשר', 'משמרת', 'מצב', 'כשירויות', 'ביקורת', 'פעולות']).forEach((h) => hr.appendChild(el('th', { scope: 'col' }, h)));
+    (d.canApprove ? ['', 'שם', 'קשר', 'משמרת', 'מצב', 'כשירויות', 'ביקורת', 'פעולות'] : ['שם', 'קשר', 'משמרת', 'מצב', 'כשירויות', 'ביקורת', 'פעולות']).forEach((h) => hr.appendChild(el('th', { scope: 'col' }, h)));
     thead.appendChild(hr); table.appendChild(thead);
     const tbody = el('tbody', {});
     rows.forEach((r) => tbody.appendChild(renderRow(r)));
@@ -240,7 +260,7 @@ export function createJoinAdmin(root, deps) {
   }
   function renderRow(r) {
     const tr = el('tr', { 'data-uid': r.uid, class: bulkEligible(r) ? '' : 'join-exception' });
-    if (d.isSuper) {
+    if (d.canApprove) {
       const td = el('td', {}); const cb = el('input', { type: 'checkbox', 'aria-label': 'בחר ' + r.full_name });
       cb.checked = state.selected.has(r.uid); cb.disabled = !bulkEligible(r);
       cb.onchange = () => { if (cb.checked) { if (state.selected.size >= BULK_LIMIT) { cb.checked = false; message('עד ' + BULK_LIMIT + ' בכל אישור מרוכז.', true); return; } state.selected.add(r.uid); } else state.selected.delete(r.uid); };
@@ -273,8 +293,8 @@ export function createJoinAdmin(root, deps) {
     if (r.reject_reason) review.appendChild(el('div', { class: 'join-warn' }, 'נדחה: ' + r.reject_reason));
     tr.appendChild(review);
     const actions = el('td', { 'data-label': 'פעולות', class: 'join-actions' });
-    if (d.isSuper && r.request_status === 'pending') actions.appendChild(button('אשר', 'ok join-mini', () => approveRow(r)));
-    if (d.isSuper && ['pending', 'processing', 'needs_recovery'].indexOf(r.request_status) !== -1) actions.appendChild(button('דחה', 'no join-mini', () => rejectRow(r)));
+    if (d.canApprove && r.request_status === 'pending') actions.appendChild(button('אשר', 'ok join-mini', () => approveRow(r)));
+    if (d.canApprove && ['pending', 'processing', 'needs_recovery'].indexOf(r.request_status) !== -1) actions.appendChild(button('דחה', 'no join-mini', () => rejectRow(r)));
     if (r.request_status === 'pending') {
       actions.appendChild(button('החזר לתיקון', 'ghost join-mini', () => reviewRow(r, 'return')));
       actions.appendChild(button('תזכורת', 'ghost join-mini', () => reviewRow(r, 'remind')));

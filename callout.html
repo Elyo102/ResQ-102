@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ResQ — קריאת פתע</title>
 <link rel="icon" href="./favicon.ico" sizes="any">
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <style>
   body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
   .wrap{max-width:760px;margin:0 auto;padding:18px 14px 70px}
@@ -13,6 +13,25 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px;margin-bottom:14px}
   .danger{border-color:var(--bad-bd);background:var(--bad-bg)}
   .sound-note{margin:10px 0;padding:10px;border-radius:10px;background:var(--chip);color:var(--dim);font-size:13px;line-height:1.6}
+  .sound-preview{display:grid;gap:6px;margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--input)}
+  .sound-preview b{color:var(--callout-heading)}
+  .sound-preview audio{width:100%;min-height:44px}
+  .recipient-box{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--card)}
+  .recipient-tools{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+  .recipient-tools button{width:100%;min-height:44px;margin-top:0;background:var(--chip);color:var(--txt);border:1px solid var(--line);font-weight:800}
+  .recipient-tools button[aria-pressed="true"]{background:var(--warn-bg);border-color:var(--accent);color:var(--accent-txt)}
+  .recipient-list{display:grid;gap:8px;margin-top:8px;max-height:min(46vh,420px);
+    overflow-y:auto;overscroll-behavior:contain;padding-inline-end:4px;align-content:start}
+  .recipient-item{display:flex;align-items:center;gap:8px;min-height:48px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--input)}
+  .recipient-item.is-picked{border-color:var(--accent);background:var(--warn-bg)}
+  .recipient-item input{width:auto;min-height:24px;min-width:24px;margin:0}
+  .recipient-check{display:grid;place-items:center;min-width:28px;height:28px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:transparent;font-weight:900}
+  .recipient-item.is-picked .recipient-check{border-color:var(--accent);background:var(--accent);color:var(--accent-on)}
+  .recipient-item small{color:var(--muted)}
+  .recipient-empty{min-height:44px;padding:10px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);background:var(--chip)}
+  .recipient-summary{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.55}
+.recipient-search-label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+#recipientSearch{width:100%;min-height:44px;margin:0;box-sizing:border-box}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
   textarea{box-sizing:border-box;width:100%;min-height:120px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
   input,select{box-sizing:border-box;width:100%;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--txt);font:inherit}
@@ -20,6 +39,11 @@
   button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--txt);border:1px solid var(--line);padding:8px 12px}
   .msg{display:none;margin-top:10px;border-radius:9px;padding:10px}.msg.err{display:block;background:var(--err-bg);color:var(--err-fg)}.msg.ok{display:block;background:var(--ok-bg);color:var(--ok-fg)}.msg.info{display:block;background:var(--chip);color:var(--dim)}
   .hide{display:none!important}.callout-row{border-top:1px solid var(--line);padding:13px 0}.callout-row:first-child{border-top:0}.callout-row p{white-space:pre-wrap;word-break:break-word}.callout-row small{display:block;color:var(--muted);margin-top:5px}.tally{font-weight:700;color:var(--accent-txt)}
+  .callout-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+  .callout-metrics>div{display:grid;place-items:center;gap:2px;min-height:64px;padding:8px 4px;border:1px solid var(--line);border-radius:10px;background:var(--chip);text-align:center}
+  .callout-metrics strong{font-size:20px;color:var(--callout-heading)}
+  .callout-metrics span{font-size:11px;color:var(--muted);font-weight:700}
+  .callout-sent-to{padding:8px;border-radius:8px;background:var(--input);border:1px solid var(--line);line-height:1.55}
   /* Approved Gemini visual language; existing console and authorization stay intact. */
   /* 42H.20 §2/§4 · שלושה מאותם משתני CSS שברירת המחדל שלהם הפכה
      בהירה תמיד ב-theme.css. אלה ערכי-על מקומיים לעמוד הזה בלבד
@@ -36,11 +60,17 @@
   .wrap button{min-width:44px;min-height:44px}
   .wrap #calloutSend,.wrap #targetApply{background:#c2410c;color:#fff;border:1px solid #d9531e}
   .wrap #calloutSend{width:100%}
+  .callout-actions{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px}
+  .callout-actions #calloutSend{width:auto}
+  .callout-rehearsal-note{display:block;margin-top:8px;color:var(--muted);line-height:1.5}
+  .callout-row.rehearsal{border-inline-start:4px solid #64748b;padding-inline-start:10px}
+  @media(max-width:390px){.callout-actions{grid-template-columns:1fr}}
   .wrap :is(button,input,select,textarea):focus-visible{outline:3px solid #347dbd;outline-offset:3px}
   .wrap .callout-row{overflow-wrap:anywhere}
+  @media(max-width:390px){.callout-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="callout">
 <div class="wrap">
   <h1>קריאת פתע</h1>
   <div class="sub" id="whoSub">מאמת הרשאה…</div>
@@ -58,11 +88,32 @@
     </section>
     <section class="card danger" aria-labelledby="composeTitle">
       <h2 id="composeTitle">הזעקת <span id="calloutCrew">המשמרת שלי</span></h2>
-      <p>הקריאה תישלח לכל אנשי המשמרת ותדרוש מהם להשיב.</p>
+      <p>אפשר לשלוח לכל המשמרת או לבחור לוחמים מסוימים בלבד.</p>
       <p class="sound-note">🔔 כשהאפליקציה פתוחה יושמע צליל קריאת הפתע שנבחר. כשהיא ברקע, הצליל והעוצמה כפופים להגדרות ההתראות של המכשיר.</p>
+      <div class="sound-preview" aria-label="בדיקת צליל קריאת הפתע">
+        <b>בדיקת צליל לפני שיגור</b>
+        <span class="sub">השמעה מקומית בלבד — לא נשלחת קריאה ולא נרשם אירוע.</span>
+        <audio controls preload="none" src="./callout-siren.mp3?v=42h42"></audio>
+      </div>
+      <section class="recipient-box" aria-labelledby="recipientTitle">
+        <h3 id="recipientTitle" style="font-size:16px;margin:12px 0 4px;color:var(--callout-heading)">נמענים</h3>
+        <p class="recipient-summary" id="recipientSummary" aria-live="polite">ממתין לטעינת רשימת לוחמים…</p>
+        <div class="recipient-tools">
+          <button type="button" id="recipientAll" aria-pressed="true">כל המשמרת</button>
+          <button type="button" id="recipientNone" aria-pressed="false">בחירה פרטנית</button>
+          <button type="button" id="recipientSelf" aria-pressed="false">בדיקת עצמי</button>
+        </div>
+        <label for="recipientSearch" class="recipient-search-label">חיפוש ברשימה</label>
+        <input type="search" id="recipientSearch" maxlength="80" placeholder="שם לוחם…" autocomplete="off" enterkeyhint="search">
+        <div id="recipientList" class="recipient-list" aria-label="בחירת נמענים לקריאת פתע"></div>
+      </section>
       <label for="calloutText">הודעת הקריאה</label>
       <textarea id="calloutText" maxlength="300" placeholder="התייצבות מיידית בתחנה."></textarea>
-      <button type="button" id="calloutSend">הזעק</button>
+      <div class="callout-actions">
+        <button type="button" id="calloutSend">הזעק</button>
+        <button type="button" id="calloutRehearse" class="secondary">תרגול ללא שידור</button>
+      </div>
+      <small class="callout-rehearsal-note">תרגול בודק את הבחירה וההרשאות בלבד. לא נשלחת התראה, אין צלצול והעובדים אינם רואים את התרגול.</small>
       <div class="msg" id="calloutMessage" aria-live="polite"></div>
     </section>
     <section class="card hide" id="calloutLiveCard" aria-labelledby="liveTitle">
@@ -73,17 +124,17 @@
   </main>
 </div>
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onIdTokenChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
-import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h20';
-import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { ROLE_VIEW_STORAGE_KEY } from './role-view-page.js?v=42h42';
+import { initCalloutConsole, destroyCalloutConsole } from './callout-console.js?v=42h42';
 
 const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
@@ -103,13 +154,38 @@ function deny(user, message) {
   $('whoSub').textContent = user && user.email ? user.email : '';
 }
 function elements() {
-  return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'),
-    message:$('calloutMessage'), liveCard:$('calloutLiveCard'), live:$('calloutLive') };
+  return { crew:$('calloutCrew'), input:$('calloutText'), send:$('calloutSend'), rehearse:$('calloutRehearse'),
+    message:$('calloutMessage'), liveCard:$('calloutLiveCard'), live:$('calloutLive'),
+    recipientList:$('recipientList'), recipientSummary:$('recipientSummary'),
+    recipientAll:$('recipientAll'), recipientNone:$('recipientNone'), recipientSelf:$('recipientSelf'),
+    recipientSearch:$('recipientSearch') };
+}
+function showRecipientInitError(retryFn) {
+  const list = $('recipientList'), summary = $('recipientSummary');
+  if (list) {
+    list.setAttribute('aria-busy', 'false');
+    list.replaceChildren();
+    const notice = document.createElement('div');
+    notice.className = 'recipient-empty';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'secondary';
+    retry.textContent = 'נסה שוב';
+    retry.style.minHeight = '44px';
+    retry.onclick = () => retryFn();
+    notice.append('לא ניתן לטעון את רשימת הלוחמים. ', retry);
+    list.appendChild(notice);
+  }
+  if (summary) {
+    summary.textContent = 'טעינת הרשימה נכשלה. לחצו „נסה שוב" או רעננו את הדף.';
+  }
 }
 
 onIdTokenChanged(auth, async user => {
   const turn = ++generation;
-  destroyCalloutConsole();
+  // Keep an unresolved request in memory across a token refresh, but never
+  // carry callout text or recipients through an actual sign-out.
+  destroyCalloutConsole({ discardPending: !user });
   if (stopIncoming) { try { stopIncoming(); } catch (_) {} stopIncoming = null; }
   $('work').classList.add('hide'); $('denyCard').classList.add('hide');
   if (!user) { location.replace('./login.html'); return; }
@@ -153,8 +229,13 @@ onIdTokenChanged(auth, async user => {
       $('targetMessage').textContent = 'יעד נבחר: ' + targetStationId + ' · משמרת ' + targetCrew;
       $('calloutSend').disabled = false;
     } catch (_) {
+      controller = null;
       $('calloutSend').disabled = true;
-      $('targetMessage').textContent = 'לא ניתן לפתוח את מסוף הקריאה ליעד שנבחר.';
+      if (isSuper) {
+        $('targetMessage').textContent = 'לא ניתן לפתוח את מסוף הקריאה ליעד שנבחר.';
+      }
+      // Work may already be visible — never leave "טוען…" forever.
+      showRecipientInitError(() => { void startConsole(); });
     } finally { $('targetApply').disabled = false; }
   };
   $('targetApply').onclick = startConsole;
@@ -162,6 +243,9 @@ onIdTokenChanged(auth, async user => {
     $('targetStation').value = sid; $('targetCrew').value = '';
     $('calloutSend').disabled = true;
     $('targetMessage').textContent = 'בחר תחנה ומשמרת ואשר את היעד לפני שליחה.';
+    $('recipientList').replaceChildren();
+    $('recipientList').setAttribute('aria-busy', 'false');
+    $('recipientSummary').textContent = 'בחרו תחנה ומשמרת ואשרו יעד כדי לטעון נמענים.';
   } else { await startConsole(); }
   if (turn !== generation) return;
   stopIncoming = watchCallouts(db, sid, user.uid, { name:name || user.email || '' });

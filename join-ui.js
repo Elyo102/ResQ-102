@@ -7,8 +7,8 @@
 // כללי מסך: אין innerHTML עם תוכן משתמש — כל טקסט נכנס דרך textContent;
 // כל כפתור ושדה בגובה 44px לפחות (theme.css); כל מצב שרת מקבל מסך משלו.
 
-export const TERMS_VERSION = '2026-09';
-export const PRIVACY_VERSION = '2026-09';
+export const TERMS_VERSION = '1.3';
+export const PRIVACY_VERSION = '2026-09-24';
 export const SHIFT_HE = Object.freeze({ A: 'א׳', B: 'ב׳', C: 'ג׳' });
 const STATE_TEXT = Object.freeze({
   loading: ['⏳', 'בודק את הקישור…', 'רגע אחד.'],
@@ -63,20 +63,37 @@ const session = {
 };
 const requestStore = {
   key: (token) => 'resq_join_request_' + token.slice(0, 16),
-  get(token) { return session.get(this.key(token)); },
-  set(token, id) { session.set(this.key(token), id); },
+  get(token) {
+    try {
+      const value = JSON.parse(session.get(this.key(token)) || 'null');
+      return value && typeof value.id === 'string' && typeof value.intent === 'string' ? value : null;
+    } catch (ignore) { return null; }
+  },
+  set(token, value) { session.set(this.key(token), JSON.stringify(value)); },
   clear(token) { session.remove(this.key(token)); }
 };
+// This is only a local accidental-change guard. The server enforces a SHA-256
+// fingerprint independently; no name, phone or note is persisted in storage.
+function localIntent(payload) {
+  const content = JSON.stringify(payload);
+  let h = 2166136261;
+  for (let i = 0; i < content.length; i += 1) {
+    h ^= content.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return String(h >>> 0);
+}
 
 /** בונה את הפאנל בתוך `root`. deps — ראו login.html. */
 export function createJoinPanel(root, deps) {
   const d = deps || {};
-  for (const name of ['inspect', 'redeem', 'currentUser', 'createAccount', 'signIn', 'sendVerification', 'refreshUser',
+  for (const name of ['inspect', 'redeem', 'currentUser', 'createAccount', 'signIn', 'requestPasswordReset', 'sendVerification', 'refreshUser',
     'hasAssignment', 'onRedeemed', 'pwOk', 'claims']) {
     if (typeof d[name] !== 'function') throw new TypeError('join panel dependency is required: ' + name);
   }
   const token = String(d.token || '');
-  const state = { view: null, busy: false, requestId: requestStore.get(token) || '', epoch: 0 };
+  const state = { view: null, busy: false, request: requestStore.get(token), epoch: 0,
+    renderedUid: '', transientDraft: null };
 
   const head = el('div', { class: 'join-head' });
   const icon = el('div', { class: 'join-icon', 'aria-hidden': 'true' });
@@ -98,6 +115,7 @@ export function createJoinPanel(root, deps) {
     b.onclick = onClick; return b;
   }
   function renderTerminal(kind, retry) {
+    state.transientDraft = null;
     setHead(kind); clear(body);
     if (retry) body.appendChild(button('נסה שוב', 'ghost', () => load()));
     body.appendChild(button('לדף הכניסה הרגיל', 'link', () => { stripJoinFromUrl(window); location.replace('./login.html'); }));
@@ -117,26 +135,75 @@ export function createJoinPanel(root, deps) {
 
   /* ---------- טופס ---------- */
   const fields = {};
+  // Token refresh rebuilds the form. Keep unsent choices only in this panel's
+  // memory, never in sessionStorage; password and legal acknowledgement are
+  // deliberately excluded. A different signed-in user must not inherit them.
+  function captureTransientDraft() {
+    if (!fields.joinName || !body.contains(fields.joinName)) return;
+    state.transientDraft = {
+      email: fields.joinEmail ? fields.joinEmail.value : '',
+      name: fields.joinName.value,
+      phone: fields.joinPhone.value,
+      note: fields.joinNote ? fields.joinNote.value : '',
+      shift: body.querySelector('input[name="joinShift"]:checked')?.value || '',
+      qualifications: Array.from(body.querySelectorAll('.join-qual')).map((row) => ({
+        key: row.dataset.key,
+        checked: !!row.querySelector('input[type="checkbox"]')?.checked,
+        until: row.querySelector('input[type="date"]')?.value || '',
+        ref: row.querySelector('input[type="text"]')?.value || ''
+      }))
+    };
+  }
+  function restoreTransientDraft() {
+    const draft = state.transientDraft;
+    if (!draft) return;
+    if (fields.joinEmail) fields.joinEmail.value = draft.email;
+    if (fields.joinName) fields.joinName.value = draft.name;
+    if (fields.joinPhone) fields.joinPhone.value = draft.phone;
+    if (fields.joinNote) fields.joinNote.value = draft.note;
+    const shift = Array.from(body.querySelectorAll('input[name="joinShift"]'))
+      .find((input) => input.value === draft.shift);
+    if (shift) shift.checked = true;
+    for (const item of draft.qualifications) {
+      const row = Array.from(body.querySelectorAll('.join-qual'))
+        .find((node) => node.dataset.key === item.key);
+      if (!row) continue;
+      const checkbox = row.querySelector('input[type="checkbox"]');
+      if (checkbox) checkbox.checked = item.checked;
+      const until = row.querySelector('input[type="date"]');
+      const ref = row.querySelector('input[type="text"]');
+      if (until) until.value = item.until;
+      if (ref) ref.value = item.ref;
+      row.querySelector('.join-qual-extra')?.classList.toggle('hide', !item.checked);
+    }
+    // joinAck is intentionally not restored: consent is a current action.
+  }
   function labeled(id, labelText, input) {
     const wrap = el('div', { class: 'join-field' });
     wrap.append(el('label', { for: id }, labelText), input);
     input.id = id; fields[id] = input; return wrap;
   }
   function renderForm() {
-    const v = state.view; setHead('active', v.station_name); clear(body);
     const user = d.currentUser();
+    const uid = user && String(user.uid || '') || '';
+    if (state.renderedUid && state.renderedUid !== uid) state.transientDraft = null;
+    else captureTransientDraft();
+    state.renderedUid = uid;
+    const v = state.view; setHead('active', v.station_name); clear(body);
 
     // שלב 1 — חשבון
     const acct = el('section', { class: 'join-step', 'aria-labelledby': 'joinStep1' });
     acct.appendChild(el('h3', { id: 'joinStep1' }, '1 · חשבון'));
     if (!user) {
       acct.appendChild(el('p', {}, 'הזן/י מייל וסיסמה. אם כבר יש לך חשבון — היכנס/י איתו.'));
+      acct.appendChild(el('p', { class: 'join-hint' }, 'מפעיל השירות ובעל השליטה במידע: אלדד יונה · fire102.shits@gmail.com. תנאי השימוש זמינים בהמשך הטופס ולפני שליחת הבקשה.'));
       acct.appendChild(labeled('joinEmail', 'מייל', el('input', { type: 'email', dir: 'ltr', autocomplete: 'username', inputmode: 'email' })));
       acct.appendChild(labeled('joinPassword', 'סיסמה', el('input', { type: 'password', autocomplete: 'new-password' })));
       acct.appendChild(el('p', { class: 'join-hint' }, 'לחשבון חדש: 8 תווים לפחות, אות גדולה, אות קטנה וספרה.'));
       const row = el('div', { class: 'join-row' });
       row.append(button('יצירת חשבון', '', () => account('create')), button('כניסה לחשבון קיים', 'ghost', () => account('signin')));
       acct.appendChild(row);
+      acct.appendChild(button('החשבון כבר קיים? בחר/י סיסמה במייל', 'ghost', () => choosePassword()));
     } else {
       acct.appendChild(el('p', { id: 'joinWho' }, 'מחובר/ת: ' + (user.email || '')));
       if (!user.emailVerified) {
@@ -182,34 +249,86 @@ export function createJoinPanel(root, deps) {
     });
     form.appendChild(quals);
     form.appendChild(labeled('joinNote', 'הערה לתחנה (לא חובה)', el('textarea', { maxlength: '300', rows: '2' })));
+    const legal = el('div', { class: 'join-legal', 'aria-label': 'מסמכי ההצטרפות' });
+    const terms = el('details', { class: 'join-legal-doc' });
+    terms.append(
+      el('summary', {}, 'תנאי שימוש · גרסה ' + TERMS_VERSION),
+      el('p', {}, 'מפעיל השירות ובעל השליטה במידע: אלדד יונה · fire102.shits@gmail.com.'),
+      el('p', {}, 'ResQ היא כלי עזר תפעולי. יש לאמת מידע על משמרות, שעות והתראות ואין להסתמך עליה כערוץ יחיד להודעות חירום.'),
+      el('p', {}, 'תוכן המשתמש נשאר בבעלותו; השימוש בו כפוף לתנאים ולדין. אין בהסכמה לתנאים הסכמה אוטומטית לשיווק או להעברת פרטים לשותפים.'),
+      el('a', { href: './terms.html', target: '_blank', rel: 'noopener' }, 'פתח/י את התקנון המלא, גרסה 1.3')
+    );
+    const privacy = el('details', { class: 'join-legal-doc' });
+    privacy.append(
+      el('summary', {}, 'מדיניות פרטיות · גרסה ' + PRIVACY_VERSION),
+      el('p', {}, 'המערכת מעבדת פרטי זהות, תחנה, תפקיד, משמרות, שעות, מסמכי HR, מידע רפואי שנמסר ביוזמת המשתמש, הרשאות מכשיר וטוקן פוש לצורך הפעלת השירות.'),
+      el('p', {}, 'השרת הוא מקור האמת. האפליקציה אינה יוצרת עותק קבוע בדפדפן של שעות, מידע רפואי, הסכמות, נימוקי דחייה או טוקני פוש; Firebase והדפדפן מנהלים פרטי התחברות ופוש הנחוצים לשירות.'),
+      el('p', {}, 'Firebase משמש כספק תשתית מטעם מפעיל המערכת. מידע רפואי, מסמכי HR ונתוני נוכחות אינם משמשים להצעות מסחריות. אישור תנאי השימוש אינו מהווה הסכמה לשיווק; מי שהסכים בעבר לפניות שיווקיות יכול לבקש הסרה במייל המפורסם.'),
+      el('p', {}, 'ייצוא מקומי מיועד למחשב ארגוני מנוהל ומוצפן בלבד. קובץ שיוצא מהמערכת אינו ניתן למחיקה מרחוק, והאחריות התפעולית לשמירתו היא של התחנה.'),
+      el('a', { href: './privacy.html', target: '_blank', rel: 'noopener' }, 'פתח/י את הודעת הפרטיות המלאה')
+    );
+    legal.append(terms, privacy);
+    form.appendChild(legal);
     const ackLab = el('label', { class: 'join-choice join-ack', for: 'joinAck' });
     const ack = el('input', { type: 'checkbox', id: 'joinAck' }); fields.joinAck = ack;
-    ackLab.append(ack, el('span', {}, 'הפרטים נכונים, ואני מאשר/ת את תנאי השימוש ומדיניות הפרטיות (גרסה ' + TERMS_VERSION + ').'));
+    ackLab.append(ack, el('span', {}, 'קראתי את תנאי השימוש ומדיניות הפרטיות, הפרטים נכונים ואני מאשר/ת את גרסה ' + TERMS_VERSION + '.'));
     form.appendChild(ackLab);
-    const submit = el('button', { type: 'submit', id: 'joinSubmit' }, 'שלח/י בקשת הצטרפות');
+    const submit = el('button', { type: 'submit', id: 'joinSubmit' }, 'שלח/י בקשה ואשר/י תקנון');
     submit.disabled = !(user && user.emailVerified);
     form.appendChild(submit);
     if (!(user && user.emailVerified)) form.appendChild(el('p', { class: 'join-hint' }, 'הכפתור ייפתח אחרי אימות המייל.'));
     form.onsubmit = (event) => { event.preventDefault(); submitJoin(); };
     body.appendChild(form);
     restoreDraft();
+    restoreTransientDraft();
     controls();
   }
-  function controls() { root.querySelectorAll('button, input, select, textarea').forEach((n) => { n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified)); }); }
-  const draftKey = 'resq_join_draft';
+  function controls() {
+    // A pending account/redeem request must not be interrupted by a PWA update,
+    // even when all input controls are disabled and appear empty to the guard.
+    root.dataset.pwaUpdateBlocked = state.busy ? 'true' : 'false';
+    root.querySelectorAll('button, input, select, textarea').forEach((n) => {
+      n.disabled = state.busy || (n.id === 'joinSubmit' && !(d.currentUser() && d.currentUser().emailVerified));
+    });
+  }
+  const DRAFT_TTL_MS = 30 * 60 * 1000;
+  function draftKey(uid) {
+    return 'resq_join_draft_v2:' + token.slice(0, 16) + ':' + (uid || 'guest');
+  }
+  function draftKeys() {
+    const user = d.currentUser();
+    const uid = user && String(user.uid || '');
+    return uid ? [draftKey(uid), draftKey('')] : [draftKey('')];
+  }
   function saveDraft() {
     try {
-      const data = { name: fields.joinName ? fields.joinName.value : '', phone: fields.joinPhone ? fields.joinPhone.value : '', note: fields.joinNote ? fields.joinNote.value : '' };
-      session.set(draftKey, JSON.stringify(data));
+      const data = { schema_version:2, saved_at_ms:Date.now(),
+        name: fields.joinName ? fields.joinName.value : '',
+        phone: fields.joinPhone ? fields.joinPhone.value : '',
+        note: fields.joinNote ? fields.joinNote.value : '' };
+      session.set(draftKeys()[0], JSON.stringify(data));
     } catch (ignore) {}
   }
   function restoreDraft() {
     try {
-      const data = JSON.parse(session.get(draftKey) || 'null');
+      const keys = draftKeys();
+      let data = null, sourceKey = '';
+      for (const key of keys) {
+        const value = JSON.parse(session.get(key) || 'null');
+        if (value) { data = value; sourceKey = key; break; }
+      }
       if (!data) return;
+      if (data.schema_version !== 2 || !Number.isFinite(data.saved_at_ms) ||
+          data.saved_at_ms < Date.now() - DRAFT_TTL_MS || data.saved_at_ms > Date.now() + 60000) {
+        keys.forEach(key => session.remove(key)); return;
+      }
       if (fields.joinName) fields.joinName.value = data.name || '';
       if (fields.joinPhone) fields.joinPhone.value = data.phone || '';
       if (fields.joinNote) fields.joinNote.value = data.note || '';
+      if (sourceKey !== keys[0]) {
+        session.set(keys[0], JSON.stringify(data));
+        session.remove(sourceKey);
+      }
     } catch (ignore) {}
   }
 
@@ -225,6 +344,16 @@ export function createJoinPanel(root, deps) {
       else { await d.signIn(email, password); message('מחובר/ת.'); }
     } catch (error) { message('הפעולה לא הושלמה. ' + friendly(error), true); }
     finally { state.busy = false; renderForm(); }
+  }
+  async function choosePassword() {
+    if (state.busy) return; state.busy = true; controls(); message('');
+    try {
+      const email = String(fields.joinEmail.value || '').trim().toLowerCase();
+      if (!email) throw new Error('יש להזין את המייל שאליו נשלח הקישור.');
+      await d.requestPasswordReset(email);
+      message('אם החשבון קיים, נשלח למייל קישור לבחירת סיסמה. לאחר הבחירה חזור/י לקישור והיכנס/י לחשבון הקיים.');
+    } catch (error) { message('לא ניתן לשלוח כעת את הבקשה. בדוק/י חיבור ונסה/י שוב.', true); }
+    finally { state.busy = false; controls(); }
   }
   async function verify() {
     if (state.busy) return; state.busy = true; controls();
@@ -258,7 +387,8 @@ export function createJoinPanel(root, deps) {
     if (!fields.joinAck.checked) throw new Error('יש לאשר את נכונות הפרטים ותנאי השימוש.');
     const note = String(fields.joinNote.value || '').trim();
     const payload = { request_id: '', token, full_name: name, phone, shift: shiftInput.value, qualifications,
-      ack: { correctness: true, terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION } };
+      ack: { correctness: true, terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION,
+        marketing_opt_in: false } };
     if (note) payload.note = note;
     return payload;
   }
@@ -274,17 +404,30 @@ export function createJoinPanel(root, deps) {
       if (!u) throw new Error('נדרשת כניסה לחשבון.');
       if (!u.emailVerified) throw new Error('כתובת המייל עדיין לא אומתה.');
       if (d.hasAssignment(await d.claims())) throw new Error('החשבון כבר משויך למערכת. אין לשלוח בקשה נוספת.');
-      if (!state.requestId) { state.requestId = newRequestId(); requestStore.set(token, state.requestId); }
-      payload.request_id = state.requestId;
+      const intent = localIntent(payload);
+      if (state.request && state.request.intent !== intent) {
+        throw new Error('בקשה קודמת עדיין עשויה להיקלט. יש לנסות שוב עם אותם פרטים; אין לשנות אותם באותו ניסיון.');
+      }
+      if (!state.request) {
+        state.request = { id: newRequestId(), intent };
+        requestStore.set(token, state.request);
+      }
+      payload.request_id = state.request.id;
       const result = await d.redeem(payload);
       if (!result || result.ok !== true) throw new Error('לא התקבל אישור מהשרת.');
-      requestStore.clear(token); session.remove(draftKey);
+      requestStore.clear(token); state.request = null; draftKeys().forEach(key => session.remove(key));
+      session.remove(draftKey(''));
       stripJoinFromUrl(window);
       message(result.replayed ? 'הבקשה כבר נקלטה קודם. היא ממתינה לאישור התחנה; עדיין לא הוענקו הרשאות.' : 'הבקשה נשלחה וממתינה לאישור התחנה. עדיין לא הוענקו הרשאות.');
       await d.onRedeemed(result);
     } catch (error) {
       const reason = error && error.details && error.details.reason;
-      if (reason && /^campaign-(paused|revoked|expired|full|missing)$/.test(reason)) { renderTerminal(reason.replace('campaign-', '').replace('missing', 'not_found')); return; }
+      if (reason && /^campaign-(paused|revoked|expired|full|missing)$/.test(reason)) {
+        // These are definitive pre-write rejections, not an uncertain network
+        // result. A later active campaign may start a fresh operation.
+        requestStore.clear(token); state.request = null;
+        renderTerminal(reason.replace('campaign-', '').replace('missing', 'not_found')); return;
+      }
       message('הבקשה לא נשלחה. ' + friendly(error), true);
     } finally { state.busy = false; controls(); }
   }

@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -228,7 +228,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   }
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="swaps">
 
 <div id="errBar" role="alert"><button type="button" class="xx" aria-label="סגור הודעת שגיאה" onclick="this.parentNode.style.display='none'">&times;</button>
   <b>המערכת נתקלה בשגיאה</b>
@@ -237,21 +237,33 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 <script>
 (function(){
-  function boom(what, raw){
+  /* פס הקריסה.
+   *
+   * קודם לכן הוא הדפיס למסך את ההודעה ואת הקוד של Firebase:
+   * „פעולה נכשלה: Firebase: Error (functions/unavailable)." זה אינו אומר
+   * לכבאי דבר, וגורם לו לחשוב שהמערכת שבורה. הפרטים
+   * הטכניים לא נעלמו — הם עברו ל-console, שם הם שייכים.
+   *
+   * הפס הזה רץ לפני כל מודול ולכן אינו מייבא את `error-text.js`:
+   * הוא תופס גם קריסת טעינה, ובאלה אין מה לתרגם בלאו הכי. */
+  function boom(what){
     var b = document.getElementById('errBar');
     if (!b) return;
     document.getElementById('errWhat').textContent = what;
-    document.getElementById('errRaw').textContent  = raw || '';
+    document.getElementById('errRaw').textContent  = '';
     b.style.display = 'block';
   }
+  function note(kind, detail){
+    try { console.error('[ResQ] ' + kind + ' · ' + detail); } catch (ignore) {}
+  }
   window.addEventListener('error', function(e){
-    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.',
-         (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    note('window.error', (e.message || '') + ' ' + (e.filename || '') + ':' + (e.lineno || ''));
+    boom('משהו בקוד נכשל. כל הכפתורים בדף לא יגיבו עד שזה יתוקן.');
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason || {};
-    boom('פעולה נכשלה: ' + (r.message || r.code || 'שגיאה לא ידועה'),
-         (r.code || '') + ' ' + (r.message || String(r)));
+    note('unhandledrejection', ((r.code || '') + ' ' + (r.message || String(r))).trim());
+    boom('פעולה נכשלה ולא הושלמה. רעננו את הדף ובדקו לפני ניסיון נוסף.');
   });
 })();
 </script>
@@ -384,13 +396,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { watchCallouts } from './callout.js?v=42h20';
-import { CREW_HE, CREW_SHORT } from './rotation.js?v=42h20';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { watchCallouts } from './callout.js?v=42h42';
+import { CREW_HE, CREW_SHORT } from './rotation.js?v=42h42';
 import { parseEffectiveWorkdays, worksOn, swapRestCheckEffective, restWhyEffective,
-         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h20';
+         workdaysSourceLabel, WORKDAYS_MAX_UIDS } from './effective-workdays.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -398,16 +410,17 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h20';
+  from './monitored-functions.js?v=42h42';
 import { MEMBER_ROLES, STAFF_ROLES, mayWriteLog, roleHe }
-  from './roles.js?v=42h20';
+  from './roles.js?v=42h42';
 import { MAX_TEXT, validateMessage, messageDoc, groupByDay, timeOf,
          lastRead, markRead, unreadCount, newestKey, visible }
-  from './shiftlog.js?v=42h20';
+  from './shiftlog.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -427,6 +440,10 @@ function msg(text, kind, box){
   const m = $(box || 'newMsg');
   m.textContent = text || '';
   m.className = 'msg ' + (text ? (kind || '') : '');
+}
+function showError(where, error, fallback, box){
+  logError(where, error);
+  msg(fallback ? fallback + ' ' + errorText(error) : errorText(error), 'err', box);
 }
 function dmy(k){
   const p = String(k || '').split('-');
@@ -599,9 +616,9 @@ function setupLog(){
     });
     renderLog();
   }, function (err) {
+    logError('swaps.shiftLog.listen', err);
     $('logFeed').innerHTML =
-      '<div class="empty">טעינת הלוג נכשלה. (' +
-      esc(err.code || err.message || '') + ')</div>';
+      '<div class="empty">' + esc('טעינת הלוג נכשלה. ' + errorText(err)) + '</div>';
   });
 }
 
@@ -696,8 +713,7 @@ async function sendLog(){
       }), { created_at: serverTimestamp() }));
   } catch (e) {
     ta.value = text;                    // מחזירים, כדי שלא ילך לאיבוד
-    msg('השליחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
-        'err', 'logMsg');
+    showError('swaps.sendLog', e, 'ההודעה לא נשלחה.', 'logMsg');
   }
   b.disabled = false;
 }
@@ -789,7 +805,7 @@ async function loadSwaps(){
     ss.forEach(d => swaps.push(Object.assign({ id: d.id }, d.data() || {})));
     swaps.sort((a,b) => String(b.created_key || '').localeCompare(String(a.created_key || '')));
   } catch (e) {
-    msg('לא הצלחתי לקרוא את ההחלפות. (' + (e.code || e.message) + ')', 'err', 'mineMsg');
+    showError('swaps.loadSwaps', e, 'לא הצלחתי לקרוא את ההחלפות.', 'mineMsg');
   }
   renderMine();
   renderOpenBoard();
@@ -1033,7 +1049,7 @@ $('btnSend').onclick = async () => {
     $('newNote').value = '';
     await loadSwaps();
   } catch (e) {
-    msg('השליחה נכשלה. (' + (e.code || e.message) + ')', 'err');
+    showError('swaps.sendPeer', e, 'בקשת ההחלפה לא נשלחה.');
   }
   b.disabled = false;
 };
@@ -1069,7 +1085,7 @@ async function sendOpen(my){
     $('newNote').value = '';
     await loadSwaps();
   } catch (e) {
-    msg('הפרסום נכשל. (' + (e.code || e.message) + ')', 'err');
+    showError('swaps.sendOpen', e, 'הבקשה הפתוחה לא פורסמה.');
   }
   b.disabled = false;
 }
@@ -1177,8 +1193,7 @@ function takeOpen(s){
       }, { merge: true });
     } catch (e) {
       b.disabled = false;
-      msg('הלקיחה נכשלה. (' + (e.code || '') + ' ' + (e.message || '') + ')',
-          'err', 'tkMsg');
+      showError('swaps.takeOpen', e, 'הלקיחה לא הושלמה.', 'tkMsg');
       return;
     }
 
@@ -1187,8 +1202,8 @@ function takeOpen(s){
     try {
       await loadSwaps();
     } catch (e) {
-      msg('הבקשה נשמרה, אך הרשימה לא התרעננה. רענן את המסך. (' +
-          (e.code || '') + ' ' + (e.message || '') + ')', 'err', 'openMsg');
+      showError('swaps.takeOpen.refresh', e,
+        'הבקשה נשמרה, אך הרשימה לא התרעננה. רענן את המסך.', 'openMsg');
     }
     focusStatus('openMsg');
   };
@@ -1311,7 +1326,7 @@ async function write(s, patch, okText, box){
                  Object.assign({ updated_at: serverTimestamp() }, patch),
                  { merge: true });
   } catch (e) {
-    msg('הפעולה נכשלה. (' + (e.code || e.message) + ')', 'err', box);
+    showError('swaps.write', e, 'הפעולה לא הושלמה.', box);
     focusStatus(box);
     return;
   }
@@ -1320,8 +1335,8 @@ async function write(s, patch, okText, box){
   try {
     await loadSwaps();
   } catch (e) {
-    msg('הפעולה נשמרה, אך הרשימה לא התרעננה. רענן את המסך. (' +
-        (e.code || e.message) + ')', 'err', box);
+    showError('swaps.write.refresh', e,
+      'הפעולה נשמרה, אך הרשימה לא התרעננה. רענן את המסך.', box);
   }
   focusStatus(box);
 }

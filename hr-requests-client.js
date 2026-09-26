@@ -1,13 +1,13 @@
-import { firebaseConfig } from './firebase-config.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
-import { initAppCheck } from './appcheck.js?v=42h20';
-import { MEMBER_ROLES } from './roles.js?v=42h20';
-import { createHrRequestsUI } from './hr-requests-ui.js?v=42h20';
-import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h42';
+import { MEMBER_ROLES } from './roles.js?v=42h42';
+import { createHrRequestsUI } from './hr-requests-ui.js?v=42h42';
+import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h42';
 
-import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h20';
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h42';
 
 const roleViewCleanUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
 if (roleViewCleanUrl) history.replaceState(history.state, '', roleViewCleanUrl);
@@ -15,7 +15,16 @@ const app = initializeApp(firebaseConfig);
 await initAppCheck(app);
 const auth = getAuth(app), functions = getFunctions(app, 'europe-west1');
 const names = { create: 'createHrRequest', list: 'listMyHrRequests', listInbox: 'listHrRequestsInbox',
-  get: 'getHrRequest', reply: 'replyHrRequest', setStatus: 'setHrRequestStatus', nudge: 'nudgeHrRequest' };
+  get: 'getHrRequest', reply: 'replyHrRequest', setStatus: 'setHrRequestStatus', nudge: 'nudgeHrRequest',
+  /* הסרת קובץ היא פעולה על **הפנייה**, ולכן היא עוברת כאן ולא דרך
+   * `attachmentCall`: זה מאמת `epoch` בתשובה, ותשובת מודול הפניות
+   * אינה נושאת `epoch`. ניתוב דרכו היה מפיל כל הסרה תקינה. */
+  removeAttachment: 'removeMyRequestFile',
+  // הכרעה בדיווח מחלה/מילואים/חופשה/היעדרות ממושכת.
+  setDecision: 'decideMyStationReport',
+  /* מוני תיבות העבודה. קריאה בלבד, לסמכות משאבי אנוש בלבד, ולמסמך
+   * מונים אחד — לא שאילתה על הפניות ולא ספירה בדפדפן. */
+  counts: 'countHrRequestBoxes' };
 const transports = Object.fromEntries(Object.entries(names).map(([method, name]) => [method, httpsCallable(functions, name)]));
 const listeners = new Set();
 let epoch = 0, user = null, session = null;

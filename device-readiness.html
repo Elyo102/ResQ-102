@@ -14,7 +14,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h20">
+<link rel="stylesheet" href="./theme.css?v=42h42">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -60,7 +60,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   a.back{display:inline-block;min-height:44px;line-height:44px;color:var(--accent);text-decoration:none;font-size:14px}
 </style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="device-readiness">
 <div class="wrap">
   <h1>מוכנות המכשיר להתראות</h1>
   <div class="sub" id="whoSub">—</div>
@@ -104,24 +104,25 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <p><b>אנדרואיד:</b> ודא/י שההתראות של Chrome מותרות בהגדרות המכשיר, ושמצב "נא לא להפריע" כבוי.</p>
       <p>אפשר לשלוח עד 3 בדיקות ביום, בהפרש של דקה. כל בדיקה תקפה 10 דקות.</p>
     </details>
-    <a class="back" href="./login.html">חזרה לדף הבית</a>
+    <a class="back" id="backAlerts" href="./alerts.html">חזרה למסך ההתראות</a>
   </div>
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h20';
-import { renderNav, renderStuckNav } from './nav.js?v=42h20';
-import { initPWA } from './pwa.js?v=42h20';
-import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h20';
-import { blockerText } from './join-ui.js?v=42h20';
+import { firebaseConfig } from './firebase-config.js?v=42h42';
+import { renderNav, renderStuckNav } from './nav.js?v=42h42';
+import { initPWA } from './pwa.js?v=42h42';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h42';
+import { blockerText } from './join-ui.js?v=42h42';
+import { errorText, logError } from './error-text.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h20';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h20';
+import { initAppCheck } from './appcheck.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -138,6 +139,10 @@ const callClaim = httpsCallable(fns, 'claimPushToken');
 let SID = '', ME = null, myToken = '', tokens = [], vapid = DEFAULT_VAPID, messaging = null, busy = false, pendingNonce = '';
 
 function msg(text, kind){ const m = $('pMsg'); m.textContent = text || ''; m.className = 'msg ' + (text ? (kind || '') : ''); }
+function userError(where, error, fallback) {
+  logError(where, error);
+  return fallback + ' ' + errorText(error);
+}
 function newRequestId(){
   const bytes = new Uint8Array(24); crypto.getRandomValues(bytes);
   return 'rd_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
@@ -174,7 +179,7 @@ function render(r){
 
 async function refresh(){
   try { const r = (await callStatus({})).data || {}; render(r); return r; }
-  catch (e) { msg('לא ניתן לקרוא את מצב המוכנות. ' + (e.message || e.code || ''), 'err'); return null; }
+  catch (e) { msg(userError('readiness.status', e, 'לא ניתן לקרוא את מצב המוכנות.'), 'err'); return null; }
 }
 
 async function loadTokens(){
@@ -203,7 +208,7 @@ $('btnEnable').onclick = async () => {
     await setDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid), { uid: ME.uid, tokens, updated_at: serverTimestamp() }, { merge: true });
     try { await callClaim({ token: myToken }); } catch (ignore) {}
     msg('ההתראות הופעלו במכשיר הזה.', 'ok');
-  } catch (e) { msg('ההפעלה נכשלה. ' + (e.message || e.code || ''), 'err'); }
+  } catch (e) { msg(userError('readiness.push.enable', e, 'ההפעלה נכשלה.'), 'err'); }
   finally { busy = false; controls(); await refresh(); }
 };
 
@@ -216,7 +221,7 @@ $('btnSend').onclick = async () => {
   } catch (e) {
     const reason = e && e.details && e.details.reason;
     msg(reason === 'readiness-cooldown' ? 'המתן/י דקה בין ניסיונות.' : reason === 'readiness-quota' ? 'הגעת למכסת הבדיקות היומית (3). נסה/י מחר.'
-      : reason === 'readiness-provider' ? 'ספק ההתראות לא קיבל את ההודעה. נסה/י שוב מאוחר יותר.' : 'השליחה נכשלה. ' + (e.message || e.code || ''), 'err');
+      : reason === 'readiness-provider' ? 'ספק ההתראות לא קיבל את ההודעה. נסה/י שוב מאוחר יותר.' : userError('readiness.testPush', e, 'השליחה נכשלה.'), 'err');
   } finally { busy = false; controls(); await refresh(); }
 };
 
@@ -228,7 +233,7 @@ async function ack(nonce){
     pendingNonce = ''; stripNonce(); return true;
   } catch (e) {
     const reason = e && e.details && e.details.reason;
-    msg(reason === 'readiness-expired' ? 'הבדיקה פגה. שלח/י בדיקה חדשה.' : reason === 'readiness-nonce' ? 'קוד האישור אינו תואם לבדיקה האחרונה. שלח/י בדיקה חדשה.' : 'האישור נכשל. ' + (e.message || e.code || ''), 'err');
+    msg(reason === 'readiness-expired' ? 'הבדיקה פגה. שלח/י בדיקה חדשה.' : reason === 'readiness-nonce' ? 'קוד האישור אינו תואם לבדיקה האחרונה. שלח/י בדיקה חדשה.' : userError('readiness.ack', e, 'האישור נכשל.'), 'err');
     return false;
   }
 }
@@ -243,9 +248,9 @@ onAuthStateChanged(auth, async user => {
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}
   SID = String(c.stationId || '');
-  if (!SID || !c.role || c.super === true) {
+  // עובד מאושר (תחנה + תפקיד) או מנהל-על (תחנה מה-claim). ההכרעה הסופית בשרת.
+  if (!SID || (!c.role && c.super !== true)) {
     $('denyCard').classList.remove('hide'); $('denyWho').textContent = 'מחובר/ת כ־' + (user.email || '');
-    if (c.super === true) $('denyWhy').textContent = 'מנהל המערכת בודק מכשיר דרך מעבדת המכשיר במסך ההתראות.';
     renderStuckNav(user.email || ''); return;
   }
   ME = { uid: user.uid, email: user.email || '' };

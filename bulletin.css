@@ -56,6 +56,11 @@
 .home-command-brand small{font-size:12px;font-weight:800;letter-spacing:.04em}
 .home-command-header h2{margin:0;color:var(--txt);font-size:20px;line-height:1.35}
 .home-command-header p{max-width:560px;margin:5px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
+.bulletin-board[data-home-role-family="member"] .home-command-header{border-inline-start:4px solid var(--dock-shift)}
+.bulletin-board[data-home-role-family="command"] .home-command-header{border-inline-start:4px solid var(--accent)}
+.bulletin-board[data-home-role-family="hr"] .home-command-header{border-inline-start:4px solid var(--dock-station)}
+.bulletin-board[data-home-role-family="admin"] .home-command-header{border-inline-start:4px solid var(--dock-more)}
+.home-tasks[aria-busy="true"]{opacity:.72}
 
 .bulletin-board{
   --cat-general:#21a6d8;
@@ -71,6 +76,29 @@
   border-radius:0;
   background:transparent;
   box-shadow:none;
+}
+
+/* Only the authenticated home becomes a wide multi-column dashboard.
+   The same .card also contains login and consent, so never widen it globally. */
+@media (min-width:1024px){
+  body.bulletin-mode > .card{width:100%;max-width:none}
+  body.bulletin-mode .bulletin-board{
+    display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;
+  }
+  body.bulletin-mode .bulletin-board > *{min-width:0}
+  body.bulletin-mode #homeUrgent{grid-column:1 / -1}
+  body.bulletin-mode #homeTasks,
+  body.bulletin-mode .home-updates,
+  body.bulletin-mode #homeFaults,
+  body.bulletin-mode #homeShiftStatus{grid-column:span 6}
+  body.bulletin-mode #accountDetails{grid-column:1 / -1}
+}
+@media (min-width:1440px){
+  body.bulletin-mode #homeTasks,
+  body.bulletin-mode .home-updates,
+  body.bulletin-mode #homeFaults{grid-column:span 4}
+  body.bulletin-mode #homeShiftStatus{grid-column:span 6}
+  body.bulletin-mode #accountDetails{grid-column:span 6}
 }
 
 .home-panel{

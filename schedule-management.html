@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef2f7">
   <title>ResQ · ניהול סידור עבודה</title>
-  <link rel="stylesheet" href="./theme.css?v=42h20">
+  <link rel="stylesheet" href="./theme.css?v=42h42">
   <style>
     /* ==================================================================
        לוח הסידור · רצועת חודש
@@ -186,6 +186,11 @@
     .wkjump button{font-size:13px;font-weight:800;width:44px;height:44px;min-height:44px;
       border-radius:8px;border:1px solid var(--line,#dfe5ec);background:var(--card,#fff);color:var(--muted,#748091);padding:0}
     .wkjump b{font-size:12px;font-weight:700;color:var(--muted,#748091);min-width:62px;text-align:center}
+    /* „היום" — חזרה לעמודת היום הנוכחי אחרי גלילה. רוחב אוטומטי כי
+       הוא נושא מילה ולא חץ, וגובה 44 כמו שאר יעדי המגע בסרגל. */
+    .wkjump button.today-jump{width:auto;min-width:44px;padding:0 10px;
+      color:var(--ink,#1d2530);border-color:var(--brand,#c62828)}
+    .wkjump button.today-jump[disabled]{opacity:.45;border-color:var(--line,#dfe5ec)}
     /* ==================================================================
        הלוח · עיצוב 5.9 (מוקאפ מאושר) — עיצוב בלבד, אותו DOM ואותה לוגיקה.
        עמודת התחנות מימין, ימים משמאל, שמות בשבבים בצבע התחנה בטור יורד,
@@ -193,17 +198,25 @@
        הצבע של המשמרת (א׳/ב׳/ג׳ — הכרעת 4.9) נשאר: שטיפת עמודה עדינה
        ותג בכותרת היום; צבע התחנה יושב על השבב ועל תווית השורה.
        ================================================================== */
-    .board{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
-      gap:5px;padding:5px;
-      overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
+    /* The station rail is outside the horizontal scroller. WebKit can stop
+       painting sticky descendants of wide RTL grid rows during a swipe. */
+    .board-shell{position:relative;width:100%;max-width:100%}
+    .board{display:flex;flex-direction:column;gap:5px;padding:5px;direction:rtl;
+      overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:none;
       /* עמודת התוויות דביקה ויושבת מעל תחילת הגלילה. בלי הריפוד
          הזה הדפדפן „נצמד" ליום הראשון בדיוק מתחתיה, והיום הראשון
          בחודש נעלם — מה שנראה כמו סידור שמתחיל ב-2 בחודש. */
       scroll-padding-inline-start:calc(var(--stub) + 5px);
       border:1px solid var(--line,#dfe5ec);border-radius:16px;background:var(--panel,#f5f7fa)}
-    /* ARIA grid hierarchy without an extra visual box: every logical row owns
-       its headers/cells, while the children remain the CSS-grid items. */
-    .board>[role="row"]{display:contents}
+    .board>[role="row"]{display:grid;grid-template-columns:var(--stub) repeat(var(--n),var(--dayw));
+      gap:5px;width:max-content;min-width:100%;box-sizing:border-box}
+    .board-shell .board .corner,.board-shell .board .stub{opacity:0;pointer-events:none}
+    .board-rail{position:absolute;inset-block-start:6px;inset-inline-start:0;
+      width:calc(var(--stub,92px) + 6px);padding-inline-start:6px;
+      display:flex;flex-direction:column;gap:5px;background:var(--panel,#f5f7fa);
+      z-index:7;pointer-events:none}
+    .board-rail .corner,.board-rail .stub{position:static;inset:auto;
+      width:100%;flex:none;min-height:0;box-sizing:border-box}
     .hcell{position:sticky;top:0;z-index:1;background:var(--card,#fff);padding:7px 4px 6px;
       text-align:center;border:1px solid var(--line,#dfe5ec);border-radius:11px;
       display:flex;flex-direction:column;align-items:center;gap:1px;box-shadow:var(--sb-shadow)}
@@ -215,10 +228,14 @@
     .hcell.we .dw{color:var(--sched-blue)}
     .hcell.today{background:var(--sb-today);border-color:var(--sb-today-e)}
     .hcell.today .dd,.hcell.today .dw{color:var(--sb-ember)}
-    .corner{position:sticky;inset-inline-start:0;top:0;z-index:3;background:var(--panel,#f5f7fa)}
-    .stub{position:sticky;inset-inline-start:0;z-index:2;background:var(--card,#fff);
+    .corner,.stub{position:-webkit-sticky;position:sticky;inset-inline-start:0;inset-inline-end:auto;
+      right:0;left:auto;z-index:5;scroll-snap-align:none;background-clip:padding-box;
+      box-shadow:-7px 0 10px -10px rgba(15,35,55,.55),var(--sb-shadow)}
+    .corner{top:0;z-index:6;background:var(--panel,#f5f7fa);border-radius:11px;
+      min-height:100%;border:1px solid transparent}
+    .stub{background:var(--card,#fff);
       display:flex;flex-direction:column;justify-content:center;padding:8px 10px;
-      border:1px solid var(--line,#dfe5ec);border-radius:11px;box-shadow:var(--sb-shadow)}
+      border:1px solid var(--line,#dfe5ec);border-radius:11px}
     .stub b{font-size:13.5px;font-weight:600;line-height:1.2}
     .stub small{font-size:10.5px;font-weight:600;opacity:.75}
     .stub.s1{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
@@ -246,6 +263,10 @@
     /* שם = שבב אחד בשורה משלו, בצבע התחנה. הצוות (כשידוע) נשאר בצבע הטקסט. */
     .nm{font-size:12.5px;font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
       padding:3px 8px;border-radius:7px;border:1px solid var(--line-soft,#eef2f7);background:var(--card,#fff)}
+    button.nm.quick-edit-slot{font:inherit;text-align:inherit}
+    .nm.quick-edit-slot{cursor:pointer;display:flex;align-items:center;gap:4px;width:100%}
+    .nm.quick-edit-slot::after{content:"✎";font-size:12px;opacity:.72;margin-inline-start:auto;color:var(--accent-txt)}
+    .nm.quick-edit-slot:hover,.nm.quick-edit-slot:focus-visible{outline:2px solid var(--accent);outline-offset:2px;background:var(--warn-bg)}
     .nm.empty-slot{color:transparent;user-select:none;min-height:24px}
     .cell .nm{color:var(--txt,#1c2532)}
     .cell.s1 .nm{background:var(--s1);border-color:var(--s1e);color:var(--s1t)}
@@ -326,9 +347,7 @@
     @media (max-width:640px){.importrow,.stationmap-grid{grid-template-columns:1fr}.unres .row{grid-template-columns:1fr}}
     .nm.lead{font-weight:800}
     .nm.cancelled{text-decoration:line-through;opacity:.55}
-    .nm.me{box-shadow:0 0 0 2px var(--sched-blue);border-color:var(--sched-blue)}
-    .mine-marker{display:inline-flex;align-items:center;margin-inline-start:5px;padding:0 5px;
-      border-radius:5px;background:var(--sched-blue);color:#fff;font-size:9px;font-weight:900;line-height:1.5}
+    .nm.me{box-shadow:0 0 0 2px var(--sched-blue);border-color:var(--sched-blue);background:var(--info-bg,#eaf3ff);font-weight:800}
     .template-overflow{outline:2px solid var(--warn,#e0a23c);outline-offset:-2px}
     .flag.overflow{color:var(--warn,#765500);background:var(--warn-bg,#fff7df);
       border:1px solid var(--warn,#e0a23c);white-space:normal}
@@ -376,6 +395,12 @@
       font-size:12px;line-height:1.6;white-space:pre;direction:ltr;text-align:start}
     .maprow{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:12px}
     .actvals{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #rosterSourceRows{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px;margin:12px 0}
+    .roster-source-person{padding:12px;border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+    .roster-source-person label{display:block;margin-top:8px}
+    .roster-source-person select{width:100%;min-height:44px}
+    .roster-source-person details{margin-top:8px}
+    .roster-source-person .req-flag{display:flex;margin-top:4px}
     .actval{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
       border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:6px 10px;
       background:var(--card,#fff);min-height:40px}
@@ -475,9 +500,23 @@
     .shell select,.shell textarea{font-size:16px;min-height:44px}
     .shell .qualpeople .person .held label{min-height:44px;align-items:center}
     .shell .filestatus,.shell .head .who{overflow-wrap:anywhere;min-width:0}
-  </style>
+  
+    /* Keep rail labels readable on common phone widths. */
+    @media(max-width:390px){
+      .board{scroll-padding-inline-start:calc(var(--stub) + 4px)}
+      .stub{padding:7px 8px}
+      .stub b{font-size:12.5px}
+      .stub small{font-size:10px}
+    }
+    @media(max-width:360px){
+      .stub{padding:6px 7px}
+    }
+    @media(max-width:320px){
+      .stub b{font-size:12px}
+    }
+</style>
 </head>
-<body>
+<body data-resq-shell="v1" data-resq-page="schedule-management">
 <main class="shell hide" id="appMain">
   <header class="head">
     <div class="crumb">ניהול › ניהול סידור עבודה</div>
@@ -531,6 +570,10 @@
     <button type="button" data-tab="station" id="stationTab">סידור התחנה</button>
     <button type="button" data-tab="quals" id="qualsTab" hidden>כשירויות</button>
   </nav>
+  <div class="card" id="managerSetupNotice" role="status" aria-live="polite" hidden>
+    <p id="managerSetupNoticeText">כלי הניהול נטענים. סידור התחנה זמין בינתיים לקריאה.</p>
+    <button class="btn" id="managerSetupRetry" type="button" hidden>נסה שוב לטעון כלי ניהול</button>
+  </div>
 
   <section id="manageView" hidden>
     <article class="card manager-workflow" id="managerWorkflow" aria-labelledby="managerWorkflowTitle">
@@ -549,13 +592,11 @@
       <div class="workflow-hint" id="managerWorkflowHint" aria-live="polite">בחרו קובץ או צרו טיוטה חדשה. שום דבר לא נשלח לפני סקירה ואישור.</div>
     </article>
 
-    <details class="advanced" id="managerAdvanced">
-      <summary>הגדרות אופציונליות ליצירת טיוטה אוטומטית</summary>
     <article class="card" id="policyCard">
-      <h2>תקינה ותפקידים לטיוטה אוטומטית</h2>
+      <h2>1. כמה אנשים צריך בכל תחנת קצה?</h2>
       <div class="sub" id="sourceSummary">טוען מדיניות ומקור נתונים…</div>
-      <div class="sub">הגדירו רק אם רוצים שהמערכת תציע טיוטה אוטומטית: כמה אנשים ובעלי תפקידים רצויים בכל משמרת.
-        ההגדרות מציגות אזהרות ואינן תנאי לייבוא סידור מקובץ.</div>
+      <div class="sub">בחרו תחנת קצה, קבעו מספר לכל תפקיד ולחצו „שמור הגדרות טיוטה”.
+        לאחר מכן לחצו „יצירת טיוטה”, בדקו ופרסמו בנפרד. שום שיבוץ אינו נשלח בשלב ההגדרה.</div>
       <div class="pills" id="policySubs"></div>
       <div class="steps" id="policySteps"></div>
       <div class="actions">
@@ -569,6 +610,34 @@
       <div id="policyMessage" aria-live="polite"></div>
     </article>
 
+    <article class="card" id="rosterSourceCard">
+      <h2>עובדים לטיוטת הסידור</h2>
+      <div class="sub">הרשימה נבנית מחשבונות התחנה. שיוך קודם מגיע רק ממקור חתום; עובד חדש או שיוך לא תקף מחייבים בחירה מפורשת. שום שינוי אינו מתפרסם לפני בדיקה ושמירה.</div>
+      <div class="btns"><button class="btn primary" id="rosterSourceLoad" type="button">פתח רשימת עובדים</button></div>
+      <div id="rosterSourceMessage" aria-live="polite"></div>
+      <div id="rosterSourceEditor" hidden>
+        <div class="sub" id="rosterSourceCounts"></div>
+        <label for="rosterSourceSearch">חיפוש עובד בשם או במספר עובד</label>
+        <input id="rosterSourceSearch" type="search" autocomplete="off" placeholder="חיפוש ברשימת התחנה">
+        <label class="req-flag" for="rosterSourceNeeds">
+          <input id="rosterSourceNeeds" type="checkbox"> הצג רק עובדים שדורשים שיוך או תיקון זהות
+        </label>
+        <div id="rosterSourceRows"></div>
+        <div class="btns">
+          <button class="btn" id="rosterSourceMore" type="button" hidden>הצג עוד</button>
+        </div>
+        <label class="req-flag" for="rosterSourceConfirm">
+          <input id="rosterSourceConfirm" type="checkbox"> בדקתי את השיוכים שהועברו מהמקור החתום ואת העובדים החדשים
+        </label>
+        <div class="btns">
+          <button class="btn primary" id="rosterSourceCheck" type="button" disabled>בדוק את הסגל</button>
+          <button class="btn dark" id="rosterSourceSave" type="button" disabled>שמור מקור כוח אדם</button>
+        </div>
+      </div>
+    </article>
+
+    <details class="advanced" id="managerAdvanced">
+      <summary>מקור כוח האדם והגדרות מתקדמות</summary>
     <article class="card" id="sourceCard">
       <h2>רשימת עובדים לטיוטה אוטומטית</h2>
       <div class="sub" id="sourceSummaryLine">—</div>
@@ -723,6 +792,7 @@
             <option value="unassign">הסרה מהסידור</option>
             <option value="role">שינוי תפקיד</option>
             <option value="absence">היעדרות</option>
+            <option value="note">הערת סידור לעובד</option>
           </select></div>
         <div id="editStationWrap"><label for="editStation">תחנה</label><select id="editStation"></select></div>
         <div id="editRoleWrap"><label for="editRole">תפקיד</label><select id="editRole"><option value="">ללא תפקיד</option></select></div>
@@ -733,6 +803,12 @@
           </select></div>
         <div id="editLocationWrap" hidden><label for="editLocation">מיקום החופש</label>
           <select id="editLocation"><option value="">לא צוין</option><option value="abroad">חו"ל</option><option value="north">צפון</option><option value="eilat">אילת</option></select></div>
+        <div id="editNoteWrap" hidden style="grid-column:1/-1">
+          <label for="editNote">הערה שתופיע בסידור</label>
+          <textarea id="editNote" maxlength="300" rows="3" placeholder="לדוגמה: להגיע לתדריך בשעה 07:30"></textarea>
+          <div class="sub">העובד שנבחר יקבל התראה שהוזכר בהערת סידור. תוכן ההערה יוצג רק בתוך האפליקציה — אין להזין מידע רפואי או פרטי.</div>
+          <label class="req-flag"><input id="editNoteRemove" type="checkbox"> הסר את הערת הסידור של העובד בתאריך שנבחר</label>
+        </div>
       </div>
       <div class="editdates" id="editDates"></div>
       <div class="btns"><button class="btn" id="editAdd" type="button">+ הוסף לרשימת השינויים</button></div>
@@ -851,6 +927,6 @@
   </section>
 </main>
 
-<script type="module" src="./schedule-management.js?v=42h20"></script>
+<script type="module" src="./schedule-management.js?v=42h42"></script>
 </body>
 </html>
