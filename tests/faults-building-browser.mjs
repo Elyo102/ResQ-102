@@ -65,7 +65,7 @@ async function open(browser, role, emptyOtherHandovers = false) {
     if (name === 'firebase-firestore.js') {
       body = body.replace('const FAULTS = [', `const FAULTS = [
         ['building-open', { kind:'building', title:'נזילה בתקרת חדר האוכל', severity:'unset',
-          status:'open', photos:0, by_uid:'u2', by_name:'טל', created_key:'2026-09-11T07:00:00.000Z' }],`);
+          status:'open', photos:0, by_uid:'stub-uid', by_name:'טל', created_key:'2026-09-11T07:00:00.000Z' }],`);
       if (emptyOtherHandovers) body = body.replace(
         'return delayed(listSnap(HANDOVERS));',
         "return delayed(listSnap(p.includes('stations/other_station/') ? [] : HANDOVERS));");
@@ -123,28 +123,34 @@ try {
     await page.locator('#nTitle').fill('תקלה '.repeat(25));
     assert.ok((await page.locator('#nTitle').inputValue()).length > 80);
   });
-  await test('שלושה צילומים מצטברים משתי בחירות, ולא רק האחרון', async () => {
+  await test('ארבעה צילומים מצטברים מבחירות נפרדות ללא מגבלה כוללת', async () => {
     await page.locator('#nKind').selectOption('gear');
     await page.locator('#nVeh').selectOption('v1');
     await page.locator('#nShot').setInputFiles({ name:'first.png', mimeType:'image/png', buffer:png });
     await page.locator('#nShot').setInputFiles({ name:'second.png', mimeType:'image/png', buffer:png });
     await page.locator('#nGallery').setInputFiles({ name:'third.png', mimeType:'image/png', buffer:png });
-    assert.match(await page.locator('#shotNote').innerText(), /3 מתוך 3/);
+    assert.match(await page.locator('#shotNote').innerText(), /3 תמונות נבחרו/);
     assert.match(await page.locator('#shotList').innerText(), /first\.png.*second\.png.*third\.png/s);
     await page.locator('#nGallery').setInputFiles({ name:'fourth.png', mimeType:'image/png', buffer:png });
-    assert.match(await page.locator('#shotNote').innerText(), /3 מתוך 3/);
+    assert.match(await page.locator('#shotNote').innerText(), /4 תמונות נבחרו/);
   });
-  await test('דיווח ציוד שולח רכב, כותרת וכל התמונות לשרת פעם אחת', async () => {
+  await test('דיווח ציוד נפתח פעם אחת והתמונה הרביעית מצורפת באצווה', async () => {
     await tap(page.locator('#btnNew'));
     await page.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(row => row.name === 'createFaultReport'));
     const sent = (await calls(page))[0].payload;
     assert.equal(sent.kind, 'gear');
     assert.equal(sent.vehicleId, 'v1');
     assert.equal(sent.photos.length, 3);
+    await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+      .some(row => row.name === 'appendFaultPhotos'));
+    const extra = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .find(row => row.name === 'appendFaultPhotos').payload);
+    assert.equal(extra.photos.length, 1);
+    assert.equal(extra.reportId, sent.reportId);
     assert.ok(sent.title.length > 80);
     assert.ok(sent.reportId);
     assert.equal(sent.expectedUid, 'stub-uid');
-    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('3 תמונות צורפו'));
+    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('4 תמונות צורפו'));
     assert.equal(await page.locator('#shotList').innerText(), '');
   });
   await test('רשימת רכבים עם סימון בולט פותחת היסטוריה', async () => {
@@ -162,7 +168,7 @@ try {
     await page.locator('#nShot').setInputFiles({ name:'broken.png', mimeType:'image/png', buffer:png });
     const before = (await calls(page)).length;
     await tap(page.locator('#btnNew'));
-    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('לא התקבל אישור'));
+    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('ההעלאה לא הושלמה'));
     assert.doesNotMatch(await page.locator('#newMsg').innerText(), /Firebase|Error|stack/i);
     assert.equal((await calls(page)).length, before);
   });
@@ -180,7 +186,7 @@ try {
     await tap(page.locator('#btnNew'));
     await page.waitForFunction(n => (window.__CALLABLE_CALLS || []).filter(r => r.name === 'createFaultReport').length === n,
       before + 1);
-    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('לא התקבל אישור'));
+    await page.waitForFunction(() => document.querySelector('#newMsg').textContent.includes('ההעלאה לא הושלמה'));
     await tap(page.locator('#btnNew'));
     await page.waitForFunction(n => (window.__CALLABLE_CALLS || []).filter(r => r.name === 'createFaultReport').length === n,
       before + 2);
@@ -215,6 +221,48 @@ try {
     const sent = (await calls(commander.page))[0].payload;
     assert.equal(sent.severity, 'blocking');
     assert.equal(sent.vehicleId, '');
+  });
+  await test('אפשר לצרף תמונות לתקלה קיימת אחרי רענון או העלאה חלקית', async () => {
+    const current = commander.page;
+    await tap(current.locator('#viewOpen .subj').filter({ hasText:'נזילה בתקרת חדר האוכל' }));
+    const own = current.locator('#dlgBody .f').filter({ hasText:'נזילה בתקרת חדר האוכל' });
+    const button = own.getByRole('button', { name:'צרף תמונות לתקלה זו' });
+    await button.waitFor();
+    const before = await current.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(row => row.name === 'appendFaultPhotos').length);
+    await own.locator('input[type=file]').setInputFiles({
+      name:'remaining.png', mimeType:'image/png', buffer:png
+    });
+    await current.waitForFunction(count => (window.__CALLABLE_CALLS || [])
+      .filter(row => row.name === 'appendFaultPhotos').length > count, before);
+    const appended = await current.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(row => row.name === 'appendFaultPhotos').at(-1).payload);
+    assert.equal(appended.reportId, 'building-open');
+    assert.equal(appended.photos.length, 1);
+  });
+  await test('כשל בצירוף תמונה רביעית משאיר טופס ומנסה שוב באותו batch', async () => {
+    const retryPage = commander.page;
+    await retryPage.evaluate(() => { window.__CALLABLE_PLAN = {
+      appendFaultPhotos:[{ reject:true, code:'functions/unavailable' }, { data:{ appended:1 } }]
+    }; });
+    await retryPage.locator('#nKind').selectOption('gear');
+    await retryPage.locator('#nVeh').selectOption('v1');
+    await retryPage.locator('#nTitle').fill('דיווח ארבע תמונות עם ניסיון חוזר');
+    for (let index = 0; index < 4; index++) {
+      await retryPage.locator('#nShot').setInputFiles({ name:`retry-${index}.png`, mimeType:'image/png', buffer:png });
+    }
+    const before = await retryPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(row => row.name === 'appendFaultPhotos').length);
+    await tap(retryPage.locator('#btnNew'));
+    await retryPage.waitForFunction(() => document.querySelector('#newMsg')?.textContent.includes('3 מתוך 4'));
+    assert.equal(await retryPage.locator('#shotList button').count(), 4);
+    await tap(retryPage.locator('#btnNew'));
+    await retryPage.waitForFunction(() => document.querySelector('#newMsg')?.textContent.includes('4 תמונות צורפו'));
+    const attempts = await retryPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(row => row.name === 'appendFaultPhotos'));
+    assert.equal(attempts.length, before + 2);
+    assert.equal(attempts.at(-1).payload.requestId, attempts.at(-2).payload.requestId);
+    assert.equal(attempts.at(-1).payload.reportId, attempts.at(-2).payload.reportId);
   });
   await test('מסירות אינן נקראות בכניסה למסך תקלות רגיל', async () => {
     const paths = await commander.page.evaluate(() => window.__DATA_PATHS || []);
@@ -297,4 +345,4 @@ try {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
 }
-console.log('Faults browser: ' + passed + '/16 passed.');
+  console.log('Faults browser: ' + passed + '/18 passed.');

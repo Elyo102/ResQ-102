@@ -88,6 +88,7 @@ const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
 const runtimeModeModule = require('./runtime-mode-service');
 const faultReportModule = require('./fault-report-service');
+const operationalVehicleModule = require('./operational-vehicle-service');
 const { createRegistrationTermsGate, createPreApprovalOnCall } = require('./registration-terms-gate');
 // Hardening package (pilot) — surgical port. israel-time intentionally OUT of candidate.
 const structuredLog = require('./structured-log');
@@ -427,6 +428,17 @@ const faultReportService = faultReportModule.createFaultReportService({
 });
 exports.createFaultReport = onCall({ enforceAppCheck: true, memory: '512MiB', timeoutSeconds: 60 },
   req => faultReportService.create(req));
+exports.appendFaultPhotos = onCall({ enforceAppCheck: true, memory: '512MiB', timeoutSeconds: 60 },
+  req => faultReportService.appendPhotos(req));
+const operationalVehicleService = operationalVehicleModule.createOperationalVehicleService({
+  db, auth: admin.auth(), Timestamp: admin.firestore.Timestamp, HttpsError
+});
+exports.recordVehicleEquipmentEvent = onCall({ enforceAppCheck: true },
+  req => operationalVehicleService.recordEvent(req));
+exports.saveVehicleCompartmentItem = onCall({ enforceAppCheck: true },
+  req => operationalVehicleService.saveItem(req));
+exports.saveVehicleCompartmentPhoto = onCall({ enforceAppCheck: true, memory:'512MiB' },
+  req => operationalVehicleService.savePhoto(req));
 
 const invitationEngine = invitationsModule.createInvitations({
   clock: Date.now,

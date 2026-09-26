@@ -9,6 +9,7 @@
   <style>
     *{box-sizing:border-box}
     body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",Arial,sans-serif}
+    body > #appNav{margin:0 0 14px}
     main{width:min(100%,1440px);margin:auto;padding:18px 20px 96px}
     h1{font-size:clamp(22px,2vw,30px);margin:16px 0 4px}
     h2{font-size:19px;margin:0 0 12px}
@@ -28,10 +29,23 @@
     .faults{margin-top:16px}
     .fault{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--panel)}
     .fault small{display:block;color:var(--muted);margin-top:4px}
+    .actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:12px 0}
+    .action{background:var(--accent);color:var(--accent-on);border:1px solid var(--accent);padding:8px 14px}
+    .secondary{background:var(--chip);color:var(--txt);border:1px solid var(--line);padding:8px 14px}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .form-grid label{display:grid;gap:4px;font-weight:600}
+    .form-grid .wide{grid-column:1/-1}
+    input,select,textarea{width:100%;min-height:44px;border:1px solid var(--line);background:var(--input);color:var(--txt);border-radius:8px;padding:8px;font:inherit}
+    textarea{min-height:70px;resize:vertical}
+    .item{display:flex;justify-content:space-between;gap:8px;align-items:center;border-bottom:1px solid var(--line);padding:9px 0}
+    .item:last-child{border-bottom:0}
+    .events{margin-top:16px}
+    .event{border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--panel)}
+    .photo img{width:100%;height:auto;max-height:420px;object-fit:contain}
     .banner{padding:14px;border-radius:11px;border:1px solid var(--line);background:var(--info-bg);margin:12px 0}
     .error{background:var(--bad-bg,#fff0f0);color:var(--bad,#8b1d1d)}
     [hidden]{display:none!important}
-    @media(max-width:760px){main{padding:12px 12px 96px}.layout,.sections{grid-template-columns:1fr}.sectors{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:760px){main{padding:12px 12px 96px}.layout,.sections,.form-grid{grid-template-columns:1fr}.sectors{grid-template-columns:repeat(2,minmax(0,1fr))}}
   </style>
 </head>
 <body>
@@ -43,6 +57,13 @@
     <aside class="card">
       <h2>רכבי התחנה</h2>
       <div id="vehicles" class="vehicles"></div>
+      <div id="createVehicleWrap" hidden>
+        <h3>הקמת רכב מבצעי</h3>
+        <label for="vehicleName">שם / מספר רכב</label>
+        <input id="vehicleName" maxlength="50" placeholder="לדוגמה: רכב 407">
+        <button id="createVehicle" class="action" type="button">הוסף רכב</button>
+        <p id="createVehicleStatus" class="muted" role="status"></p>
+      </div>
     </aside>
     <section class="card" aria-labelledby="vehicleTitle">
       <h2 id="vehicleTitle">בחרו רכב</h2>
@@ -56,9 +77,29 @@
           <div id="sectorDetail" hidden>
             <h3 id="sectorTitle"></h3>
             <div id="sectorPhoto" class="photo" role="status"></div>
+            <div id="photoEditor" class="actions" hidden>
+              <input id="sectorPhotoFile" type="file" accept="image/*" aria-label="בחרו תמונת תא">
+              <button id="saveSectorPhoto" class="secondary" type="button">שמור תמונת תא</button>
+            </div>
+            <p id="photoMessage" class="muted" role="status"></p>
             <div class="equipment">
               <h3>רשימת ציוד</h3>
               <p id="equipmentStatus" class="muted"></p>
+              <div id="equipmentList"></div>
+              <button id="moreEquipment" class="secondary" type="button" hidden>עוד ציוד</button>
+              <form id="itemForm" hidden>
+                <h3 id="itemFormTitle">הוסף ציוד</h3>
+                <div class="form-grid">
+                  <label>שם ציוד<input id="itemName" maxlength="160" required></label>
+                  <label>כמות<input id="itemQuantity" type="number" min="0" max="9999" value="1" required></label>
+                  <label>מצב<select id="itemStatus"><option value="present">קיים</option><option value="missing">חסר</option><option value="service">בטיפול</option></select></label>
+                  <label class="wide">הערות<textarea id="itemNotes" maxlength="400"></textarea></label>
+                </div>
+                <button id="saveItem" class="action" type="submit">שמור ציוד</button>
+                <button id="cancelItem" class="secondary" type="button">ביטול</button>
+                <p id="itemMessage" role="status"></p>
+              </form>
+              <button id="addItem" class="secondary" type="button" hidden>הוסף ציוד לתא</button>
             </div>
           </div>
         </div>
@@ -66,7 +107,27 @@
           <h3>תקלות ברכב ובציוד שלו</h3>
           <p id="faultStatus" class="muted" role="status"></p>
           <div id="faultList" class="fault-list"></div>
+          <button id="moreFaults" class="secondary" type="button" hidden>עוד תקלות</button>
           <a id="faultLink" class="link" href="./vehicle.html">למפת הרכב והתקלות</a>
+        </div>
+        <div class="events">
+          <h3>הורדת ציוד / החלפת ציוד</h3>
+          <p class="muted">דיווח ביומן אינו משנה את רשימת המלאי. קצין מעדכן את המלאי לאחר בדיקה.</p>
+          <form id="eventForm" hidden>
+            <div class="form-grid">
+              <label>איזה ציוד ירד?<input id="eventEquipment" maxlength="180" required></label>
+              <label>היכן הוא נמצא כעת?<input id="eventLocation" maxlength="240" required></label>
+              <label>האם הוחלף?<select id="eventReplaced"><option value="no">לא</option><option value="yes">כן</option></select></label>
+              <label>מה הותקן במקומו?<input id="eventReplacement" maxlength="180"></label>
+              <label>האם הגיע מרכב אחר?<select id="eventSourceVehicle"></select></label>
+              <p class="muted">הדיווח יירשם כפתוח. סגירת טיפול דורשת פעולה מאומתת של קצין.</p>
+            </div>
+            <button id="saveEvent" class="action" type="submit">שמור רישום ביומן</button>
+            <p id="eventMessage" role="status"></p>
+          </form>
+          <p id="eventsStatus" class="muted" role="status"></p>
+          <div id="eventsList" class="fault-list"></div>
+          <button id="moreEvents" class="secondary" type="button" hidden>עוד רישומים</button>
         </div>
       </div>
     </section>
@@ -76,20 +137,34 @@
   import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h39';
   import { renderNav, renderStuckNav } from './nav.js?v=42h39';
   import { MEMBER_ROLES } from './roles.js?v=42h39';
+  import { managesFleet } from './fleet.js?v=42h39';
+  import { shrinkImage } from './faults.js?v=42h39';
   import { initPWA } from './pwa.js?v=42h39';
   import { COMPARTMENTS, operationalFleet } from './operational-vehicles-model.js?v=42h41';
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
   import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-  import { getFirestore, collection, doc, getDoc, getDocs, query, where, limit }
+  import { getFirestore, collection, doc, getDoc, getDocs, query, where,
+    orderBy, limit, startAfter, runTransaction, serverTimestamp }
     from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
   import { initAppCheck } from './appcheck.js?v=42h39';
+  import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h39';
 
   const $ = id => document.getElementById(id);
   const app = initializeApp(firebaseConfig);
   await initAppCheck(app);
   const auth = getAuth(app);
   const db = getFirestore(app);
-  let generation = 0, stationId = '', selectedVehicle = '', currentUid = '';
+  const functions = getFunctions(app, 'europe-west1');
+  const writeEvent = httpsCallable(functions, 'recordVehicleEquipmentEvent');
+  const writeItem = httpsCallable(functions, 'saveVehicleCompartmentItem');
+  const writePhoto = httpsCallable(functions, 'saveVehicleCompartmentPhoto');
+  let generation = 0, stationId = '', selectedVehicle = '', selectedSector = '', currentUid = '';
+  let fleet = [], canFleet = false, canEvent = false, activeContext = null;
+  let photoRevision = 0, equipmentCursor = null, eventsCursor = null, faultsCursor = null;
+  let equipmentHasMore = false, eventHasMore = false, faultsHasMore = false;
+  let selectedItem = null, pendingEvent = null, pendingItem = null, pendingPhoto = null;
+  let pendingVehicle = null, tokenCheck = 0, roleKey = '';
+  let compartmentLoad = 0, vehicleLoad = 0;
   renderStuckNav('');
   initPWA({ offer:false });
 
@@ -108,46 +183,124 @@
     return generation === context.gen && stationId === context.sid &&
       currentUid === context.uid && auth.currentUser?.uid === context.uid;
   }
-  function showCompartment(item, context) {
+  const pathFor = (context, cell) =>
+    ['stations', context.sid, 'vehicle_inventory', context.vehicleId,
+      'compartments', cell];
+  function attempt(previous, body) {
+    const key = JSON.stringify(body);
+    return previous && previous.key === key ? previous :
+      { key, id:crypto.randomUUID() };
+  }
+  function renderEquipment(rows, append = false) {
+    if (!append) $('equipmentList').replaceChildren();
+    rows.forEach(row => {
+      const wrap = document.createElement('div'); wrap.className = 'item';
+      const title = document.createElement('span');
+      title.textContent = row.name + ' · ' + row.quantity + ' · ' +
+        ({present:'קיים', missing:'חסר', service:'בטיפול'}[row.status] || row.status);
+      wrap.append(title);
+      if (canFleet) {
+        const edit = makeButton('ערוך', 'secondary', false, () => {
+          selectedItem = row; pendingItem = null;
+          $('itemFormTitle').textContent = 'ערוך ציוד';
+          $('itemName').value = row.name || '';
+          $('itemQuantity').value = String(row.quantity);
+          $('itemStatus').value = row.status;
+          $('itemNotes').value = row.notes || '';
+          $('itemForm').hidden = false;
+          $('itemName').focus();
+        });
+        wrap.append(edit);
+      }
+      $('equipmentList').append(wrap);
+    });
+  }
+  async function loadEquipment(context, append = false, loadId = compartmentLoad) {
+    if (!sameContext(context) || selectedVehicle !== context.vehicleId ||
+        selectedSector !== context.compartmentId) return;
+    $('equipmentStatus').textContent = 'טוען רשימת ציוד…';
+    $('moreEquipment').disabled = true;
+    try {
+      const parts = [orderBy('name'), limit(26)];
+      if (append && equipmentCursor) parts.push(startAfter(equipmentCursor));
+      const snapshot = await getDocs(query(
+        collection(db, ...pathFor(context, context.compartmentId), 'items'), ...parts));
+      if (!sameContext(context) || selectedVehicle !== context.vehicleId ||
+          selectedSector !== context.compartmentId || compartmentLoad !== loadId) return;
+      const docs = snapshot.docs.slice(0, 25);
+      equipmentCursor = docs.length ? docs[docs.length - 1] : null;
+      equipmentHasMore = snapshot.docs.length > 25;
+      renderEquipment(docs.map(item => ({ id:item.id, ...item.data() })), append);
+      $('equipmentStatus').textContent = $('equipmentList').children.length
+        ? $('equipmentList').children.length + ' פריטים מוצגים.'
+        : 'לא נרשם עדיין ציוד לתא זה.';
+      $('moreEquipment').hidden = !equipmentHasMore;
+    } catch (error) {
+      if (!sameContext(context) || compartmentLoad !== loadId) return;
+      $('equipmentStatus').textContent = 'רשימת הציוד לא נטענה. אפשר לנסות שוב בבחירת התא.';
+    } finally {
+      if (sameContext(context) && compartmentLoad === loadId) $('moreEquipment').disabled = false;
+    }
+  }
+  async function showCompartment(item, context) {
     if (!sameContext(context) || selectedVehicle !== context.vehicleId) return;
+    const loadId = ++compartmentLoad;
+    selectedSector = item.id; selectedItem = null; pendingItem = null; pendingPhoto = null;
+    $('saveItem').disabled = false; $('saveSectorPhoto').disabled = false;
+    equipmentCursor = null; equipmentHasMore = false; photoRevision = 0;
     $('sectorDetail').hidden = false;
     $('sectorTitle').textContent = item.label;
-    $('sectorPhoto').textContent = 'טרם הוגדרה תמונה לתא הזה — אין להסיק שהתא ריק.';
-    $('equipmentStatus').textContent = 'רשימת הציוד לתא הזה טרם הוגדרה במערכת.';
+    $('sectorPhoto').textContent = 'טוען תמונת תא…';
+    $('equipmentStatus').textContent = 'רשימת הציוד תיטען לאחר התמונה.';
+    $('equipmentList').replaceChildren();
+    $('itemForm').hidden = true;
+    $('photoEditor').hidden = !canFleet;
+    $('addItem').hidden = !canFleet;
+    $('moreEquipment').hidden = true;
+    $('photoMessage').textContent = '';
     [...$('sectors').children].forEach(button =>
       button.setAttribute('aria-pressed', String(button.dataset.sector === item.id)));
-  }
-  async function showVehicle(vehicle, context) {
-    if (!sameContext(context)) return;
-    selectedVehicle = vehicle.id;
-    $('vehicleTitle').textContent = vehicle.name;
-    $('vehicleContent').hidden = false;
-    $('sectorDetail').hidden = true;
-    $('sectors').replaceChildren();
-    COMPARTMENTS.forEach(item => {
-      const button = makeButton(item.label, 'sector-button', false,
-        () => showCompartment(item, { ...context, vehicleId:vehicle.id }));
-      button.dataset.sector = item.id;
-      $('sectors').append(button);
-    });
-    [...$('vehicles').children].forEach(button =>
-      button.setAttribute('aria-pressed', String(button.dataset.vehicle === vehicle.id)));
-    $('faultList').replaceChildren();
-    $('faultStatus').textContent = 'טוען תקלות של הרכב…';
-    $('faultLink').href = './vehicle.html?v=' + encodeURIComponent(vehicle.id);
-    const expected = { ...context, vehicleId:vehicle.id };
+    const request = { ...context, compartmentId:item.id };
     try {
-      const snapshot = await getDocs(query(
-        collection(db, 'stations', context.sid, 'faults'),
-        where('vehicle_id', '==', vehicle.id), limit(50)));
-      if (!sameContext(expected) || selectedVehicle !== expected.vehicleId) return;
-      const faults = snapshot.docs.map(item => ({ id:item.id, ...item.data() }));
-      $('faultStatus').textContent = faults.length === 0
-        ? 'לא נמצאו תקלות מקושרות לרכב הזה.'
-        : faults.length === 50
-          ? 'מוצגות עד 50 תקלות ללא סדר מובטח; ייתכן שלא כולן מוצגות. להיסטוריה המלאה עברו למפת הרכב.'
-          : faults.length + ' תקלות מקושרות לרכב.';
-      faults.forEach(fault => {
+      const photo = await getDoc(doc(db, ...pathFor(context, item.id), 'photos', 'current'));
+      if (!sameContext(request) || selectedVehicle !== request.vehicleId ||
+          selectedSector !== item.id || compartmentLoad !== loadId) return;
+      $('sectorPhoto').replaceChildren();
+      const value = photo.exists() ? photo.data() || {} : null;
+      if (value && typeof value.data === 'string' &&
+          /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.data)) {
+        const image = document.createElement('img'); image.alt = 'תמונת ' + item.label;
+        image.src = value.data; $('sectorPhoto').append(image);
+        photoRevision = Number.isSafeInteger(value.revision) ? value.revision : 0;
+      } else {
+        $('sectorPhoto').textContent = 'טרם הוגדרה תמונה לתא הזה — אין להסיק שהתא ריק.';
+      }
+    } catch (error) {
+      if (!sameContext(request) || compartmentLoad !== loadId) return;
+      $('sectorPhoto').textContent = 'תמונת התא לא נטענה. אין להסיק שהתא ריק.';
+    }
+    await loadEquipment(request, false, loadId);
+  }
+  function vehicleContext(context) {
+    return sameContext(context) && selectedVehicle === context.vehicleId &&
+      vehicleLoad === context.load;
+  }
+  async function loadFaults(context, append = false) {
+    if (!vehicleContext(context)) return;
+    $('moreFaults').disabled = true;
+    $('faultStatus').textContent = 'טוען תקלות של הרכב…';
+    try {
+      const parts = [where('vehicle_id', '==', context.vehicleId),
+        orderBy('created_key', 'desc'), limit(26)];
+      if (append && faultsCursor) parts.push(startAfter(faultsCursor));
+      const snapshot = await getDocs(query(collection(db, 'stations', context.sid, 'faults'), ...parts));
+      if (!vehicleContext(context)) return;
+      if (!append) $('faultList').replaceChildren();
+      const page = snapshot.docs.slice(0, 25);
+      faultsCursor = page.at(-1) || null;
+      faultsHasMore = snapshot.docs.length > 25;
+      page.forEach(item => {
+        const fault = item.data() || {};
         const card = document.createElement('div'); card.className = 'fault';
         const heading = document.createElement('strong');
         heading.textContent = fault.title || fault.name || 'דיווח ללא כותרת';
@@ -155,32 +308,288 @@
         detail.textContent = fault.kind === 'gear' ? 'תקלת ציוד' : 'תקלה או פגיעה ברכב';
         card.append(heading, detail); $('faultList').append(card);
       });
+      $('faultStatus').textContent = $('faultList').children.length
+        ? $('faultList').children.length + ' תקלות מוצגות. לפתיחת הדיווחים המלאים עברו למפת הרכב.'
+        : 'לא נמצאו תקלות מקושרות לרכב הזה.';
+      $('moreFaults').hidden = !faultsHasMore;
     } catch (error) {
-      if (!sameContext(expected) || selectedVehicle !== expected.vehicleId) return;
-      $('faultStatus').textContent = 'לא ניתן לטעון את התקלות. נסו לבחור שוב את הרכב.';
+      if (vehicleContext(context)) $('faultStatus').textContent =
+        'לא ניתן לטעון תקלות. נסו שוב; אין להסיק שאין תקלות לרכב.';
+    } finally {
+      if (vehicleContext(context)) $('moreFaults').disabled = false;
     }
   }
+  async function loadEvents(context, append = false) {
+    if (!vehicleContext(context)) return;
+    $('moreEvents').disabled = true;
+    $('eventsStatus').textContent = 'טוען יומן ציוד…';
+    try {
+      const parts = [orderBy('created_at', 'desc'), limit(26)];
+      if (append && eventsCursor) parts.push(startAfter(eventsCursor));
+      const snapshot = await getDocs(query(collection(db, 'stations', context.sid,
+        'vehicle_inventory', context.vehicleId, 'equipment_events'), ...parts));
+      if (!vehicleContext(context)) return;
+      if (!append) $('eventsList').replaceChildren();
+      const page = snapshot.docs.slice(0, 25);
+      eventsCursor = page.at(-1) || null;
+      eventHasMore = snapshot.docs.length > 25;
+      page.forEach(item => {
+        const event = item.data() || {};
+        const card = document.createElement('div'); card.className = 'event';
+        const heading = document.createElement('strong');
+        heading.textContent = String(event.equipment || 'ציוד לא מזוהה');
+        const details = document.createElement('p');
+        details.textContent = 'מיקום: ' + (event.location || 'לא נמסר') +
+          ' · החלפה: ' + (event.was_replaced ? event.replacement_equipment || 'כן' : 'לא') +
+          ' · מצב: ' + ({open:'פתוח', in_progress:'בטיפול', resolved:'טופל'}[event.status] || 'לא ידוע');
+        card.append(heading, details); $('eventsList').append(card);
+      });
+      $('eventsStatus').textContent = $('eventsList').children.length
+        ? $('eventsList').children.length + ' רישומים מוצגים.' : 'עדיין אין רישומים ביומן הציוד.';
+      $('moreEvents').hidden = !eventHasMore;
+    } catch (error) {
+      if (vehicleContext(context)) $('eventsStatus').textContent =
+        'יומן הציוד לא נטען. נסו שוב; אין להסיק שלא דווח על הורדת ציוד.';
+    } finally {
+      if (vehicleContext(context)) $('moreEvents').disabled = false;
+    }
+  }
+  function setSourceVehicleOptions() {
+    $('eventSourceVehicle').replaceChildren();
+    const none = document.createElement('option'); none.value = '';
+    none.textContent = 'לא מרכב אחר'; $('eventSourceVehicle').append(none);
+    fleet.filter(item => item.id !== selectedVehicle).forEach(item => {
+      const option = document.createElement('option');
+      option.value = item.id; option.textContent = item.name;
+      $('eventSourceVehicle').append(option);
+    });
+  }
+  async function showVehicle(vehicle, context) {
+    if (!sameContext(context)) return;
+    ++compartmentLoad;
+    selectedVehicle = vehicle.id; selectedSector = ''; selectedItem = null;
+    $('saveItem').disabled = false; $('saveEvent').disabled = false;
+    $('saveSectorPhoto').disabled = false;
+    equipmentCursor = eventsCursor = faultsCursor = null;
+    eventHasMore = faultsHasMore = false;
+    const expected = { ...context, vehicleId:vehicle.id, load:++vehicleLoad };
+    activeContext = expected;
+    $('vehicleTitle').textContent = vehicle.name;
+    $('vehicleContent').hidden = false;
+    $('sectorDetail').hidden = true;
+    $('eventForm').hidden = !canEvent;
+    $('eventForm').reset(); pendingEvent = null;
+    $('eventMessage').textContent = '';
+    $('sectors').replaceChildren();
+    COMPARTMENTS.forEach(item => {
+      const button = makeButton(item.label, 'sector-button', false,
+        () => { void showCompartment(item, expected); });
+      button.dataset.sector = item.id;
+      $('sectors').append(button);
+    });
+    [...$('vehicles').children].forEach(button =>
+      button.setAttribute('aria-pressed', String(button.dataset.vehicle === vehicle.id)));
+    $('faultList').replaceChildren(); $('eventsList').replaceChildren();
+    $('moreFaults').hidden = $('moreEvents').hidden = true;
+    $('faultLink').href = './vehicle.html?v=' + encodeURIComponent(vehicle.id);
+    setSourceVehicleOptions();
+    await Promise.all([loadFaults(expected), loadEvents(expected)]);
+  }
+  function activeCellContext() {
+    const context = activeContext;
+    if (!context || !vehicleContext(context) || !selectedSector) return null;
+    return { ...context, compartment_id:selectedSector };
+  }
+  $('moreFaults').addEventListener('click', () => {
+    if (activeContext && faultsHasMore) void loadFaults(activeContext, true);
+  });
+  $('moreEvents').addEventListener('click', () => {
+    if (activeContext && eventHasMore) void loadEvents(activeContext, true);
+  });
+  $('moreEquipment').addEventListener('click', () => {
+    const context = activeCellContext();
+    if (context && equipmentHasMore) void loadEquipment(context, true);
+  });
+  $('addItem').addEventListener('click', () => {
+    if (!canFleet || !activeCellContext()) return;
+    selectedItem = null; pendingItem = null;
+    $('itemForm').reset(); $('itemQuantity').value = '1';
+    $('itemFormTitle').textContent = 'הוסף ציוד';
+    $('itemMessage').textContent = '';
+    $('itemForm').hidden = false; $('itemName').focus();
+  });
+  $('cancelItem').addEventListener('click', () => {
+    $('itemForm').hidden = true; pendingItem = null; selectedItem = null;
+  });
+  $('itemForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const context = activeCellContext();
+    if (!canFleet || !context) return;
+    const itemId = selectedItem?.id || pendingItem?.itemId || crypto.randomUUID();
+    const body = {
+      vehicle_id:context.vehicleId, compartment_id:context.compartment_id,
+      item_id:itemId, expected_revision:selectedItem?.revision || 0,
+      name:$('itemName').value.trim(), quantity:Number($('itemQuantity').value),
+      status:$('itemStatus').value, notes:$('itemNotes').value.trim()
+    };
+    if (pendingItem && pendingItem.key !== JSON.stringify(body)) {
+      $('itemMessage').textContent = 'השמירה הקודמת טרם הוכרעה. החזירו את הפרטים הקודמים ונסו שוב לפני עריכה נוספת.';
+      return;
+    }
+    pendingItem = attempt(pendingItem, body);
+    pendingItem.itemId = itemId;
+    $('saveItem').disabled = true; $('itemMessage').textContent = 'שומר ציוד…';
+    try {
+      await writeItem({ ...body, request_id:pendingItem.id });
+      if (!vehicleContext(context) || selectedSector !== context.compartment_id) return;
+      $('itemMessage').textContent = 'הציוד נשמר.';
+      $('itemForm').hidden = true; pendingItem = null; selectedItem = null;
+      equipmentCursor = null;
+      await loadEquipment(context);
+    } catch (error) {
+      if (vehicleContext(context) && selectedSector === context.compartment_id)
+        $('itemMessage').textContent = 'השמירה לא הושלמה. הנתונים נשארו בטופס; נסו שוב או רעננו במקרה של התנגשות.';
+    } finally { if (vehicleContext(context)) $('saveItem').disabled = false; }
+  });
+  $('saveSectorPhoto').addEventListener('click', async () => {
+    const context = activeCellContext();
+    const file = $('sectorPhotoFile').files?.[0];
+    if (!canFleet || !context || !file) {
+      $('photoMessage').textContent = 'בחרו תמונה לתא.'; return;
+    }
+    $('saveSectorPhoto').disabled = true;
+    $('photoMessage').textContent = 'מקטין ושומר תמונת תא…';
+    try {
+      const image = await shrinkImage(file, 1280, 750000);
+      if (!vehicleContext(context) || selectedSector !== context.compartment_id) return;
+      const body = { vehicle_id:context.vehicleId,
+        compartment_id:context.compartment_id, expected_revision:photoRevision,
+        data:image.data, w:image.w, h:image.h };
+      if (pendingPhoto && pendingPhoto.key !== JSON.stringify(body)) {
+        $('photoMessage').textContent = 'השמירה הקודמת טרם הוכרעה. רעננו את התא לפני שינוי התמונה.';
+        return;
+      }
+      pendingPhoto = attempt(pendingPhoto, body);
+      const result = await writePhoto({ ...body, request_id:pendingPhoto.id });
+      if (!vehicleContext(context) || selectedSector !== context.compartment_id) return;
+      photoRevision = result.data.revision;
+      const view = document.createElement('img');
+      view.src = image.data; view.alt = 'תמונת ' + $('sectorTitle').textContent;
+      $('sectorPhoto').replaceChildren(view);
+      $('sectorPhotoFile').value = ''; pendingPhoto = null;
+      $('photoMessage').textContent = 'תמונת התא נשמרה.';
+    } catch (error) {
+      if (vehicleContext(context) && selectedSector === context.compartment_id)
+        $('photoMessage').textContent = 'התמונה לא נשמרה. בחירת הקובץ נשמרה לניסיון חוזר; אם התמונה שונתה בינתיים רעננו.';
+    } finally { if (vehicleContext(context)) $('saveSectorPhoto').disabled = false; }
+  });
+  $('eventForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const context = activeContext;
+    if (!canEvent || !context || !vehicleContext(context)) return;
+    const replaced = $('eventReplaced').value === 'yes';
+    const body = { vehicle_id:context.vehicleId,
+      kind:replaced ? 'replaced' : 'removed',
+      equipment:$('eventEquipment').value.trim(),
+      location:$('eventLocation').value.trim(), was_replaced:replaced,
+      replacement_equipment:replaced ? $('eventReplacement').value.trim() : '',
+      source_vehicle_id:replaced ? $('eventSourceVehicle').value : '',
+      status:'open' };
+    if (pendingEvent && pendingEvent.key !== JSON.stringify(body)) {
+      $('eventMessage').textContent = 'הרישום הקודם טרם הוכרע. החזירו את הפרטים הקודמים ונסו שוב לפני דיווח נוסף.';
+      return;
+    }
+    pendingEvent = attempt(pendingEvent, body);
+    $('saveEvent').disabled = true; $('eventMessage').textContent = 'שומר רישום…';
+    try {
+      await writeEvent({ ...body, request_id:pendingEvent.id });
+      if (!vehicleContext(context)) return;
+      pendingEvent = null; $('eventForm').reset();
+      $('eventMessage').textContent = 'הרישום נשמר ביומן.';
+      eventsCursor = null; await loadEvents(context);
+    } catch (error) {
+      if (vehicleContext(context)) $('eventMessage').textContent =
+        'הרישום לא אושר. הטופס נשמר; אפשר לנסות שוב בלי ליצור רישום כפול.';
+    } finally { if (vehicleContext(context)) $('saveEvent').disabled = false; }
+  });
+  $('createVehicle').addEventListener('click', async () => {
+    if (!canFleet || !stationId) return;
+    const name = $('vehicleName').value.trim();
+    if (!name || name.length > 30) {
+      $('createVehicleStatus').textContent = 'נדרש שם רכב עד 30 תווים.'; return;
+    }
+    const context = { sid:stationId, uid:currentUid, gen:generation };
+    if (pendingVehicle && pendingVehicle.name !== name) {
+      $('createVehicleStatus').textContent = 'יצירת הרכב הקודם טרם הוכרעה. החזירו את שמו ונסו שוב.';
+      return;
+    }
+    const vehicle = pendingVehicle || { id:'v-' + crypto.randomUUID(), name, role:'', slots:[] };
+    pendingVehicle = vehicle;
+    $('createVehicle').disabled = true;
+    $('createVehicleStatus').textContent = 'מוסיף רכב…';
+    try {
+      await runTransaction(db, async tx => {
+        if (!sameContext(context)) throw new Error('identity-changed');
+        const ref = doc(db, 'stations', context.sid, 'config', 'board');
+        const snapshot = await tx.get(ref);
+        if (!sameContext(context) || !snapshot.exists()) throw new Error('identity-changed');
+        const board = snapshot.data() || {};
+        const vehicles = Array.isArray(board.vehicles) ? board.vehicles : [];
+        if (vehicles.some(item => item.id === vehicle.id)) return;
+        if (vehicles.length >= 40) throw new Error('vehicle-capacity');
+        tx.set(ref, { vehicles:[...vehicles, vehicle],
+          command:Array.isArray(board.command) ? board.command : [],
+          updated_at:serverTimestamp(), by:context.uid });
+      });
+      if (!sameContext(context)) return;
+      pendingVehicle = null;
+      fleet = fleet.some(item => item.id === vehicle.id) ? fleet : [...fleet, vehicle];
+      const button = makeButton(vehicle.name, 'vehicle-button', false,
+        () => { void showVehicle(vehicle, context); });
+      button.dataset.vehicle = vehicle.id; $('vehicles').append(button);
+      $('vehicleName').value = '';
+      $('createVehicleStatus').textContent = 'הרכב נוסף.';
+      void showVehicle(vehicle, context);
+    } catch (error) {
+      if (sameContext(context)) $('createVehicleStatus').textContent =
+        'הרכב לא נוסף. נסו שוב לאחר בדיקת הרשאה ונתוני התחנה.';
+    } finally { if (sameContext(context)) $('createVehicle').disabled = false; }
+  });
   onIdTokenChanged(auth, async user => {
+    const check = ++tokenCheck;
+    let claims = {};
+    if (user) {
+      try { claims = (await user.getIdTokenResult()).claims || {}; }
+      catch (error) { if (check === tokenCheck) notice('אימות ההרשאות נכשל. נסו שוב.', true); return; }
+      if (check !== tokenCheck || auth.currentUser?.uid !== user.uid) return;
+      const newKey = JSON.stringify([claims.stationId || '', claims.role || '', claims.super === true]);
+      if (currentUid === user.uid && stationId === claims.stationId && roleKey === newKey) return;
+      roleKey = newKey;
+    } else roleKey = '';
     const gen = ++generation;
-    stationId = ''; selectedVehicle = ''; currentUid = user?.uid || '';
+    stationId = ''; selectedVehicle = ''; selectedSector = '';
+    currentUid = user?.uid || ''; activeContext = null;
+    fleet = []; canFleet = canEvent = false;
+    ++vehicleLoad; ++compartmentLoad;
     $('layout').hidden = true; $('vehicleContent').hidden = true;
     if (!user) {
       location.replace('./login.html?next=operational-vehicles.html');
       return;
     }
     try {
-      const claims = (await user.getIdTokenResult()).claims || {};
-      if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
-      const sid = claims.stationId || (claims.super === true ? STATION_ID : '');
+      const sid = claims.stationId || '';
       if (!sid || !(claims.super === true || MEMBER_ROLES.includes(claims.role))) {
-        notice('אין הרשאה לצפות ברכבי התחנה.', true); return;
+        notice(claims.super === true ? 'נדרש שיוך תחנה מאומת לפני ניהול רכבים.' : 'אין הרשאה לצפות ברכבי התחנה.', true); return;
       }
       stationId = sid;
+      canFleet = managesFleet(claims);
+      canEvent = claims.super === true || claims.role !== 'hr_coordinator';
       renderNav(claims, 'operational-vehicles.html', user.email || '');
       const board = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
       if (!sameContext({ gen, sid, uid:user.uid })) return;
-      const fleet = operationalFleet(board.exists() ? board.data().vehicles : []);
+      fleet = operationalFleet(board.exists() ? board.data().vehicles : []);
       $('vehicles').replaceChildren();
+      $('createVehicleWrap').hidden = !canFleet;
       $('layout').hidden = false;
       notice(fleet.length ? 'בחרו רכב מהרשימה.' : 'עדיין לא הוגדרו רכבים מבצעיים בתחנה.');
       fleet.forEach(vehicle => {

@@ -12,7 +12,7 @@ const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCA
 const vehicles = [{id:'live',name:'Active test vehicle'}, {id:'retired',name:'Retired test vehicle',active:false}];
 const faults = [{id:'history',vehicle_id:'retired',vehicle_name:'Retired test vehicle',kind:'vehicle',
   title:'Historical blocking fault',status:'fixed',severity:'blocking',created_key:'2026-09-01T00:00:00Z',fixed_key:'2026-09-03T00:00:00Z'},
-  {id:'open-history',vehicle_id:'retired',kind:'vehicle',title:'Historical open fault',status:'open',severity:'minor',created_key:'2026-09-01T00:00:00Z'},
+  {id:'open-history',vehicle_id:'retired',kind:'vehicle',title:'Historical open fault',status:'open',severity:'minor',by_uid:'stub-uid',created_key:'2026-09-01T00:00:00Z'},
   {id:'orphan-history',vehicle_id:'missing',kind:'damage',title:'Orphan historical fault',status:'open',severity:'minor',created_key:'2026-09-01T00:00:00Z'}];
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json'};
 const server = http.createServer((request,response) => {
@@ -151,6 +151,19 @@ try {
     assert.equal(sent.point.side,'right');
     assert.equal(sent.photos.length,0);
   });
+  await scenario('author can append remaining photos to an existing vehicle fault','vehicle.html?v=retired',async page=>{
+    const own = page.locator('#list .f').filter({hasText:'Historical open fault'});
+    await tap(own.getByRole('button',{name:/הצג פרטים ותמונות/}));
+    const picker = page.locator('#ov .f input[type=file]');
+    await picker.setInputFiles({name:'remaining.png',mimeType:'image/png',
+      buffer:Buffer.from(png.split(',')[1],'base64')});
+    await page.waitForFunction(()=>(window.__CALLABLE_CALLS||[])
+      .some(row=>row.name==='appendFaultPhotos'));
+    const sent=await page.evaluate(()=>(window.__CALLABLE_CALLS||[])
+      .find(row=>row.name==='appendFaultPhotos').payload);
+    assert.equal(sent.reportId,'open-history');
+    assert.equal(sent.photos.length,1);
+  });
   await scenario('vehicle map appends three photos and submits them atomically via one callable','vehicle.html?v=live',async page=>{
     await tap(page.locator('#stageWrap img.base'));
     await page.locator('#nKind').selectOption('gear');
@@ -158,7 +171,7 @@ try {
     for(const name of ['one.png','two.png','three.png']) {
       await page.locator('#nShot').setInputFiles({name,mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
     }
-    assert.match(await page.locator('#nShotName').innerText(),/3 מתוך 3/);
+    assert.match(await page.locator('#nShotName').innerText(),/3 תמונות נבחרו/);
     await tap(page.locator('#nSave'));
     await page.waitForFunction(()=>(window.__CALLABLE_CALLS||[]).some(row=>row.name==='createFaultReport'));
     const sent=await page.evaluate(()=>(window.__CALLABLE_CALLS||[]).find(row=>row.name==='createFaultReport').payload);
@@ -173,7 +186,7 @@ try {
     await page.locator('#nTitle').fill('Must not be written');
     await select(page,'Retired test vehicle');
     await tap(page.locator('#nSave'));
-    await page.waitForFunction(()=>document.getElementById('nMsg').textContent.includes('לא התקבל אישור'));
+    await page.waitForFunction(()=>document.getElementById('nMsg').textContent.includes('ההעלאה לא הושלמה'));
     assert.equal(await page.locator('#nSave').isEnabled(), true);
     await noNewWrites(page);
   });

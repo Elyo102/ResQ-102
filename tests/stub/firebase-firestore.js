@@ -580,6 +580,7 @@ export function query(base, ...constraints){
 }
 export function where(field, op, value){ return { kind:'where', field, op, value }; }
 export function orderBy(field, direction){ return { kind:'orderBy', field, direction:direction || 'asc' }; }
+export function documentId(){ return '__name__'; }
 export function limit(count){ return { kind:'limit', count:Number(count) || 0 }; }
 export function startAfter(snap){ return { kind:'startAfter', id:snap && snap.id }; }
 
@@ -828,8 +829,10 @@ function constrainedRows(source, constraints) {
   });
   const order = list.find(c => c && c.kind === 'orderBy');
   if (order) {
+    if (order.field !== '__name__') rows = rows.filter(row =>
+      row[1] && Object.prototype.hasOwnProperty.call(row[1], order.field));
     const value = row => {
-      const v = row[1] && row[1][order.field];
+      const v = order.field === '__name__' ? row[0] : row[1] && row[1][order.field];
       if (v && typeof v.toMillis === 'function') return v.toMillis();
       return String(v == null ? '' : v);
     };

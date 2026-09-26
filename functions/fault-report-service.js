@@ -15,6 +15,7 @@ const MAX_TITLE = 240;
 const MAX_DESCRIPTION = 600;
 const MAX_PHOTOS = 3;
 const MAX_PHOTO_DATA_LENGTH = 600 * 1024;
+const PHOTO_BATCHES_PER_HOUR = 40;
 
 function validId(value) {
   return typeof value === 'string' && /^[A-Za-z0-9]{20}$/.test(value);
@@ -179,8 +180,88 @@ function createFaultReportService({ db, auth, Timestamp, now, fail }) {
       return { reportId:input.reportId, created:true, created_key:body.created_key };
     });
   }
-  return Object.freeze({ create });
+  async function appendPhotos(req) {
+    const uid = req && req.auth && req.auth.uid;
+    const data = req && req.data || {};
+    const sid = data.stationId, reportId = data.reportId, requestId = data.requestId;
+    const photos = data.photos;
+    if (!uid) return fail('unauthenticated', 'נדרשת התחברות.', 'auth_required');
+    if (typeof sid !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(sid) ||
+        !validId(reportId) || typeof requestId !== 'string' ||
+        !/^[A-Za-z0-9_-]{16,120}$/.test(requestId) ||
+        data.expectedUid !== uid || !Array.isArray(photos) ||
+        photos.length < 1 || photos.length > MAX_PHOTOS || !photos.every(validPhoto)) {
+      return fail('invalid-argument', 'אצוות התמונות אינה תקינה.', 'invalid_photo_batch');
+    }
+    let user;
+    try { user = await auth.getUser(uid); }
+    catch (_) { return fail('permission-denied', 'לא ניתן לאמת חשבון פעיל.', 'auth_unavailable'); }
+    const claims = user && user.customClaims || {};
+    const isSuper = claims.super === true;
+    if (!user || user.disabled || (!isSuper &&
+        (!MEMBER_ROLES.has(claims.role) || claims.stationId !== sid))) {
+      return fail('permission-denied', 'אין הרשאה לצרף תמונות.', 'station_forbidden');
+    }
+    const date = now();
+    if (!(date instanceof Date) || !Number.isFinite(date.getTime())) {
+      return fail('internal', 'שעת השרת אינה תקינה.', 'server_clock_invalid');
+    }
+    const parent = db.doc(`stations/${sid}/faults/${reportId}`);
+    const batch = parent.collection('photo_batches').doc(requestId);
+    const quota = db.doc(`stations/${sid}/fault_photo_quotas/${crypto.createHash('sha256').update(uid).digest('hex').slice(0,32)}`);
+    const digest = digestOf({ sid, reportId, requestId, photos }, uid);
+    const hour = Math.floor(date.getTime() / 3600000);
+    return db.runTransaction(async tx => {
+      const [report, existing, quotaSnap] = await Promise.all([
+        tx.get(parent), tx.get(batch), tx.get(quota)
+      ]);
+      if (!report.exists) return fail('not-found', 'הדיווח לא נמצא.', 'report_missing');
+      const record = report.data() || {};
+      if (record.by_uid !== uid && !isSuper) {
+        return fail('permission-denied', 'רק מדווח התקלה יכול לצרף את תמונותיה.', 'report_author_forbidden');
+      }
+      if (!isSuper) {
+        const membership = await tx.get(db.doc(`stations/${sid}/users/${uid}`));
+        const profile = membership.exists ? membership.data() || {} : null;
+        if (!profile || profile.is_active === false || profile.active === false ||
+            profile.role !== claims.role ||
+            (profile.station && profile.station !== sid) ||
+            (profile.stationId && profile.stationId !== sid)) {
+          return fail('permission-denied', 'שיוך התחנה השתנה.', 'station_membership_changed');
+        }
+      }
+      if (existing.exists) {
+        const old = existing.data() || {};
+        if (old.digest === digest && old.by_uid === uid) {
+          return { reportId, appended:0, total:record.photos || 0, replay:true };
+        }
+        return fail('already-exists', 'מזהה האצווה כבר שימש לתמונות אחרות.', 'batch_conflict');
+      }
+      const q = quotaSnap.exists ? quotaSnap.data() || {} : {};
+      const count = q.hour === hour ? q.count : 0;
+      if (!Number.isSafeInteger(count) || count < 0 || count >= PHOTO_BATCHES_PER_HOUR) {
+        return fail('resource-exhausted', 'בוצעו יותר מדי העלאות בשעה זו. נסו מאוחר יותר.', 'photo_rate_limited');
+      }
+      const previous = Number(record.photos || 0);
+      if (!Number.isSafeInteger(previous) || previous < 0 || previous > 1000000000) {
+        return fail('failed-precondition', 'מונה התמונות אינו תקין.', 'photo_count_invalid');
+      }
+      tx.create(batch, { digest, by_uid:uid, count:photos.length,
+        created_at:Timestamp.fromDate(date) });
+      photos.forEach((photo, index) => tx.create(parent.collection('photos')
+        .doc(`${requestId}_${index}`), {
+          data:photo.data, w:photo.w, h:photo.h, by_uid:uid,
+          created_key:date.toISOString()
+        }));
+      tx.update(parent, { photos:previous + photos.length });
+      tx.set(quota, { hour, count:count + 1,
+        expires_at:Timestamp.fromDate(new Date((hour + 2) * 3600000)) });
+      return { reportId, appended:photos.length, total:previous + photos.length, replay:false };
+    });
+  }
+  return Object.freeze({ create, appendPhotos });
 }
 
 module.exports = Object.freeze({ createFaultReportService, inputOf, israelDate,
-  MAX_TITLE, MAX_DESCRIPTION, MAX_PHOTOS, MAX_PHOTO_DATA_LENGTH });
+  MAX_TITLE, MAX_DESCRIPTION, MAX_PHOTOS, MAX_PHOTO_DATA_LENGTH,
+  PHOTO_BATCHES_PER_HOUR });

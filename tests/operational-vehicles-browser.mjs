@@ -55,7 +55,11 @@ try {
   await page.locator('#sectors button').first().dispatchEvent('click');
   assert.equal(await page.locator('#sectorTitle').textContent(), 'קבינה');
   assert.match(await page.locator('#sectorPhoto').textContent(), /טרם הוגדרה תמונה/);
-  assert.match(await page.locator('#equipmentStatus').textContent(), /טרם הוגדרה/);
+  await page.waitForFunction(() => document.querySelector('#equipmentStatus')?.textContent
+    .includes('לא נרשם עדיין'));
+  assert.match(await page.locator('#equipmentStatus').textContent(), /לא נרשם עדיין/);
+  assert.equal(await page.locator('#eventForm').isVisible(), true);
+  assert.equal(await page.locator('#addItem').isVisible(), false);
   passed++;
 
   await page.evaluate(() => { window.__SMOKE_LAG_PLAN = [150]; });
@@ -68,6 +72,79 @@ try {
   passed++;
 
   assert.deepEqual(errors, [], 'browser runtime errors');
+  const hr = await context.newPage();
+  await hr.addInitScript(() => { window.__SMOKE_ROLE = 'hr'; });
+  await hr.goto('http://127.0.0.1:' + server.address().port + '/operational-vehicles.html');
+  await hr.locator('#layout:not([hidden])').waitFor();
+  await hr.locator('#vehicles button').first().click();
+  assert.equal(await hr.locator('#eventForm').isVisible(), false, 'HR is read-only');
+  assert.equal(await hr.locator('#createVehicleWrap').isVisible(), false);
+  passed++;
+  const officer = await context.newPage();
+  await officer.addInitScript(() => { window.__SMOKE_ROLE = 'commander'; });
+  await officer.goto('http://127.0.0.1:' + server.address().port + '/operational-vehicles.html');
+  await officer.locator('#layout:not([hidden])').waitFor();
+  assert.equal(await officer.locator('#createVehicleWrap').isVisible(), true);
+  await officer.locator('#vehicles button').first().click();
+  await officer.locator('#sectors button').first().click();
+  await officer.locator('#addItem').click();
+  await officer.locator('#itemName').fill('זרנוק לחץ');
+  await officer.locator('#itemQuantity').fill('2');
+  await officer.locator('#saveItem').click();
+  await officer.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some(call => call.name === 'saveVehicleCompartmentItem'));
+  const itemRequest = await officer.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'saveVehicleCompartmentItem').payload);
+  assert.equal(itemRequest.vehicle_id, 'v1');
+  assert.equal(itemRequest.compartment_id, 'cabin');
+  assert.equal(itemRequest.name, 'זרנוק לחץ');
+  await officer.locator('#eventEquipment').fill('מטף');
+  await officer.locator('#eventLocation').fill('מחסן תחנה');
+  await officer.locator('#saveEvent').click();
+  await officer.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some(call => call.name === 'recordVehicleEquipmentEvent'));
+  const eventRequest = await officer.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'recordVehicleEquipmentEvent').payload);
+  assert.equal(eventRequest.equipment, 'מטף');
+  assert.equal(eventRequest.location, 'מחסן תחנה');
+  passed++;
+  await officer.evaluate(() => { window.__CALLABLE_PLAN = {
+    saveVehicleCompartmentPhoto:[{ data:{ revision:1, written:true } }]
+  }; });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+  await officer.locator('#sectorPhotoFile').setInputFiles({
+    name:'compartment.png', mimeType:'image/png', buffer:png
+  });
+  await officer.locator('#saveSectorPhoto').click();
+  await officer.waitForFunction(() => document.querySelector('#photoMessage')?.textContent
+    .includes('נשמרה'));
+  const photoRequest = await officer.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'saveVehicleCompartmentPhoto').payload);
+  assert.equal(photoRequest.compartment_id, 'cabin');
+  assert.match(photoRequest.data, /^data:image\/jpeg;base64,/);
+  passed++;
+  await officer.locator('#addItem').click();
+  await officer.locator('#itemName').fill('טיוטה שאסור למחוק');
+  await officer.evaluate(() => window.__SMOKE_SWAP_USER('commander', 'stub-uid',
+    { stationId:'eilat_102' }));
+  await officer.waitForTimeout(100);
+  assert.equal(await officer.locator('#itemName').inputValue(), 'טיוטה שאסור למחוק',
+    'same-user token refresh must preserve an unsent inventory draft');
+  passed++;
+  for (const width of [320, 360, 1280]) {
+    await page.setViewportSize({ width, height:844 });
+    const overflow = await page.locator('body').evaluate(el => ({
+      fits:el.scrollWidth <= window.innerWidth,
+      scroll:el.scrollWidth,
+      nav:document.querySelector('#appNav')?.getBoundingClientRect().toJSON(),
+      main:document.querySelector('main')?.getBoundingClientRect().toJSON(),
+      offenders:[...document.querySelectorAll('*')].filter(node =>
+        node.getBoundingClientRect().right > window.innerWidth + 1).slice(0, 5)
+        .map(node => node.tagName + '#' + node.id)
+    }));
+    assert.equal(overflow.fits, true, `horizontal overflow at ${width}px: ${JSON.stringify(overflow)}`);
+    passed++;
+  }
   console.log(passed + ' operational vehicle browser checks passed');
 } finally {
   await browser.close();

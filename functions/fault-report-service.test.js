@@ -33,7 +33,9 @@ function harness(options = {}) {
         create(ref, value) {
           if (options.failPhoto && ref.path.endsWith('/photos/p1')) throw new Error('photo-write-failed');
           pending.push([ref.path, value]);
-        }
+        },
+        update(ref, value) { pending.push([ref.path, { ...docs.get(ref.path), ...value }]); },
+        set(ref, value) { pending.push([ref.path, value]); }
       };
       const result = await callback(tx);
       for (const [key, value] of pending) docs.set(key, value);
@@ -75,6 +77,23 @@ async function main() {
   assert.equal(t.docs.size, 6);
   await assert.rejects(t.service.create(t.req({ ...request, title:'changed' })), /report_id_conflict/);
   await assert.rejects(t.service.create(t.req({ ...request, expectedUid:'someone-else' })), /identity_changed/);
+  const batch = { stationId:SID, expectedUid:UID, reportId:ID,
+    requestId:'batch_000000000000001', photos:[pictures[0]] };
+  const appended = await t.service.appendPhotos(t.req(batch));
+  assert.equal(appended.appended, 1);
+  assert.equal(t.docs.get(path).photos, 4);
+  assert.equal(t.docs.get(path + '/photos/' + batch.requestId + '_0').data, JPEG);
+  assert.equal((await t.service.appendPhotos(t.req(batch))).replay, true);
+  assert.equal(t.docs.get(path).photos, 4);
+  await assert.rejects(t.service.appendPhotos(t.req({ ...batch, photos:pictures.slice(0,2) })),
+    /batch_conflict/);
+  await assert.rejects(t.service.appendPhotos(t.req({ ...batch, requestId:'batch_000000000000002',
+    photos:pictures.concat(pictures[0]) })), /invalid_photo_batch/);
+  const old = t.docs.get(path);
+  t.docs.set(path, { ...old, by_uid:'other-user' });
+  await assert.rejects(t.service.appendPhotos(t.req({ ...batch, requestId:'batch_000000000000003' })),
+    /report_author_forbidden/);
+  t.docs.set(path, old);
 
   const missing = harness();
   missing.docs.set(`stations/${SID}/vehicles/abcdefghijklmnopqrst`, {

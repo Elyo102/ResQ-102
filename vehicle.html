@@ -211,7 +211,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
-         deleteDoc, serverTimestamp }
+         deleteDoc, serverTimestamp, query, orderBy, documentId, limit, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
@@ -231,20 +231,24 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const createFaultReport = httpsCallable(getFunctions(app, 'europe-west1'), 'createFaultReport',
   { timeout:60000 });
+const appendFaultPhotos = httpsCallable(getFunctions(app, 'europe-west1'), 'appendFaultPhotos',
+  { timeout:60000 });
 
 let SID = '', ME = { uid:'', name:'', crew:'' }, CAN_MANAGE = false;
-let faults = [], views = [], fleet = [], shots = {}, shotsInflight = {};
+let faults = [], views = [], fleet = [], shots = {}, shotsInflight = {}, shotsPages = {};
 let AUTH_GEN = 0;
 let LOAD_GEN = 0, DETAIL_GEN = 0;
 const shotObjectUrls = [];
 
 function bumpIdentity(){
+  NEW_FAULT_MODAL_GEN += 1;
+  NEW_FAULT_UPLOAD_LOCKED = false;
   AUTH_GEN += 1;
   LOAD_GEN += 1;
   DETAIL_GEN += 1;
   SID = ''; ME = { uid:'', name:'', crew:'' }; CAN_MANAGE = false;
   faults = []; views = []; fleet = [];
-  shots = {}; shotsInflight = {};
+  shots = {}; shotsInflight = {}; shotsPages = {};
   $('work').classList.add('hide');
   $('loadError').classList.add('hide');
   $('ov').classList.remove('on');
@@ -679,8 +683,11 @@ $('baseGallery').onchange = function () { return uploadBasePhoto(this); };
 
 // ---------- דיווח חדש בנקודה ----------
 
+let NEW_FAULT_MODAL_GEN = 0;
+let NEW_FAULT_UPLOAD_LOCKED = false;
 function newAt(pt){
   if (!canAddToVehicle()) return;
+  const modalGen = ++NEW_FAULT_MODAL_GEN;
   const target = captureVehicleTarget();
   const kinds = FAULT_KINDS.filter(k => k.needsVehicle);
   $('dlgTitle').textContent = 'דיווח חדש · ' + sideHe(side);
@@ -694,7 +701,7 @@ function newAt(pt){
     '<input type="text" id="nTitle" maxlength="240" ' +
       'placeholder="למשל: מכה בדופן מאחורי הגלגל">' +
     '<label>תיאור</label><textarea id="nDesc" maxlength="600"></textarea>' +
-    '<label>צילומים (לא חובה, עד שלוש)</label>' +
+    '<label>צילומים (לא חובה, ללא מגבלה כוללת)</label>' +
     '<div class="row"><button type="button" class="btn sm" id="nShotCameraBtn">' +
       'צלם במצלמה</button>' +
     '<button type="button" class="btn sm" id="nShotGalleryBtn">' +
@@ -708,12 +715,13 @@ function newAt(pt){
     '<div class="msg" id="nMsg"></div>';
   $('ov').classList.add('on');
 
-  const photos = createPhotoQueue(3);
+  const photos = createPhotoQueue(Number.POSITIVE_INFINITY);
   const reportId = doc(collection(db, 'stations', target.sid, 'faults')).id;
+  const upload = { baseCreated:false, baseSent:false, basePhotos:null, next:0, batch:null, formKey:'' };
   function paintPhotos(){
     const selected = photos.list();
     $('nShotName').textContent = selected.length
-      ? selected.length + ' מתוך 3 תמונות יישמרו יחד עם הדיווח.'
+      ? selected.length + ' תמונות נבחרו. הן יישמרו באצוות עם התקדמות.'
       : 'לא נבחרו תמונות. אפשר לצלם ולהוסיף אחת בכל פעם.';
     $('nShotList').replaceChildren();
     selected.forEach((file, index) => {
@@ -722,12 +730,21 @@ function newAt(pt){
       name.textContent = file.name || 'תמונה ' + (index + 1);
       const remove = document.createElement('button');
       remove.type = 'button'; remove.className = 'btn sm'; remove.textContent = 'הסר';
-      remove.onclick = () => { photos.remove(index); paintPhotos(); };
+      remove.onclick = () => {
+        if (upload.baseCreated) {
+          msg('הדיווח כבר נוצר. השלימו את העלאת התמונות.', 'err', 'nMsg'); return;
+        }
+        photos.remove(index); paintPhotos();
+      };
       row.append(name, remove); $('nShotList').appendChild(row);
     });
   }
   function chooseShots(picker){
-    if (!photos.add(picker.files)) msg('אפשר לצרף עד שלוש תמונות בלבד.', 'err', 'nMsg');
+    if (upload.baseCreated) {
+      msg('הדיווח כבר נוצר. השלימו את העלאת התמונות.', 'err', 'nMsg');
+      picker.value = ''; return;
+    }
+    if (!photos.add(picker.files)) msg('לא ניתן לצרף את הקבצים שנבחרו.', 'err', 'nMsg');
     picker.value = '';
     paintPhotos();
   }
@@ -736,33 +753,77 @@ function newAt(pt){
   $('nShot').onchange = function () { chooseShots(this); };
   $('nShotGallery').onchange = function () { chooseShots(this); };
 
-  $('nCancel').onclick = close;
+  $('nCancel').onclick = () => close();
   $('nSave').onclick = async function (){
     const b = $('nSave');
     const title = $('nTitle').value.trim();
     if (!title) { msg('נא להזין כותרת.', 'err', 'nMsg'); return; }
+    const formKey = JSON.stringify({ kind:$('nKind').value, title,
+      desc:$('nDesc').value.trim(), count:photos.list().length });
+    if (upload.formKey && upload.formKey !== formKey) {
+      msg('שליחת הדיווח הקודם טרם הוכרעה. החזירו את פרטי הטופס ונסו שוב.', 'err', 'nMsg');
+      return;
+    }
+    upload.formKey = formKey;
+    NEW_FAULT_UPLOAD_LOCKED = true;
     b.disabled = true;
     msg('שומר…', 'info', 'nMsg');
     try {
       requireVehicleTarget(target);
-      const images = [];
-      for (const file of photos.list()) {
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      const files = photos.list();
+      if (!upload.baseCreated) {
+        if (!upload.basePhotos) {
+          const prepared = [];
+          for (const file of files.slice(0, 3)) {
+            requireVehicleTarget(target);
+            const image = await shrinkImage(file);
+            prepared.push({ data:image.data, w:image.w, h:image.h });
+          }
+          upload.basePhotos = prepared;
+        }
         requireVehicleTarget(target);
-        const image = await shrinkImage(file);
-        images.push({ data:image.data, w:image.w, h:image.h });
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.baseSent = true;
+        await createFaultReport({
+          stationId:target.sid, expectedUid:target.uid, reportId,
+          kind:$('nKind').value, vehicleId:target.id, title,
+          desc:$('nDesc').value.trim(), severity:'unset',
+          point:{ side:target.side, x:pt.x, y:pt.y }, photos:upload.basePhotos
+        });
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.baseCreated = true;
+        upload.next = upload.basePhotos.length; upload.basePhotos = null;
       }
-      requireVehicleTarget(target);
-      await createFaultReport({
-        stationId:target.sid, expectedUid:target.uid, reportId,
-        kind:$('nKind').value, vehicleId:target.id, title,
-        desc:$('nDesc').value.trim(), severity:'unset',
-        point:{ side:target.side, x:pt.x, y:pt.y }, photos:images
-      });
+      while (upload.next < files.length) {
+        requireVehicleTarget(target);
+        if (!upload.batch) {
+          const prepared = [];
+          for (const file of files.slice(upload.next, upload.next + 3)) {
+            const image = await shrinkImage(file);
+            requireVehicleTarget(target);
+            prepared.push({ data:image.data, w:image.w, h:image.h });
+          }
+          upload.batch = { photos:prepared,
+            requestId:reportId + '_' + String(upload.next).padStart(8, '0') };
+        }
+        await appendFaultPhotos({ stationId:target.sid, expectedUid:target.uid,
+          reportId, requestId:upload.batch.requestId, photos:upload.batch.photos });
+        if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+        upload.next += upload.batch.photos.length;
+        upload.batch = null;
+        msg('נשמרו ' + upload.next + ' מתוך ' + files.length + ' תמונות…', 'info', 'nMsg');
+      }
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      NEW_FAULT_UPLOAD_LOCKED = false;
       close();
       await loadAll();
     } catch (e) {
+      if (modalGen !== NEW_FAULT_MODAL_GEN) return;
+      if (!upload.baseSent) NEW_FAULT_UPLOAD_LOCKED = false;
       b.disabled = false;
-      msg('לא התקבל אישור שהדיווח נשמר. בדקו את הרשימה ונסו שוב אם אינו מופיע.', 'err', 'nMsg');
+      msg('ההעלאה לא הושלמה. נשמרו ' + upload.next + ' מתוך ' + photos.list().length +
+        ' תמונות. הטופס נשמר; נסו שוב להמשך מאותה אצווה.', 'err', 'nMsg');
     }
   };
 }
@@ -774,6 +835,12 @@ function toKey(d){
 }
 
 function close(){
+  if (NEW_FAULT_UPLOAD_LOCKED) {
+    const status = $('nMsg');
+    if (status) status.textContent = 'הדיווח נשלח או נמצא בהעלאה. השלימו את התמונות או נסו שוב; אל תסגרו את הטופס.';
+    return;
+  }
+  NEW_FAULT_MODAL_GEN += 1;
   DETAIL_GEN += 1;
   shotsInflight = {};
   $('ov').classList.remove('on');
@@ -846,6 +913,61 @@ function faultCard(f, n, opts){
     detail.setAttribute('aria-label', 'הצג פרטים ותמונות · ' + String(f.title || 'דיווח רכב'));
     acts.appendChild(detail);
   }
+  if (opts.loadPhotos && f.by_uid === ME.uid) {
+    const detailGen = DETAIL_GEN;
+    const picker = document.createElement('input');
+    picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true;
+    picker.hidden = true;
+    const status = document.createElement('span');
+    status.className = 'note'; status.setAttribute('role', 'status');
+    let upload = null;
+    const uploadButton = btn('צרף תמונות לתקלה זו', 'btn sm', () => {
+      if (upload) void send(); else picker.click();
+    });
+    async function send() {
+      if (!upload) return;
+      uploadButton.disabled = true;
+      try {
+        requireFaultTarget(target);
+        while (upload.next < upload.files.length) {
+          if (detailGen !== DETAIL_GEN) return;
+          const offset = upload.next;
+          if (!upload.batch) {
+            const photos = [];
+            for (const file of upload.files.slice(offset, offset + 3)) {
+              const image = await shrinkImage(file);
+              requireFaultTarget(target);
+              if (detailGen !== DETAIL_GEN) return;
+              photos.push({ data:image.data, w:image.w, h:image.h });
+            }
+            upload.batch = { photos, requestId:upload.id + '_' + offset };
+          }
+          await appendFaultPhotos({ stationId:target.sid, expectedUid:target.uid,
+            reportId:target.id, requestId:upload.batch.requestId,
+            photos:upload.batch.photos });
+          if (detailGen !== DETAIL_GEN) return;
+          requireFaultTarget(target);
+          upload.next += upload.batch.photos.length;
+          upload.batch = null;
+          if (status.isConnected) status.textContent = 'נשמרו ' + upload.next +
+            ' מתוך ' + upload.files.length + ' תמונות.';
+        }
+        upload = null;
+        if (detailGen === DETAIL_GEN) await loadAll();
+      } catch (error) {
+        if (detailGen === DETAIL_GEN && status.isConnected) status.textContent =
+          'ההעלאה לא הושלמה. לחצו שוב להמשך; אחרי רענון בחרו רק את התמונות החסרות.';
+      } finally { if (detailGen === DETAIL_GEN) uploadButton.disabled = false; }
+    }
+    picker.onchange = () => {
+      if (!picker.files?.length || detailGen !== DETAIL_GEN) return;
+      upload = { id:crypto.randomUUID(), files:Array.from(picker.files),
+        next:0, batch:null };
+      picker.value = '';
+      void send();
+    };
+    acts.append(uploadButton, picker, status);
+  }
 
   // דירוג — סגל בלבד. הכבאי מתאר מה ראה; כמה זה חמור זו
   // החלטה מבצעית של ראש המשמרת.
@@ -884,17 +1006,19 @@ async function loadShots(f, box){
   const reqGen = AUTH_GEN;
   const reqDetail = DETAIL_GEN;
   const key = String(reqSid || '') + ':' + String(f.id || '');
-  if (shots[key]) { paint(shots[key], box); return; }
+  if (shots[key]) { paint(shots[key], box); moreShots(key, f, box, reqSid, reqGen, reqDetail); return; }
   if (!shotsInflight[key]) {
-    const request = getDocs(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'))
+    const request = getDocs(query(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'),
+      orderBy(documentId()), limit(11)))
       .then(function (s) {
-        const list = [];
-        s.forEach(d => list.push(d.data() || {}));
+        const page = s.docs.slice(0, 10);
+        const list = page.map(d => d.data() || {});
         if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail ||
             shotsInflight[key] !== request) {
           return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
         }
         shots[key] = list;
+        shotsPages[key] = { cursor:page.at(-1) || null, more:s.docs.length > 10 };
         return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
       })
       .finally(function () {
@@ -910,6 +1034,7 @@ async function loadShots(f, box){
       return;
     }
     paint(result.list, box);
+    moreShots(key, f, box, reqSid, reqGen, reqDetail);
   } catch (e) {
     if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
     box.replaceChildren();
@@ -924,6 +1049,31 @@ async function loadShots(f, box){
     };
     box.appendChild(retry);
   }
+}
+
+function moreShots(key, fault, box, reqSid, reqGen, reqDetail) {
+  const state = shotsPages[key];
+  if (!state?.more || !state.cursor) return;
+  const button = btn('עוד תמונות', 'btn sm', async () => {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail || !box.isConnected) return;
+    button.disabled = true;
+    try {
+      const snap = await getDocs(query(collection(db, 'stations', reqSid,
+        'faults', fault.id, 'photos'), orderBy(documentId()),
+        startAfter(state.cursor), limit(11)));
+      if (SID !== reqSid || AUTH_GEN !== reqGen || DETAIL_GEN !== reqDetail ||
+          !box.isConnected || shotsPages[key] !== state) return;
+      const page = snap.docs.slice(0, 10);
+      state.cursor = page.at(-1) || null; state.more = snap.docs.length > 10;
+      shots[key].push(...page.map(d => d.data() || {}));
+      paint(shots[key], box); moreShots(key, fault, box, reqSid, reqGen, reqDetail);
+    } catch (error) {
+      if (SID === reqSid && AUTH_GEN === reqGen && DETAIL_GEN === reqDetail && box.isConnected) {
+        button.textContent = 'לא נטען · נסו שוב'; button.disabled = false;
+      }
+    }
+  });
+  box.append(button);
 }
 
 function paint(list, box){

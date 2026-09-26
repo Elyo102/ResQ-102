@@ -466,7 +466,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, addDoc,
-         deleteDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         deleteDoc, serverTimestamp, runTransaction, query, orderBy, documentId, limit, startAfter }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h39';
 
 const app  = initializeApp(firebaseConfig);
@@ -476,6 +477,8 @@ await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 const createFaultReport = httpsCallable(getFunctions(app, 'europe-west1'), 'createFaultReport',
+  { timeout:60000 });
+const appendFaultPhotos = httpsCallable(getFunctions(app, 'europe-west1'), 'appendFaultPhotos',
   { timeout:60000 });
 const $ = id => document.getElementById(id);
 renderStuckNav('');
@@ -494,14 +497,14 @@ function msg(text, kind, box){
 }
 
 let SID = '', ME = null, CAN_MANAGE = false, CAN_FLEET = false;
-let faults = [], fleet = [], anchors = [], shots = {}, shotsInflight = {}, handovers = {};
+let faults = [], fleet = [], anchors = [], shots = {}, shotsInflight = {}, shotsPages = {}, handovers = {};
 let handoversStatus = 'not_loaded', handoversPending = null, handoversLoadedAt = 0;
 let FAULT_ATTEMPT = null;
-const PHOTO_QUEUE = createPhotoQueue(3);
+const PHOTO_QUEUE = createPhotoQueue(Number.POSITIVE_INFINITY);
 function renderPhotoQueue(){
   const files = PHOTO_QUEUE.list();
   $('shotNote').textContent = files.length
-    ? files.length + ' מתוך 3 תמונות נבחרו. כולן יישמרו יחד עם הדיווח.'
+    ? files.length + ' תמונות נבחרו. הדיווח והתמונות יישמרו באצוות עם התקדמות.'
     : 'לא נבחרו תמונות. אפשר לצלם ולהוסיף אחת בכל פעם.';
   $('shotList').replaceChildren();
   files.forEach((file, index) => {
@@ -513,7 +516,12 @@ function renderPhotoQueue(){
     remove.type = 'button'; remove.className = 'btn sm';
     remove.textContent = 'הסר';
     remove.setAttribute('aria-label', 'הסר תמונה ' + (index + 1));
-    remove.onclick = () => { PHOTO_QUEUE.remove(index); FAULT_ATTEMPT = null; renderPhotoQueue(); };
+    remove.onclick = () => {
+      if (FAULT_ATTEMPT?.baseSent) {
+        msg('הדיווח כבר נוצר. השלימו תחילה את העלאת התמונות.', 'err'); return;
+      }
+      PHOTO_QUEUE.remove(index); FAULT_ATTEMPT = null; renderPhotoQueue();
+    };
     row.append(name, remove);
     $('shotList').appendChild(row);
   });
@@ -547,7 +555,7 @@ function bumpIdentity(){
   ME = null; SID = ''; CAN_MANAGE = false; CAN_FLEET = false;
   vehEditing = null;
   boardDoc = null; anchorDocs = []; anchors = []; fleet = [];
-  faults = []; handovers = {}; shots = {}; shotsInflight = {};
+  faults = []; handovers = {}; shots = {}; shotsInflight = {}; shotsPages = {};
   handoversStatus = 'not_loaded'; handoversPending = null; handoversLoadedAt = 0;
   FAULT_ATTEMPT = null;
   $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = ''; $('nGallery').value = '';
@@ -854,14 +862,18 @@ function setupForm(){
   $('nKind').onchange = updateKindForm;
   ['nKind','nVeh','nTitle','nDesc','nSev'].forEach(function (id) {
     $(id).addEventListener(id === 'nTitle' || id === 'nDesc' ? 'input' : 'change',
-      function () { FAULT_ATTEMPT = null; });
+      function () { if (!FAULT_ATTEMPT?.baseSent) FAULT_ATTEMPT = null; });
   });
   updateKindForm();
   $('nCameraBtn').onclick = () => $('nShot').click();
   $('nGalleryBtn').onclick = () => $('nGallery').click();
   for (const id of ['nShot','nGallery']) {
     $(id).onchange = function () {
-      if (!PHOTO_QUEUE.add(this.files)) msg('אפשר לצרף עד שלוש תמונות בלבד.', 'err');
+      if (FAULT_ATTEMPT?.baseSent) {
+        msg('הדיווח כבר נוצר. השלימו תחילה את העלאת התמונות.', 'err');
+        this.value = ''; return;
+      }
+      if (!PHOTO_QUEUE.add(this.files)) msg('לא ניתן לצרף את הקבצים שנבחרו.', 'err');
       else FAULT_ATTEMPT = null;
       this.value = '';
       renderPhotoQueue();
@@ -949,33 +961,68 @@ async function createFault(){
                             modified:f.lastModified || 0 }))
   };
   const attemptKey = JSON.stringify(input);
+  if (FAULT_ATTEMPT?.baseSent && FAULT_ATTEMPT.key !== attemptKey) {
+    msg('שליחת הדיווח הקודם טרם הוכרעה. החזירו את פרטי הטופס ונסו שוב לפני שינוי.', 'err');
+    return;
+  }
   if (!FAULT_ATTEMPT || FAULT_ATTEMPT.key !== attemptKey ||
       FAULT_ATTEMPT.fence.gen !== fence.gen) {
     FAULT_ATTEMPT = {
       key: attemptKey, fence: fence,
-      reportId: doc(collection(db, 'stations', fence.sid, 'faults')).id
+      reportId: doc(collection(db, 'stations', fence.sid, 'faults')).id,
+      nextPhotoIndex:0, baseCreated:false, baseSent:false, batch:null, initialPhotos:null
     };
   }
   const attempt = FAULT_ATTEMPT;
   b.disabled = true;
   msg('', '');
 
-  // A retry keeps the same ID. The callable verifies live identity/vehicle and
-  // writes parent plus all photos atomically with a server-owned timestamp.
-  const pics = [];
+  // A retry keeps the same report and batch IDs. Only three images are ever
+  // sent in one transaction; there is no product-level total count cap.
   try {
-    for (const f of files) {
+    if (!attempt.baseCreated) {
+      if (!attempt.initialPhotos) {
+        const prepared = [];
+        for (const f of files.slice(0, 3)) {
+          assertFence(attempt.fence);
+          const p = await shrinkImage(f);
+          prepared.push({ data:p.data, w:p.w, h:p.h });
+        }
+        attempt.initialPhotos = prepared;
+      }
       assertFence(attempt.fence);
-      pics.push(await shrinkImage(f));
-      assertFence(attempt.fence);
+      attempt.baseSent = true;
+      await createFaultReport({
+        stationId:attempt.fence.sid, expectedUid:attempt.fence.uid,
+        reportId:attempt.reportId, kind, vehicleId:vid,
+        title:input.title, desc:input.desc, severity:input.severity,
+        photos:attempt.initialPhotos
+      });
+      attempt.baseCreated = true;
+      attempt.nextPhotoIndex = attempt.initialPhotos.length;
+      attempt.initialPhotos = null;
     }
-    assertFence(attempt.fence);
-    await createFaultReport({
-      stationId:attempt.fence.sid, expectedUid:attempt.fence.uid,
-      reportId:attempt.reportId, kind, vehicleId:vid,
-      title:input.title, desc:input.desc, severity:input.severity,
-      photos:pics.map(p => ({ data:p.data, w:p.w, h:p.h }))
-    });
+    while (attempt.nextPhotoIndex < files.length) {
+      assertFence(attempt.fence);
+      const offset = attempt.nextPhotoIndex;
+      if (!attempt.batch) {
+        const batchPhotos = [];
+        for (const f of files.slice(offset, offset + 3)) {
+          const p = await shrinkImage(f);
+          assertFence(attempt.fence);
+          batchPhotos.push({ data:p.data, w:p.w, h:p.h });
+        }
+        attempt.batch = { offset, photos:batchPhotos,
+          requestId:attempt.reportId + '_' + String(offset).padStart(8, '0') };
+      }
+      assertFence(attempt.fence);
+      await appendFaultPhotos({ stationId:attempt.fence.sid,
+        expectedUid:attempt.fence.uid, reportId:attempt.reportId,
+        requestId:attempt.batch.requestId, photos:attempt.batch.photos });
+      attempt.nextPhotoIndex += attempt.batch.photos.length;
+      attempt.batch = null;
+      msg('נשמרו ' + attempt.nextPhotoIndex + ' מתוך ' + files.length + ' תמונות…', 'info');
+    }
     if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
     // השרת אישר שהאצווה נשמרה. אם הזהות התחלפה בדיוק לאחר מכן,
     // לא מציירים הודעת הצלחה במסך של המשתמש החדש — אך גם לא משקרים
@@ -983,7 +1030,7 @@ async function createFault(){
     try { assertFence(attempt.fence); } catch (ignore) { return; }
 
     msg('התקלה נפתחה.' +
-        (pics.length ? ' ' + pics.length + ' תמונות צורפו.' : ''), 'ok');
+        (files.length ? ' ' + files.length + ' תמונות צורפו.' : ''), 'ok');
     $('nTitle').value = ''; $('nDesc').value = ''; $('nShot').value = '';
     $('nGallery').value = ''; PHOTO_QUEUE.clear(); renderPhotoQueue();
     await loadAll();
@@ -993,9 +1040,12 @@ async function createFault(){
     if (attempt.fence.gen !== AUTH_GEN) return;
     if (e.code === 'identity-changed' || e.message === 'identity-changed') {
       if (FAULT_ATTEMPT === attempt) FAULT_ATTEMPT = null;
-      msg('המשתמש או ההרשאות השתנו. הדיווח הישן לא נשלח.', 'err');
+      msg(attempt.baseSent
+        ? 'הזהות השתנתה לאחר ניסיון שליחה. ייתכן שהדיווח או חלק מתמונותיו נשמרו; בדקו את רשימת התקלות לפני ניסיון חדש.'
+        : 'הזהות השתנתה. הדיווח לא נשלח.', 'err');
     } else {
-      msg('לא התקבל אישור שכל הדיווח נשמר. התמונות לא נשמרו חלקית; ניסיון חוזר ישלח את אותו דיווח. ' +
+      msg('ההעלאה לא הושלמה. נשמרו ' + attempt.nextPhotoIndex + ' מתוך ' + files.length +
+          ' תמונות; הטופס נשמר וניסיון חוזר ימשיך מאותה אצווה. ' +
           errorText(e), 'err');
     }
   }
@@ -1265,6 +1315,62 @@ function faultCard(f){
       ? ' · נסגר ע״י ' + f.fixed_by_name : '');
   el.appendChild(rep);
 
+  // A committed report remains recoverable after a page reload: the author
+  // can select the missing photos and append them to the same report.
+  if (ME && f.by_uid === ME.uid) {
+    const row = document.createElement('div'); row.className = 'acts';
+    const picker = document.createElement('input');
+    picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true;
+    picker.hidden = true;
+    const button = actBtn('צרף תמונות לתקלה זו', 'sm', () => {
+      if (upload) void send(); else picker.click();
+    });
+    const state = document.createElement('span'); state.className = 'note';
+    state.setAttribute('role', 'status');
+    let upload = null;
+    async function send() {
+      if (!upload) return;
+      button.disabled = true;
+      try {
+        assertFence(upload.fence);
+        while (upload.next < upload.files.length) {
+          const offset = upload.next;
+          if (!upload.batch) {
+            const photos = [];
+            for (const file of upload.files.slice(offset, offset + 3)) {
+              const image = await shrinkImage(file);
+              assertFence(upload.fence);
+              photos.push({ data:image.data, w:image.w, h:image.h });
+            }
+            upload.batch = { photos, requestId:upload.id + '_' + offset };
+          }
+          await appendFaultPhotos({ stationId:upload.fence.sid,
+            expectedUid:upload.fence.uid, reportId:f.id,
+            requestId:upload.batch.requestId, photos:upload.batch.photos });
+          assertFence(upload.fence);
+          upload.next += upload.batch.photos.length;
+          upload.batch = null;
+          if (row.isConnected) state.textContent = 'נשמרו ' + upload.next +
+            ' מתוך ' + upload.files.length + ' תמונות.';
+        }
+        upload = null;
+        if (row.isConnected) await loadAll();
+      } catch (error) {
+        if (row.isConnected && upload?.fence.gen === AUTH_GEN) state.textContent =
+          'ההעלאה לא הושלמה. לחצו שוב להמשך; אחרי רענון בחרו רק את התמונות החסרות.';
+      } finally { if (row.isConnected) button.disabled = false; }
+    }
+    picker.onchange = () => {
+      if (!picker.files?.length) return;
+      try { upload = { fence:writeFence(), files:Array.from(picker.files),
+        id:crypto.randomUUID(), next:0, batch:null }; }
+      catch (error) { state.textContent = 'נדרשת התחברות מחדש לפני צירוף תמונות.'; return; }
+      picker.value = '';
+      void send();
+    };
+    row.append(button, picker, state); el.appendChild(row);
+  }
+
   if (f.fix_note) {
     const fx = document.createElement('div');
     fx.className = 'rep';
@@ -1335,20 +1441,22 @@ async function loadShots(f, box){
   const reqSid = SID;
   const reqGen = AUTH_GEN;
   const key = String(reqSid || '') + ':' + String(f.id || '');
-  if (shots[key]) { paintShots(shots[key], box); return; }
+  if (shots[key]) { paintShots(shots[key], box); moreShots(key, f, box, reqSid, reqGen); return; }
   // Coalesce concurrent gets for the same station+fault (dialog can paint
   // multiple cards / re-enter before the first getDocs resolves). Preserves
   // cache, photo queue, and atomic createFaultReport writes.
   if (!shotsInflight[key]) {
-    const request = getDocs(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'))
+    const request = getDocs(query(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'),
+      orderBy(documentId()), limit(11)))
       .then(function (s) {
-        const list = [];
-        s.forEach(d => list.push(d.data() || {}));
+        const page = s.docs.slice(0, 10);
+        const list = page.map(d => d.data() || {});
         // Late response after station/user switch: discard — do not poison cache.
         if (SID !== reqSid || AUTH_GEN !== reqGen) {
           return { list: list, reqSid: reqSid, reqGen: reqGen, stale: true };
         }
         shots[key] = list;
+        shotsPages[key] = { cursor:page.at(-1) || null, more:s.docs.length > 10 };
         return { list: list, reqSid: reqSid, reqGen: reqGen, stale: false };
       })
       .finally(function () {
@@ -1366,6 +1474,7 @@ async function loadShots(f, box){
       return;
     }
     paintShots(result.list, box);
+    moreShots(key, f, box, reqSid, reqGen);
   } catch (e) {
     if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
     box.replaceChildren();
@@ -1380,6 +1489,32 @@ async function loadShots(f, box){
     };
     box.appendChild(retry);
   }
+}
+
+function moreShots(key, fault, box, reqSid, reqGen) {
+  const state = shotsPages[key];
+  if (!state?.more || !state.cursor) return;
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'ld';
+  button.textContent = 'עוד תמונות'; box.append(button);
+  button.onclick = async () => {
+    if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
+    button.disabled = true;
+    try {
+      const snap = await getDocs(query(collection(db, 'stations', reqSid,
+        'faults', fault.id, 'photos'), orderBy(documentId()),
+        startAfter(state.cursor), limit(11)));
+      if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected || shotsPages[key] !== state) return;
+      const page = snap.docs.slice(0, 10);
+      state.cursor = page.at(-1) || null; state.more = snap.docs.length > 10;
+      shots[key].push(...page.map(d => d.data() || {}));
+      paintShots(shots[key], box); moreShots(key, fault, box, reqSid, reqGen);
+    } catch (error) {
+      if (SID === reqSid && AUTH_GEN === reqGen && box.isConnected) {
+        button.textContent = 'לא נטען · נסו שוב'; button.disabled = false;
+      }
+    }
+  };
 }
 
 function paintShots(list, box){

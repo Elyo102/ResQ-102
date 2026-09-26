@@ -16,7 +16,7 @@ const ITEMS = [
   { href: 'schedule-management.html', label: 'סידור', who: 'member', dot: '#4d94ff', group: 'mine' },
   // The read-only vehicle view is under construction; do not advertise it
   // before compartment data and write authorization are implemented.
-  { href: 'operational-vehicles.html', label: 'רכבים מבצעיים', who: 'member', dot: '#e8590c', group: 'mine', hiddenFromMenu: true },
+  { href: 'operational-vehicles.html', label: 'רכבים מבצעיים', who: 'member', dot: '#e8590c', group: 'mine' },
   { href: 'callout.html',  label: 'קריאת פתע',   who: 'shift_command', dot: '#f0523f', group: 'mine' },
   // The board still backs scheduling and operational vehicles. Keep this
   // route for existing links and native-back history, but omit its menu item.
@@ -26,15 +26,15 @@ const ITEMS = [
   { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
   { href: 'hr-requests.html', label: 'פנייה למשאבי אנוש', who: 'member', dot: '#0099cc', group: 'mine' },
   { href: 'hr-documents.html', label: 'נהלים ומסמכים', who: 'member', dot: '#0099cc', group: 'mine' },
-  { href: 'guards.html',   label: 'אבטחות',      who: 'member', dot: '#7cb342', group: 'station' },
+  { href: 'guards.html',   label: 'אבטחות',      who: 'station_view', dot: '#7cb342', group: 'station' },
   { href: 'faults.html',   label: 'תקלות',       who: 'member', dot: '#ff7043', group: 'mine' },
   { href: 'forms.html',    label: 'טפסים',       who: 'member', dot: '#26a69a', group: 'mine' },
-  { href: 'sign.html',     label: 'חתימות',      who: 'member', dot: '#9575cd', group: 'station' },
+  { href: 'sign.html',     label: 'חתימות',      who: 'station_view', dot: '#9575cd', group: 'station' },
   { href: 'swaps.html',    label: 'החלפות',      who: 'member', dot: '#4dd0e1', group: 'mine' },
   { href: 'feedback.html', label: 'חוות דעת',    who: 'member', dot: '#f06292', group: 'mine' },
-  { href: 'quals.html',    label: 'כשירויות',    who: 'member', dot: '#e0a23c', group: 'station' },
-  { href: 'alerts.html',   label: 'התראות',      who: 'member', dot: '#b0bec5', group: 'station' },
-  { href: 'people.html',   label: 'עובדים',      who: 'member', dot: '#8d6e63', group: 'station' },
+  { href: 'quals.html',    label: 'כשירויות',    who: 'station_view', dot: '#e0a23c', group: 'station' },
+  { href: 'alerts.html',   label: 'התראות',      who: 'station_view', dot: '#b0bec5', group: 'station' },
+  { href: 'people.html',   label: 'עובדים',      who: 'station_view', dot: '#8d6e63', group: 'station' },
   { href: 'access.html',   label: 'גישה',   who: 'staff',  dot: '#35c46b', group: 'admin' },
   { href: 'admin.html',    label: 'ניהול',       who: 'super',  dot: '#f0523f', group: 'admin' },
   { href: 'stats.html',    label: 'נתונים',      who: 'staff',  dot: '#ba68c8', group: 'admin' },
@@ -87,6 +87,10 @@ function allowed(who, claims, presentation) {
   if (who === 'super')  return isSuper;
   if (who === 'hr') return isSuper || display.role === 'hr_coordinator';
   if (who === 'staff')  return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
+  // Navigation-only partition: existing direct-page/Firestore permissions are
+  // deliberately unchanged. Firefighters use My Shift, officers and HR also
+  // see Station and Team.
+  if (who === 'station_view') return isSuper || STAFF_ROLES.indexOf(display.role) !== -1;
   if (who === 'shift_command') {
     return isSuper || display.role === 'commander' || display.role === 'deputy';
   }

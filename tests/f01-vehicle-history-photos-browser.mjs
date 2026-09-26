@@ -111,7 +111,10 @@ function instrumentFirestore(body) {
         ['p1', { data: (window.__F01_FIXTURE && window.__F01_FIXTURE.png2) || '', w: 1, h: 1, sid, faultId }]
       ];
       const lag = Number(window.__F01_PHOTO_LAG_MS || 0);
-      return new Promise(resolve => setTimeout(() => resolve(listSnap(rows)), lag));
+      // Legacy photo documents intentionally have no created_key. Firestore
+      // orderBy(created_key) would exclude them, unlike the old path-only mock.
+      return new Promise(resolve => setTimeout(() => resolve(
+        listSnap(constrainedRows(rows, (q && q.constraints) || []))), lag));
     }
     if (hp.endsWith('/faults')) {
       const rows = ((window.__F01_FIXTURE && window.__F01_FIXTURE.faults) || []).map(v => [v.id, v]);
@@ -315,6 +318,10 @@ try {
     }));
     assert.equal(detail.photos, 1, 'openFault → exactly one photos getDocs');
     assert.equal(detail.imgs, 2, 'all photos rendered in detail');
+    assert.equal(await page.evaluate(() => (window.__FIRESTORE_QUERIES || [])
+      .filter(q => /\/photos$/.test(q.path))
+      .every(q => q.constraints.some(c => c.kind === 'orderBy' && c.field === '__name__'))),
+      true, 'legacy photos must page by document ID, not missing created_key');
     assert.ok(detail.cacheKeys.length >= 1, 'cache populated');
     assert.ok(detail.cacheKeys.every(k => /:/.test(k)), 'cache keys are SID:faultId');
     assert.ok(detail.authGen >= 1, 'AUTH_GEN active');

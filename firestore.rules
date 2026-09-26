@@ -1117,6 +1117,33 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Operational vehicle identity remains in config/board. Compartment
+      // inventory, the current compartment photo and append-only equipment
+      // events are additive, station-scoped records. All writes pass through
+      // App-Check-protected callables that verify live Auth and membership.
+      match /vehicle_inventory/{vehicleId} {
+        allow read, write: if false;
+
+        match /compartments/{compartmentId} {
+          allow read, write: if false;
+          match /items/{itemId} {
+            allow read: if member(sid);
+            allow write: if false;
+          }
+          match /photos/{photoId} {
+            allow read: if member(sid);
+            allow write: if false;
+          }
+        }
+        match /equipment_events/{eventId} {
+          allow read: if member(sid);
+          allow write: if false;
+        }
+      }
+      match /vehicle_event_quotas/{quotaId} {
+        allow read, write: if false;
+      }
+
       // תצלומים ליליים — ספירת מסמכים לגילוי אובדן נתונים.
       // נכתבים בשרת בלבד. מנהל-על קורא כדי לראות מגמה.
       match /backups/{dateId} {
@@ -1395,6 +1422,12 @@ service cloud.firestore {
           allow update: if false;
           allow delete: if staff(sid);
         }
+        match /photo_batches/{batchId} {
+          allow read, write: if false;
+        }
+      }
+      match /fault_photo_quotas/{actorId} {
+        allow read, write: if false;
       }
 
       match /rotations/{rotationId} {

@@ -80,22 +80,24 @@ function same(actual, expected, label) {
 }
 
 const member = [
-  'login.html', 'schedule-management.html', 'attendance.html', 'guards.html',
-  'faults.html', 'forms.html', 'sign.html', 'swaps.html', 'feedback.html', 'quals.html',
-  'alerts.html', 'people.html', 'hr-requests.html', 'hr-documents.html'
+  'login.html', 'schedule-management.html', 'attendance.html',
+  'operational-vehicles.html',
+  'faults.html', 'forms.html', 'swaps.html', 'feedback.html',
+  'hr-requests.html', 'hr-documents.html'
 ];
-const staff = member.concat(['access.html', 'stats.html']);
+const staff = member.concat(['guards.html', 'sign.html', 'quals.html',
+  'alerts.html', 'people.html', 'access.html', 'stats.html']);
 const audit = staff.concat(['attendance-shadow.html']);
 const all = audit.concat(['admin.html', 'hr.html', 'import.html', 'check.html', 'maintenance.html', 'callout.html', 'saas-admin.html', 'metrics.html', 'cost-usage.html']);
 const roles = [
-  ['firefighter', { role:'firefighter' }, member, 2],
-  ['deputy_team_leader', { role:'deputy_team_leader' }, member, 2],
-  ['team_leader', { role:'team_leader' }, member, 2],
+  ['firefighter', { role:'firefighter' }, member, 1],
+  ['deputy_team_leader', { role:'deputy_team_leader' }, member, 1],
+  ['team_leader', { role:'team_leader' }, member, 1],
   ['deputy', { role:'deputy' }, staff.concat(['callout.html']), 3],
   ['commander', { role:'commander' }, staff.concat(['callout.html']), 3],
   ['station_commander', { role:'station_commander' }, audit, 3],
   ['hr_coordinator', { role:'hr_coordinator' }, audit.concat(['hr.html']), 3],
-  ['string_super', { role:'firefighter', super:'true' }, member, 2],
+  ['string_super', { role:'firefighter', super:'true' }, member, 1],
   ['role_email_super', { role:'super_admin', email:'synthetic@example.invalid' }, ['login.html'], 1],
   ['district_commander', { role:'district_commander' }, ['login.html'], 1],
   ['super', { role:'firefighter', super:true }, all, 3]
@@ -169,12 +171,12 @@ try {
       href:node.tagName === 'A' ? new URL(node.href).pathname.split('/').pop() + new URL(node.href).search : null,
       aria:node.getAttribute('aria-label')
     })));
-    same(slots.map(slot => slot.id), ['home', 'schedule', 'hours', 'station', 'more'], 'mobile dock slots changed');
-    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'התחנה', 'עוד'], 'mobile dock labels changed');
+    same(slots.map(slot => slot.id), ['home', 'schedule', 'hours', 'more'], 'mobile dock slots changed');
+    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'עוד'], 'mobile dock labels changed');
     same(slots.slice(0, 3).map(slot => slot.href),
       ['login.html?home=1', 'schedule-management.html?tab=mine', 'attendance.html'],
       'direct dock destinations changed');
-    same(slots.map(slot => slot.aria), ['בית', 'סידור עבודה', 'דיווח שעות', 'התחנה', 'עוד'],
+    same(slots.map(slot => slot.aria), ['בית', 'סידור עבודה', 'דיווח שעות', 'עוד'],
       'direct dock accessible names changed');
     if (!await mobilePage.locator('#resqDock').isVisible()) throw new Error('dock is hidden');
     const bodyPadding = await mobilePage.locator('body').evaluate(el => parseFloat(getComputedStyle(el).paddingBottom));
@@ -205,14 +207,14 @@ try {
         colour: getComputedStyle(icon).color
       };
     }));
-    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'התחנה', 'עוד'],
+    same(slots.map(slot => slot.label), ['בית', 'סידור', 'שעות', 'עוד'],
       'dock labels changed');
     if (slots.some(slot => slot.paths < 1)) throw new Error('a dock slot has no icon: ' + JSON.stringify(slots));
     if (slots.some(slot => slot.hidden !== 'true')) throw new Error('the decorative icon is exposed to screen readers');
     if (slots.some(slot => slot.stroke !== 'currentColor')) throw new Error('an icon is not drawn in currentColor');
     if (slots.some(slot => !slot.below)) throw new Error('a label is not under its icon: ' + JSON.stringify(slots));
     slots.forEach((slot, index) => {
-      const expected = ['בית', 'סידור עבודה', 'דיווח שעות', 'התחנה', 'עוד'][index];
+      const expected = ['בית', 'סידור עבודה', 'דיווח שעות', 'עוד'][index];
       if (slot.aria !== expected) throw new Error('accessible name ' + slot.aria + ' != ' + expected);
     });
     /* ⭐ כל אייקון לא-פעיל נושא את צבע האזור שלו — לא אפור אחיד, ולא
@@ -225,7 +227,7 @@ try {
       document.body.appendChild(probe);
       const resolve = (value) => { probe.style.color = value; return getComputedStyle(probe).color; };
       const out = {};
-      for (const id of ['home', 'schedule', 'hours', 'station', 'more']) {
+      for (const id of ['home', 'schedule', 'hours', 'more']) {
         const token = style.getPropertyValue('--dock-' + id).trim();
         out[id] = token ? resolve(token) : null;
       }
@@ -234,12 +236,12 @@ try {
       probe.remove();
       return out;
     });
-    if (['home', 'schedule', 'hours', 'station', 'more'].some(id => !expected[id])) {
+    if (['home', 'schedule', 'hours', 'more'].some(id => !expected[id])) {
       throw new Error('a dock colour token is undefined: ' + JSON.stringify(expected));
     }
-    const areaColours = new Set(['home', 'schedule', 'hours', 'station', 'more'].map(id => expected[id]));
-    if (areaColours.size !== 5) throw new Error('the five area colours are not distinct: ' + JSON.stringify(expected));
-    ['home', 'schedule', 'hours', 'station', 'more'].forEach((id, index) => {
+    const areaColours = new Set(['home', 'schedule', 'hours', 'more'].map(id => expected[id]));
+    if (areaColours.size !== 4) throw new Error('the four visible area colours are not distinct: ' + JSON.stringify(expected));
+    ['home', 'schedule', 'hours', 'more'].forEach((id, index) => {
       const slot = slots[index];
       const want = slot.active ? expected.accent : expected[id];
       if (slot.colour !== want) {
@@ -377,19 +379,21 @@ try {
       .evaluate(el => document.activeElement === el)) throw new Error('dock focus was not restored');
   });
   await test('mobile opens one group at a time and Escape closes in two stages', async () => {
-    await mobilePage.locator('#navToggle').click();
-    const doors = mobilePage.locator('button.door');
+    const officerPage = await open(mobile, { role:'commander' });
+    await officerPage.locator('#navToggle').click();
+    const doors = officerPage.locator('button.door');
     await doors.nth(0).click();
-    if (!await mobilePage.locator('#panel-mine').isVisible()) throw new Error('first panel did not open');
+    if (!await officerPage.locator('#panel-mine').isVisible()) throw new Error('first panel did not open');
     await doors.nth(1).click();
-    if (await mobilePage.locator('#panel-mine').isVisible()) throw new Error('first panel stayed open');
-    if (!await mobilePage.locator('#panel-station').isVisible()) throw new Error('second panel did not open');
-    await mobilePage.keyboard.press('Escape');
-    if (await mobilePage.locator('#panel-station').isVisible()) throw new Error('Escape did not close panel');
+    if (await officerPage.locator('#panel-mine').isVisible()) throw new Error('first panel stayed open');
+    if (!await officerPage.locator('#panel-station').isVisible()) throw new Error('second panel did not open');
+    await officerPage.keyboard.press('Escape');
+    if (await officerPage.locator('#panel-station').isVisible()) throw new Error('Escape did not close panel');
     if (!await doors.nth(1).evaluate(el => document.activeElement === el)) throw new Error('focus did not return to door');
-    await mobilePage.keyboard.press('Escape');
-    if (await mobilePage.locator('#navLinks').isVisible()) throw new Error('second Escape did not close menu');
-    if (!await mobilePage.locator('#navToggle').evaluate(el => document.activeElement === el)) throw new Error('focus did not return to toggle');
+    await officerPage.keyboard.press('Escape');
+    if (await officerPage.locator('#navLinks').isVisible()) throw new Error('second Escape did not close menu');
+    if (!await officerPage.locator('#navToggle').evaluate(el => document.activeElement === el)) throw new Error('focus did not return to toggle');
+    await officerPage.close();
   });
   await test('mobile controls meet the 44px touch target', async () => {
     await mobilePage.locator('#navToggle').click();
