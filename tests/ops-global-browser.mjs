@@ -328,14 +328,14 @@ try {
     } finally { await f.context.close(); }
   });
 
-  await test('all 30 Firebase screens bootstrap monitoring and all 22 factories use the facade', async () => {
+  await test('all 31 Firebase screens bootstrap monitoring and all 23 factories use the facade', async () => {
     const publicLegalPages = ['privacy.html', 'terms.html'];
     for (const page of publicLegalPages) {
       const source = fs.readFileSync(path.join(root, page), 'utf8');
       assert.ok(!source.includes('initAppCheck('), page + ' must stay public and static');
     }
     const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html',...publicLegalPages].includes(n));
-    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
+    const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','operational-vehicles.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
     assert.deepEqual(screens.sort(), expectedScreens.sort());
     const externalBootstrap = {
       'schedule-management.html': 'schedule-management.js',
@@ -352,8 +352,8 @@ try {
       }
       assert.equal((source.match(/await initAppCheck\(app\);/g) || []).length, 1, screen);
     }
-    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','callout.html','check.html','feedback.html','guards.html','import.html','login.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
-    assert.equal(consumers.length, 22);
+    const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','callout.html','check.html','feedback.html','guards.html','import.html','login.html','operational-vehicles.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
+    assert.equal(consumers.length, 23);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
       assert.ok(source.includes("from './monitored-functions.js?v=42h42'"), file);
