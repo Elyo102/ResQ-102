@@ -1,0 +1,52 @@
+{
+  "project": "station-102",
+  "version": "42H.42",
+  "scope_id": "full-42h42-core-v1",
+  "targets": [
+    "appendFaultPhotos",
+    "listOperationalVehicleStations",
+    "recordVehicleEquipmentEvent",
+    "transitionVehicleEquipmentEvent",
+    "saveVehicleCompartmentItem",
+    "saveVehicleCompartmentPhoto",
+    "restoreVehicleCompartmentPhoto",
+    "getScheduleSourceRoster",
+    "previewScheduleSource",
+    "saveScheduleSource",
+    "activateScheduleMonthAuthority",
+    "approvalMailStatus",
+    "approveRegistration",
+    "resumeIdentityOperation",
+    "reportIncident",
+    "recordMetrics"
+  ],
+  "batches": [
+    [
+      "appendFaultPhotos",
+      "listOperationalVehicleStations",
+      "recordVehicleEquipmentEvent",
+      "transitionVehicleEquipmentEvent",
+      "saveVehicleCompartmentItem",
+      "saveVehicleCompartmentPhoto",
+      "restoreVehicleCompartmentPhoto"
+    ],
+    [
+      "getScheduleSourceRoster",
+      "previewScheduleSource",
+      "saveScheduleSource",
+      "activateScheduleMonthAuthority"
+    ],
+    [
+      "approvalMailStatus",
+      "approveRegistration",
+      "resumeIdentityOperation"
+    ],
+    ["reportIncident", "recordMetrics"]
+  ],
+  "excluded_runtime_changes": [
+    "systemHeartbeat (scheduled version stamp only)",
+    "drainCostUsageOutbox (scheduled retention response only)",
+    "getCostUsageDashboard and setCostUsageMeasurementStart (retention labels only)",
+    "maintenance callables (version stamp only)"
+  ]
+}

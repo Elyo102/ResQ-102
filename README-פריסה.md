@@ -12,6 +12,12 @@
 > אוטומטית עליו אחרי 429. יש להחליף את הנוהל הזה בתכנית ביצוע מאושרת
 > הקשורה ל־SHA ולצילומי המצב החיים לפני פקודת ייצור ראשונה.
 
+> **גדר ביצועית:** כל בלוק פקודות ישן שיכול לשנות Production מתחיל
+> ב־`throw`. אין להריץ שורות בודדות מתוכו או להסיר את הגדר.
+> `release-preflight-42h42.mjs` הוא מתכנן קריאה־בלבד; הצלחתו אינה
+> מסירה את הגדר או מעניקה אישור לפריסה. המניפסט המפורש הוא
+> `release-targets-42h42.json`, והפלט שלו נשמר רק בתיקיית Temp פרטית.
+
 עודכן: 26.9.2026
 
 מסמך אחד, מדורג, עם פרויקט מפורש בכל פקודה. מי שמריץ אותו נוגע
@@ -40,6 +46,7 @@
 כך קובץ מקומי, ignored או untracked אינו יכול להיכנס לפריסה:
 
 ```powershell
+throw '42H.42 release remains blocked until scoped execution and rollback are reviewed'
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 function Assert-ResQNative([string]$step) {
@@ -263,6 +270,7 @@ foreach ($resqOldIndex in $resqOldIndexes) {
 ### 2.0 · מיזוג וקשירה מחדש ל-origin/main
 
 ```powershell
+throw '42H.42 legacy merge route is blocked'
 git fetch origin --prune
 Assert-ResQNative 'pre-merge fetch'
 if ((git rev-parse origin/main).Trim() -ne $resqRollbackSha) { throw 'origin/main changed after approval; approval is void' }
@@ -322,6 +330,7 @@ Assert-ResQNative 'predeploy tree'
 ### 2.1 · Preview של האתר — לפני כל שינוי ייצור
 
 ```powershell
+throw '42H.42 legacy Hosting preview route is blocked'
 npx --yes firebase-tools@15.28.1 hosting:channel:deploy $resqPreviewChannel --project station-102 --expires 1d
 Assert-ResQNative 'deploy hosting preview'
 $resqPreviewListRaw = (npx --yes firebase-tools@15.28.1 hosting:channel:list --site station-102 --project station-102 --json | Out-String)
@@ -348,6 +357,7 @@ if ((Get-FileHash -LiteralPath $resqPreviewCache -Algorithm SHA256).Hash -ne $re
 ### 2.2 · כללים ואינדקסים
 
 ```powershell
+throw '42H.42 legacy Rules and Indexes route is blocked'
 $resqRulesAttempted = $true
 Invoke-ResQDeployWith429Backoff 'firestore:rules,firestore:indexes' 'deploy rules and indexes' 'rules_indexes'
 ```
@@ -376,6 +386,7 @@ Assert-ResQNative 'wait for required Firestore index states'
 בסביבת בידוד, ולקבוע קבוצות קטנות עם עצירה בכשל חלקי או 429.
 
 ```powershell
+throw '42H.42 legacy Functions route is blocked'
 node tests/firebase-release-state.mjs functions station-102
 Assert-ResQNative 'assert no active Cloud Functions rollout'
 throw '42H.42 Functions deployment is blocked until a scoped, rehearsed plan replaces this step'
@@ -399,6 +410,7 @@ throw '42H.42 Functions deployment is blocked until a scoped, rehearsed plan rep
 ה-clone משתמש ב-Version ID הקפוא, לא בשם הערוץ המשתנה.
 
 ```powershell
+throw '42H.42 legacy Hosting promotion route is blocked'
 $resqPreviewListRaw = (npx --yes firebase-tools@15.28.1 hosting:channel:list --site station-102 --project station-102 --json | Out-String)
 Assert-ResQNative 're-read hosting preview before promotion'
 $resqPreviewList = $resqPreviewListRaw | ConvertFrom-Json
@@ -435,6 +447,7 @@ Assert-ResQNative 'live headers and version'
 אך אינו מונע ניסיון בשלב הבא:
 
 ```powershell
+throw '42H.42 legacy rollback route is blocked; use reviewed live revision and Ruleset ledger'
 $resqRollbackFailures = [System.Collections.Generic.List[string]]::new()
 
 if ($resqHostingAttempted) {
@@ -515,6 +528,7 @@ npm --prefix tests run pages:artifact -- "$resqDeployDir" "$resqPagesDir"
 גם את פעולת ה-push ואת ה-SHA הציבורי, דוחפים fast-forward בלבד:
 
 ```powershell
+throw '42H.42 legacy Pages push route is blocked'
 git -C "$resqPagesDir" push origin HEAD:refs/heads/codex/pages-public-42h7
 ```
 
