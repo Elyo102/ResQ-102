@@ -58,6 +58,11 @@ const NEW_OPTION_HASHES = Object.freeze({
   saveVehicleCompartmentPhoto:'781ce0a4a14a5364f34e22c6a57c39afcd830113b49a2f6fe3c10394cbe655e2',
   transitionVehicleEquipmentEvent:'c90c9177aec48fd05029166dbea8a810a167b3b21a399475514f6ea609b63d9a'
 });
+const MAINTENANCE_OPTIONS_SHA256 = '70c8434570ad897782e99b5348db58a812c9e79fd6df460d9004a12ee3cc1e00';
+const SHARED_MAINTENANCE_EXPORTS = new Set([
+  'getMaintenanceDashboard', 'setMaintenanceMode', 'runMaintenanceAnalysis',
+  'prepareMaintenanceHandoff'
+]);
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 const normalizeRules = value => value.replace(/\r\n/g, '\n').trimEnd();
@@ -76,6 +81,36 @@ export function exportCallMetadata(source) {
   const require = createRequire(path.join(ROOT, 'tests', 'package.json'));
   const acorn = require('acorn');
   const ast = acorn.parse(source, { ecmaVersion:'latest', sourceType:'script' });
+  const maintenanceDeclarations = ast.body.flatMap(statement =>
+    statement.type === 'VariableDeclaration' && statement.declarations.some(declaration =>
+      declaration.id?.name === 'MAINTENANCE_OPTIONS') ? [statement] : []);
+  let maintenanceOptions = null;
+  if (maintenanceDeclarations.length === 1 && maintenanceDeclarations[0].kind === 'const' &&
+      maintenanceDeclarations[0].declarations.length === 1) {
+    const declaration = maintenanceDeclarations[0].declarations[0];
+    const init = declaration.init;
+    const frozen = init?.type === 'CallExpression' && init.arguments.length === 1 &&
+      init.callee?.type === 'MemberExpression' && !init.callee.computed &&
+      init.callee.object?.name === 'Object' && init.callee.property?.name === 'freeze';
+    const object = frozen ? init.arguments[0] : null;
+    if (object?.type === 'ObjectExpression') {
+      const keys = new Set();
+      const valid = object.properties.every(property => {
+        if (property.type !== 'Property' || property.computed || property.shorthand ||
+            property.method || property.kind !== 'init' ||
+            property.value?.type !== 'Literal' ||
+            !['string', 'number', 'boolean'].includes(typeof property.value.value)) return false;
+        const key = property.key.type === 'Identifier' ? property.key.name :
+          property.key.type === 'Literal' && typeof property.key.value === 'string' ? property.key.value : null;
+        if (!key || keys.has(key)) return false;
+        keys.add(key);
+        return true;
+      });
+      if (valid) maintenanceOptions = { text:source.slice(object.start, object.end),
+        region:object.properties.find(property =>
+          (property.key.name || property.key.value) === 'region')?.value.value };
+    }
+  }
   const result = {};
   for (const statement of ast.body) {
     const assignment = statement.type === 'ExpressionStatement' ? statement.expression : null;
@@ -84,15 +119,19 @@ export function exportCallMetadata(source) {
         left.object?.name !== 'exports' || left.property?.type !== 'Identifier' ||
         call?.type !== 'CallExpression' || call.callee?.type !== 'Identifier') continue;
     const optionsNode = call.arguments[0];
+    const resolvedMaintenance = SHARED_MAINTENANCE_EXPORTS.has(left.property.name) &&
+      optionsNode?.type === 'Identifier' && optionsNode.name === 'MAINTENANCE_OPTIONS' ?
+      maintenanceOptions : null;
     const properties = optionsNode?.type === 'ObjectExpression' ? optionsNode.properties : [];
     const region = properties.find(property => property.type === 'Property' &&
       !property.computed && (property.key.name || property.key.value) === 'region');
     if (Object.hasOwn(result, left.property.name)) throw new Error(`duplicate export assignment: ${left.property.name}`);
     result[left.property.name] = { kind:call.callee.name,
-      options:optionsNode ? source.slice(optionsNode.start, optionsNode.end) : '',
-      options_literal:optionsNode?.type === 'ObjectExpression' &&
-        properties.every(property => property.type === 'Property' && !property.computed),
-      region_safe:!region || (region.value.type === 'Literal' && region.value.value === 'europe-west1') };
+      options:resolvedMaintenance?.text || (optionsNode ? source.slice(optionsNode.start, optionsNode.end) : ''),
+      options_literal:!!resolvedMaintenance || (optionsNode?.type === 'ObjectExpression' &&
+        properties.every(property => property.type === 'Property' && !property.computed)),
+      region_safe:resolvedMaintenance ? resolvedMaintenance.region === 'europe-west1' :
+        (!region || (region.value.type === 'Literal' && region.value.value === 'europe-west1')) };
   }
   return result;
 }
@@ -507,7 +546,11 @@ export async function main(argv) {
     export_region_safe:Object.fromEntries(targetSpec.targets.map(id => [id,
       exportMeta[id]?.region_safe === true])),
     export_options_unchanged:Object.fromEntries(targetSpec.targets.map(id => [id,
-      baselineMeta[id]
+      SHARED_MAINTENANCE_EXPORTS.has(id)
+        ? exportMeta[id]?.kind === 'onCall' &&
+          sha256(exportMeta[id]?.options || '') === MAINTENANCE_OPTIONS_SHA256 &&
+          baselineMeta[id]?.options === exportMeta[id]?.options
+        : baselineMeta[id]
         ? baselineMeta[id].kind === exportMeta[id]?.kind &&
           baselineMeta[id].options === exportMeta[id]?.options
         : NEW_OPTION_HASHES[id] === sha256(exportMeta[id]?.options || '')])),

@@ -223,6 +223,34 @@ const oldSource = execFileSync('git', ['show', '0f75d45:functions/index.js'],
   { cwd:root, encoding:'utf8' });
 const currentMeta = exportCallMetadata(currentSource);
 const oldMeta = exportCallMetadata(oldSource);
+for (const id of ['getMaintenanceDashboard', 'setMaintenanceMode',
+  'runMaintenanceAnalysis', 'prepareMaintenanceHandoff']) {
+  assert.equal(currentMeta[id].options_literal, true, `${id} shared options must resolve`);
+  assert.equal(currentMeta[id].region_safe, true, `${id} region must be pinned`);
+  passed++;
+}
+for (const mutation of [
+  text => text.replace('const MAINTENANCE_OPTIONS = Object.freeze', 'let MAINTENANCE_OPTIONS = Object.freeze'),
+  text => text.replace('const MAINTENANCE_OPTIONS = Object.freeze', 'const MAINTENANCE_OPTIONS = Object.assign'),
+  text => text.replace("maxInstances:3, concurrency:1 });", "maxInstances:process.env.MAX, concurrency:1 });"),
+  text => text.replace("maxInstances:3, concurrency:1 });", "maxInstances:3, concurrency:1, ...extra });"),
+  text => text.replace("maxInstances:3, concurrency:1 });", "maxInstances:3, concurrency:1, memory:'1GiB' });"),
+  text => text.replace("maxInstances:3, concurrency:1 });", "maxInstances:3, concurrency:1, ['extra']:true });"),
+  text => text.replace('onCall(MAINTENANCE_OPTIONS, req => maintenanceService.getDashboard(req))',
+    'onCall(OTHER_OPTIONS, req => maintenanceService.getDashboard(req))')
+]) {
+  const changed = mutation(currentSource);
+  assert.notEqual(changed, currentSource, 'test mutation must apply');
+  const changedMeta = exportCallMetadata(changed);
+  assert.equal(changedMeta.getMaintenanceDashboard.options_literal, false,
+    'dynamic or untrusted shared options must fail closed');
+  passed++;
+}
+const changedRegion = exportCallMetadata(currentSource.replace(
+  "const MAINTENANCE_OPTIONS = Object.freeze({ region:'europe-west1'",
+  "const MAINTENANCE_OPTIONS = Object.freeze({ region:'us-central1'"));
+assert.equal(changedRegion.getMaintenanceDashboard.region_safe, false);
+passed++;
 const spoofed = exportCallMetadata('// exports.removed = onCall({region:"europe-west1"}, fn);\n'
   + 'exports.retained = onCall({region:"europe-west1"}, fn);');
 assert.deepEqual(Object.keys(spoofed), ['retained'], 'comment must not mask removed live export');
