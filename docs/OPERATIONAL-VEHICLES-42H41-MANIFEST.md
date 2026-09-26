@@ -65,8 +65,8 @@ Node 22 focused checks: operational vehicle service 11/11, operational vehicle
 browser 12/12, nav 27/27, fault service PASS, faults browser 18/18, fleet history
 15/15, F-01 photos 4 scenarios, backup policy 28/28. These are not a Node 22
 release attestation. Java 21 and Node 22 binaries were located in the
-workspace. Full demo-resq Firestore Rules emulator suite passed on the earlier
-candidate (exit 0); the updated focused vehicle/photo Rules suite passed 18/18.
+workspace. Full demo-resq Firestore Rules emulator suite passed on the updated
+candidate (exit 0); the focused vehicle/photo Rules suite passed 18/18.
 The provider source receipt is
 stale after functions/index.js changed; its dedicated Node 22 gate correctly
 fails with `provider-source-receipt-unavailable-or-stale`. A full release gate
