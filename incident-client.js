@@ -53,7 +53,7 @@ export const TELEMETRY_CALLABLES = Object.freeze([
   'hideBulletinReply', 'importScheduleSheet', 'joinWithCode', 'listBulletinMessageViewers', 'listStationTransfers',
   'listUsersWithClaims', 'loginWithEmployeeNumber', 'manageScheduleGuard',
   'postBulletinMessage', 'previewScheduleCutover', 'previewScheduleEdit', 'previewScheduleImport', 'previewSchedulePolicy',
-  'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
+  'getScheduleSourceRoster', 'previewScheduleSource', 'promoteScheduleToNew', 'publishSchedule', 'reindexDirectory',
   'rejectRegistration', 'replyToBulletinMessage', 'reportIncident', 'createFaultReport',
   'appendFaultPhotos', 'recordVehicleEquipmentEvent', 'saveVehicleCompartmentItem',
   'saveVehicleCompartmentPhoto', 'restoreVehicleCompartmentPhoto', 'transitionVehicleEquipmentEvent',
