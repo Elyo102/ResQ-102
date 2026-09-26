@@ -50,6 +50,12 @@ faults.push({
   photos: 2, by_uid: 'u1', by_name: 'בודק',
   created_key: '2026-09-11T10:00:00.000Z'
 });
+faults.push({
+  id: 'f-many', vehicle_id: 'v1', kind: 'damage',
+  title: 'תקלה עם שתים עשרה תמונות', status: 'open', severity: 'minor',
+  photos: 12, by_uid: 'u1', by_name: 'בודק',
+  created_key: '2026-08-01T10:00:00.000Z'
+});
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -106,10 +112,12 @@ function instrumentFirestore(body) {
       const parts = hp.split('/');
       const faultId = parts[parts.length - 2];
       const sid = parts[1];
-      const rows = [
-        ['p0', { data: (window.__F01_FIXTURE && window.__F01_FIXTURE.png) || '', w: 1, h: 1, sid, faultId }],
-        ['p1', { data: (window.__F01_FIXTURE && window.__F01_FIXTURE.png2) || '', w: 1, h: 1, sid, faultId }]
-      ];
+      const count = faultId === 'f-many' ? 12 : 2;
+      const rows = Array.from({ length: count }, (_, index) => [
+        'p' + String(index).padStart(2, '0'),
+        { data: (window.__F01_FIXTURE && window.__F01_FIXTURE[index % 2 ? 'png2' : 'png']) || '',
+          w: 1, h: 1, sid, faultId }
+      ]);
       const lag = Number(window.__F01_PHOTO_LAG_MS || 0);
       // Legacy photo documents intentionally have no created_key. Firestore
       // orderBy(created_key) would exclude them, unlike the old path-only mock.
@@ -367,6 +375,34 @@ try {
     assert.ok(afterBump.gen >= 2);
     assert.ok(afterBump.keys.every(k => /:/.test(k)));
     console.log('✓ vehicle.html list: 0 photo getDocs; openFault: 1; cache+AUTH_GEN ok');
+  });
+
+  await withPage('faults.html', async page => {
+    // Each independent viewer pages the same large fault without an eager
+    // history read or a shared identity-bound cache.
+    const second = await page.context().newPage();
+    await second.goto(origin + '/faults.html', { waitUntil: 'load' });
+    await second.locator('#work:not(.hide)').waitFor();
+    for (const viewer of [page, second]) {
+      assert.equal(await viewer.evaluate(() => window.__F01_PHOTO_GETS || 0), 0,
+        'history must not prefetch photos');
+      await tap(viewer.locator('#vehicleIssues button').filter({ hasText: 'רכב בדיקה F01' }).first());
+      await viewer.locator('#rep.on').waitFor();
+      const photos = viewer.locator('#dlgBody .f')
+        .filter({ hasText: 'תקלה עם שתים עשרה תמונות' }).locator('.shots');
+      await photos.locator('button').first().click();
+      await photos.locator('img').nth(9).waitFor();
+      assert.equal(await photos.locator('img').count(), 10,
+        'first bounded page displays 10 photos');
+      assert.equal(await viewer.evaluate(() => window.__F01_PHOTO_GETS || 0), 1);
+      await photos.getByRole('button', { name: 'עוד תמונות' }).click();
+      await photos.locator('img').nth(11).waitFor();
+      assert.equal(await photos.locator('img').count(), 12,
+        'second bounded page displays all 12 photos');
+      assert.equal(await viewer.evaluate(() => window.__F01_PHOTO_GETS || 0), 2);
+    }
+    await second.close();
+    console.log('✓ two viewers independently page 12 photos in two bounded reads');
   });
 
   await withPage('faults.html', async page => {
