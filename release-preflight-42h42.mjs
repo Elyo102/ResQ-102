@@ -191,6 +191,14 @@ export function assessSnapshot(snapshot, candidate) {
         fn.terminal_state !== 'CONDITION_SUCCEEDED' || fn.revision_ready !== true) {
       errors.push(`function_baseline_unready:${id}`);
     }
+    const source = fn.rollback_source;
+    if (!source || !source.bucket || !source.object ||
+        !/^[1-9][0-9]*$/.test(String(source.generation || '')) ||
+        !/^[1-9][0-9]*$/.test(String(source.size || '')) ||
+        !source.crc32c || !source.md5Hash ||
+        !/^[^\s]+@sha256:[0-9a-f]{64}$/.test(String(fn.run_image || ''))) {
+      errors.push(`function_rollback_artifact_unproven:${id}`);
+    }
     if (fn.trigger !== 'http') errors.push(`trigger_requires_separate_rollback:${id}`);
   }
   const liveIndexKeys = new Set((live.indexes || []).map(indexKey));
@@ -322,11 +330,35 @@ async function captureLive(targets) {
     const active = traffic.length === 1 && traffic[0].percent === 100 ? traffic[0].revision : null;
     if (!active) return;
     const response = await revisionClient.get(`${service.name}/revisions/${active}`);
-    readyRevisions.set(id, response.status === 200 &&
+    const ready = response.status === 200 &&
       response.body?.name === `${service.name}/revisions/${active}` &&
       response.body?.conditions?.some(condition =>
-        condition.type === 'Ready' && condition.state === 'CONDITION_SUCCEEDED'));
+        condition.type === 'Ready' && condition.state === 'CONDITION_SUCCEEDED');
+    readyRevisions.set(id, { ready, image:response.body?.containers?.[0]?.image || null });
     }));
+  }
+  const gcsClient = new (require('./apiv2.js').Client)({
+    urlPrefix:require('./api.js').storageOrigin(), auth:true, apiVersion:'storage/v1'
+  });
+  const rollbackSources = new Map();
+  for (const id of targets) {
+    const fn = fnResult.functions.find(item => toId(item.name) === id);
+    if (!fn) continue;
+    const source = fn.buildConfig?.source?.storageSource;
+    const resolved = fn.buildConfig?.sourceProvenance?.resolvedStorageSource;
+    if (!resolved?.bucket || !resolved?.object || !/^[1-9][0-9]*$/.test(String(resolved.generation || '')) ||
+        source?.bucket !== resolved.bucket || source?.object !== resolved.object ||
+        String(source?.generation) !== String(resolved.generation)) continue;
+    const object = await gcsClient.get(`/b/${encodeURIComponent(resolved.bucket)}/o/${encodeURIComponent(resolved.object)}`, {
+      queryParams:{ generation:String(resolved.generation) }
+    });
+    if (object.status !== 200 || object.body?.bucket !== resolved.bucket ||
+        object.body?.name !== resolved.object ||
+        String(object.body?.generation) !== String(resolved.generation)) continue;
+    rollbackSources.set(id, { bucket:resolved.bucket, object:resolved.object,
+      generation:String(resolved.generation), size:String(object.body.size || ''),
+      crc32c:object.body.crc32c || null, md5Hash:object.body.md5Hash || null,
+      build:fn.buildConfig?.build || null });
   }
   const functions = fnResult.functions.map(fn => {
     const service = servicesByName.get(fn.serviceConfig?.service);
@@ -338,7 +370,10 @@ async function captureLive(targets) {
       run_revision:active, traffic_percent:traffic[0]?.percent || 0,
       latest_ready_revision:toId(service?.latestReadyRevision),
       generation:service?.generation, observed_generation:service?.observedGeneration,
-      reconciling:service?.reconciling || false, revision_ready:readyRevisions.get(toId(fn.name)) || false,
+      reconciling:service?.reconciling || false,
+      revision_ready:readyRevisions.get(toId(fn.name))?.ready || false,
+      run_image:targets.includes(toId(fn.name)) ? readyRevisions.get(toId(fn.name))?.image || null : null,
+      rollback_source:rollbackSources.get(toId(fn.name)) || null,
       terminal_state:service?.terminalCondition?.state || null,
       latest_created_revision:toId(service?.latestCreatedRevision),
       config_sha256:sha256(JSON.stringify({
@@ -452,7 +487,8 @@ export async function main(argv) {
         ruleset_name:live.rules.ruleset_name,
         existing_functions:live.functions.filter(fn => candidate.targets.includes(fn.id))
           .map(fn => ({id:fn.id, service_name:fn.service_name,
-            revision:fn.run_revision, config_sha256:fn.config_sha256})) }
+            revision:fn.run_revision, image:fn.run_image,
+            source:fn.rollback_source, config_sha256:fn.config_sha256})) }
     }, assessment };
   fs.writeFileSync(args.output, JSON.stringify(ledger, null, 2) + '\n', { flag:'wx', mode:0o600 });
   console.log(JSON.stringify({ ledger:args.output, candidate_sha:args.sha, tree,

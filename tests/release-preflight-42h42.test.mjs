@@ -31,6 +31,9 @@ const functions = Array.from({ length:208 }, (_, index) => ({
   id:existingNames[index] || `existing${index}`,
   state:'ACTIVE', region:'europe-west1', trigger:'http',
   run_revision:`revision${index}`, latest_ready_revision:`revision${index}`,
+  run_image:`registry.example/image@sha256:${'a'.repeat(64)}`,
+  rollback_source:{ bucket:'build-source', object:`function-${index}.zip`,
+    generation:'123', size:'1024', crc32c:'AAAAAA==', md5Hash:'AAAAAAAAAAAAAAAAAAAAAA==' },
   traffic_percent:100, generation:'1', observed_generation:'1',
   terminal_state:'CONDITION_SUCCEEDED', revision_ready:true, reconciling:false
 }));
@@ -108,6 +111,13 @@ check('existing function removed from source', candidate => {
 check('old revision unavailable', (_, snapshot) => {
   snapshot.live.functions[0] = { ...snapshot.live.functions[0], latest_ready_revision:'another' };
 }, 'function_baseline_unready');
+check('rollback source generation missing', (_, snapshot) => {
+  snapshot.live.functions[0] = { ...snapshot.live.functions[0],
+    rollback_source:{ ...snapshot.live.functions[0].rollback_source, generation:null } };
+}, 'function_rollback_artifact_unproven');
+check('rollback image not digest pinned', (_, snapshot) => {
+  snapshot.live.functions[0] = { ...snapshot.live.functions[0], run_image:'registry.example/image:latest' };
+}, 'function_rollback_artifact_unproven');
 check('event trigger needs separate rollback', (_, snapshot) => {
   snapshot.live.functions[0] = { ...snapshot.live.functions[0], trigger:'google.cloud.firestore.document.v1.written' };
 }, 'trigger_requires_separate_rollback');
