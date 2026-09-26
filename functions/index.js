@@ -7103,6 +7103,10 @@ exports.previewSchedulePolicy = onCall({ enforceAppCheck: true }, async (req) =>
 // מקור כוח האדם. השורות מגיעות מהלקוח; **המיפוי בין מספר עובד
 // ל-uid נקרא בשרת בלבד**, אחרת מי שיכול לספק מיפוי משלו יכול
 // לשבץ אדם אחר במקומו.
+exports.getScheduleSourceRoster = onCall({
+  enforceAppCheck: true, timeoutSeconds: 300, memory: '1GiB'
+}, async (req) => invokeSchedule('getSourceRoster', req));
+
 exports.previewScheduleSource = onCall({
   enforceAppCheck: true, timeoutSeconds: 300, memory: '1GiB'
 }, async (req) => invokeSchedule('previewSource', req));

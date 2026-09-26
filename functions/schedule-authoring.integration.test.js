@@ -467,6 +467,10 @@ async function seed() {
       role: 'firefighter', active: true
     })
   ]);
+  await Promise.all(['a', 'b', 'c', 'd', 'e', 'f'].map((letter, index) =>
+    db.collection('emp_index').doc(String(9001 + index)).set({
+      uid: 'worker_' + letter, stationId: SID, active: true, retired: false
+    })));
   // Shadow reads the verified legacy projection.  Seed the complete A/B/C
   // rotation used in production, but keep the viewer outside a crew so this
   // display fixture cannot manufacture a MISSING cutover finding.  A live
@@ -610,6 +614,42 @@ async function test(name, fn) {
     const cfg = (await runtimeDoc().get()).data() || {};
     assert.equal(cfg.active_source_id, sourceId);
     assert.equal(cfg.mode, 'off');
+  });
+
+  await test('manager roster uses signed UID assignments and live employee indexes', async () => {
+    const view = await api.getSourceRoster(req('manager', 'firefighter'));
+    assert.equal(view.active_source_id, sourceId);
+    const worker = view.rows.find((row) => row.uid === 'worker_a');
+    assert.ok(worker);
+    assert.equal(worker.employee_number, '9001');
+    assert.equal(worker.status, 'carried_for_review');
+    assert.equal(worker.sub_station, 'a');
+    assert.deepEqual(worker.roles, ['driver']);
+    const boundRows = sourceRows().map((row, index) => Object.assign({}, row, {
+      expected_uid: 'worker_' + 'abcdef'[index]
+    }));
+    const boundPreview = await api.previewSource(req('manager', 'firefighter', { rows: boundRows }));
+    assert.equal(boundPreview.blocked, false);
+    const swapped = boundRows.map((row) => Object.assign({}, row));
+    swapped[0].expected_uid = 'worker_b';
+    assert.equal((await caught(() => api.previewSource(req('manager', 'firefighter', {
+      rows: swapped
+    })))).code, 'source-identity-changed');
+    assert.equal((await caught(() => api.getSourceRoster(req('viewer', 'firefighter')))).code,
+      'manager-required');
+    await db.collection('emp_index').doc('9001').set({
+      uid: 'foreign', stationId: SID, active: true, retired: false
+    });
+    const conflicted = await api.getSourceRoster(req('manager', 'firefighter'));
+    assert.equal(conflicted.rows.find((row) => row.uid === 'worker_a').status,
+      'identity_conflict');
+    assert.equal((await caught(() => api.saveSource(req('manager', 'firefighter', {
+      request_id: 'bound_identity_changed', activate: true,
+      expected_source_id: sourceId, rows: boundRows
+    })))).code, 'source-identity-changed');
+    await db.collection('emp_index').doc('9001').set({
+      uid: 'worker_a', stationId: SID, active: true, retired: false
+    });
   });
 
   /* ⭐ P0-1 · הבדיקה החשובה ביותר בקובץ הזה.

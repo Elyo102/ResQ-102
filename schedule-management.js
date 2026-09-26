@@ -52,6 +52,7 @@ const call = Object.freeze({
   cutoverPromote: mutationCallable('promoteScheduleToNew'),
   sourcePreview: httpsCallable(functions, 'previewScheduleSource'),
   sourceSave: mutationCallable('saveScheduleSource'),
+  sourceRoster: httpsCallable(functions, 'getScheduleSourceRoster'),
   policyPreview: httpsCallable(functions, 'previewSchedulePolicy'),
   policySave: mutationCallable('saveSchedulePolicy'),
   run: mutationCallable('runSchedulePlanner'),
@@ -100,6 +101,9 @@ const state = {
   // יבוא מקור כוח האדם
   sourceTable: null, sourceMap: null, sourceActive: null,
   sourcePlan: null, sourceBusy: false, sourceDirty: false,
+  rosterSource: null, rosterPlan: null, rosterPending: null, rosterRevision: 0,
+  rosterPlanRevision: null,
+  rosterBusy: false, rosterDirty: false, rosterVisible: 50,
   importMatrix: null, importLabelSpans: null, importFileName: null, importSelectedFile: null, importedDraft: null,
   importStationMap: null, importDisplay: null, displayRequestIds: {}, displayPending: null, displayStatusSequence: 0,
   // הלוח
@@ -926,6 +930,267 @@ function renderSourceSummary() {
     : 'אין מקור כוח-אדם פעיל. בלעדיו המנוע אינו יכול לתכנן.';
 }
 
+function rosterSourceRows() {
+  return (state.rosterSource ? state.rosterSource.rows : []).map((person, index) => ({
+    row: index + 1,
+    employee_number: person.employee_number,
+    expected_uid: person.uid,
+    full_name: person.full_name,
+    sub_station: person.sub_station,
+    roles: person.roles.slice(),
+    active: person.active,
+    group: person.group
+  }));
+}
+
+function rosterSourceReady() {
+  const rows = state.rosterSource && state.rosterSource.rows;
+  return !!rows && rows.length > 0 && rows.every((person) =>
+    person.status !== 'identity_conflict' && person.sub_station
+    && person.roles.length > 0
+    && (!(state.rosterSource.rotation_groups || []).length || person.group));
+}
+
+function updateRosterSourceButtons() {
+  const ready = rosterSourceReady() && $('rosterSourceConfirm').checked;
+  $('rosterSourceLoad').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceCheck').disabled = state.rosterBusy || !!state.rosterPending || !ready;
+  $('rosterSourceSave').disabled = state.rosterBusy || !ready || !state.rosterPlan
+    || state.rosterPlan.blocked === true || state.rosterPlan.kind === 'unchanged'
+    || state.rosterPlanRevision !== state.rosterRevision;
+  $('rosterSourceConfirm').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceSearch').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceNeeds').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceMore').disabled = state.rosterBusy || !!state.rosterPending;
+  $('rosterSourceRows').querySelectorAll('select,input').forEach((control) => {
+    control.disabled = state.rosterBusy || !!state.rosterPending;
+  });
+}
+
+function rosterSourceChanged() {
+  if (state.rosterBusy || state.rosterPending) return;
+  state.rosterRevision += 1;
+  state.rosterDirty = true;
+  state.rosterPlan = null;
+  state.rosterPlanRevision = null;
+  state.rosterPending = null;
+  updateRosterSourceButtons();
+}
+
+function renderRosterSourceRows() {
+  const view = state.rosterSource;
+  const box = $('rosterSourceRows');
+  clear(box);
+  if (!view) return;
+  const query = $('rosterSourceSearch').value.trim().toLocaleLowerCase('he');
+  const needsOnly = $('rosterSourceNeeds').checked;
+  const matches = view.rows.filter((person) => (!needsOnly
+    || person.status !== 'carried_for_review') && (!query
+    || person.full_name.toLocaleLowerCase('he').includes(query)
+    || person.employee_number.includes(query)));
+  const visible = matches.slice(0, state.rosterVisible);
+  visible.forEach((person) => {
+    const card = node('div', 'roster-source-person');
+    card.appendChild(node('b', '', person.full_name + ' · ' + person.employee_number));
+    const origin = person.status === 'carried_for_review'
+      ? 'שיוך קודם ממקור חתום — לבדיקה' : person.status === 'identity_conflict'
+        ? 'זהות לא מאומתת — יש לטפל בחשבון לפני שמירה' : 'דרוש שיוך מפורש';
+    card.appendChild(node('div', 'sub', origin
+      + (person.active === false ? ' · מושבת בסידור' : '')
+      + (person.group ? ' · קבוצה ' + person.group : '')));
+    if (person.status !== 'identity_conflict') {
+      const label = node('label', '', 'תחנת קצה');
+      const select = node('select');
+      const empty = node('option', '', 'בחרו תחנת קצה');
+      empty.value = '';
+      select.appendChild(empty);
+      view.sub_stations.forEach((sub) => {
+        const option = node('option', '', sub.label);
+        option.value = sub.id;
+        select.appendChild(option);
+      });
+      select.value = person.sub_station || '';
+      select.disabled = state.rosterBusy || !!state.rosterPending;
+      select.addEventListener('change', () => {
+        if (state.rosterBusy || state.rosterPending) return;
+        person.sub_station = select.value;
+        rosterSourceChanged();
+      });
+      label.appendChild(select);
+      card.appendChild(label);
+      const roles = node('details');
+      roles.appendChild(node('summary', '', 'תפקידים בסידור: ' +
+        (person.roles.length ? person.roles.join(', ') : 'לא נבחרו')));
+      view.roles.forEach((role) => {
+        const roleLabel = node('label', 'req-flag');
+        const checkbox = node('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = person.roles.includes(role);
+        checkbox.disabled = state.rosterBusy || !!state.rosterPending;
+        checkbox.addEventListener('change', () => {
+          if (state.rosterBusy || state.rosterPending) return;
+          person.roles = checkbox.checked
+            ? Array.from(new Set(person.roles.concat(role))).sort()
+            : person.roles.filter((item) => item !== role);
+          roles.querySelector('summary').textContent = 'תפקידים בסידור: ' +
+            (person.roles.length ? person.roles.join(', ') : 'לא נבחרו');
+          rosterSourceChanged();
+        });
+        roleLabel.append(checkbox, node('span', '', role));
+        roles.appendChild(roleLabel);
+      });
+      card.appendChild(roles);
+      if ((view.rotation_groups || []).length) {
+        const groupLabel = node('label', '', 'קבוצת מחזוריות');
+        const groupSelect = node('select');
+        const noGroup = node('option', '', 'בחרו קבוצה');
+        noGroup.value = '';
+        groupSelect.appendChild(noGroup);
+        view.rotation_groups.forEach((group) => {
+          const option = node('option', '', group);
+          option.value = group;
+          groupSelect.appendChild(option);
+        });
+        groupSelect.value = person.group || '';
+        groupSelect.disabled = state.rosterBusy || !!state.rosterPending;
+        groupSelect.addEventListener('change', () => {
+          if (state.rosterBusy || state.rosterPending) return;
+          person.group = groupSelect.value || null;
+          rosterSourceChanged();
+        });
+        groupLabel.appendChild(groupSelect);
+        card.appendChild(groupLabel);
+      }
+    }
+    box.appendChild(card);
+  });
+  $('rosterSourceMore').hidden = matches.length <= visible.length;
+  $('rosterSourceCounts').textContent = view.counts.total + ' עובדים בתחנה · '
+    + view.counts.carried + ' שיוכים ממקור חתום · '
+    + view.counts.needs_assignment + ' דורשים שיוך · '
+    + view.counts.identity_conflict + ' זהויות לבדיקה';
+  updateRosterSourceButtons();
+}
+
+async function loadRosterSource() {
+  if (state.rosterBusy || state.rosterPending) return;
+  if (state.rosterDirty && !confirm('לטעון מחדש את הסגל ולבטל שינויים שלא נשמרו?')) return;
+  const task = authTask();
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'טוען את סגל התחנה המאומת…', 'info');
+  try {
+    const result = (await call.sourceRoster({})).data;
+    if (!authTaskCurrent(task)) return;
+    state.rosterSource = result;
+    state.rosterRevision += 1;
+    state.rosterPlan = null;
+    state.rosterPlanRevision = null;
+    state.rosterPending = null;
+    state.rosterDirty = false;
+    state.rosterVisible = 50;
+    $('rosterSourceConfirm').checked = false;
+    $('rosterSourceSearch').value = '';
+    $('rosterSourceNeeds').checked = false;
+    $('rosterSourceEditor').hidden = false;
+    renderRosterSourceRows();
+    message('rosterSourceMessage', result.counts.identity_conflict
+      ? 'נמצאו זהויות שאינן מאומתות. אין לשמור עד שהן יתוקנו.'
+      : 'בדקו את השיוכים, השלימו חסרים ואשרו לפני בדיקת המקור.',
+    result.counts.identity_conflict ? 'warn' : 'info');
+    return true;
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error), 'err');
+    return false;
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
+async function checkRosterSource() {
+  if (state.rosterBusy || state.rosterPending || !rosterSourceReady()
+      || !$('rosterSourceConfirm').checked) return;
+  const task = authTask();
+  const revision = state.rosterRevision;
+  const rows = rosterSourceRows();
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'בודק את כל העובדים מול המקור והמדיניות…', 'info');
+  try {
+    const plan = (await call.sourcePreview({ rows })).data;
+    if (!authTaskCurrent(task)) return;
+    if (revision !== state.rosterRevision) return;
+    state.rosterPlan = plan;
+    state.rosterPlanRevision = revision;
+    message('rosterSourceMessage', plan.blocked ? plan.message
+      : plan.kind === 'unchanged' ? 'הרשימה כבר תואמת למקור הפעיל.'
+        : plan.counts.people + ' עובדים עברו בדיקה. כעת אפשר לשמור.',
+    plan.blocked ? 'warn' : 'ok');
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error), 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
+async function saveRosterSource() {
+  if (!scheduleMutationAllowed() || state.rosterBusy || !state.rosterPlan
+      || state.rosterPlan.blocked || !rosterSourceReady()
+      || state.rosterPlanRevision !== state.rosterRevision
+      || !$('rosterSourceConfirm').checked) return;
+  const task = authTask();
+  const rows = rosterSourceRows();
+  const dropped = droppedCount(state.rosterPlan);
+  const missing = Number(state.rosterPlan.missing_staff || 0);
+  if (missing || state.rosterPlan.report && state.rosterPlan.report.rejected) {
+    message('rosterSourceMessage', 'המקור אינו מלא. יש לרענן ולתקן לפני שמירה.', 'err');
+    return;
+  }
+  if (!confirm('לשמור מקור כוח אדם עם ' + rows.length + ' עובדים? '
+    + (dropped ? dropped + ' נתוני זמינות/נעילה של עובדים שכבר אינם בסגל יוסרו. '
+      : 'נתוני זמינות, נעילה ואירועים יישמרו. ')
+    + 'הפעולה אינה מפרסמת סידור.')) return;
+  const payload = state.rosterPending || {
+    request_id: requestId('source'),
+    rows, activate: true, expected_source_id: state.rosterPlan.active_source_id,
+    accept_carry_dropped: dropped || undefined
+  };
+  state.rosterPending = payload;
+  state.rosterBusy = true;
+  updateRosterSourceButtons();
+  message('rosterSourceMessage', 'שומר מקור כוח אדם חתום…', 'info');
+  try {
+    const result = (await call.sourceSave(payload)).data;
+    if (!authTaskCurrent(task)) return;
+    state.rosterPending = null;
+    state.rosterPlan = null;
+    state.rosterPlanRevision = null;
+    state.rosterDirty = false;
+    state.rosterBusy = false;
+    const refreshed = await loadRosterSource();
+    if (authTaskCurrent(task)) message('rosterSourceMessage', refreshed
+      ? (result.written
+        ? 'המקור נשמר במהדורה ' + result.revision + '. הסידור שפורסם לא השתנה.'
+        : 'המקור כבר היה מעודכן.')
+      : 'המקור נשמר, אבל טעינת הרשימה מחדש נכשלה. יש לרענן לפני שינוי נוסף.',
+    refreshed ? 'ok' : 'warn');
+  } catch (error) {
+    if (authTaskCurrent(task)) message('rosterSourceMessage', errorText(error)
+      + ' אפשר לנסות שוב בלי לערוך את הרשימה.', 'err');
+  } finally {
+    if (authTaskCurrent(task)) {
+      state.rosterBusy = false;
+      updateRosterSourceButtons();
+    }
+  }
+}
+
 /* ==================================================================
  *  מצב מנוע הסידור · המתג
  * ------------------------------------------------------------------
@@ -1584,7 +1849,7 @@ function authScopeKey(user, claims) {
 
 function scopedOperationInFlight() {
   return state.busy === true || state.policyBusy === true
-    || state.sourceBusy === true || state.modeBusy === true;
+    || state.sourceBusy === true || state.rosterBusy === true || state.modeBusy === true;
 }
 
 /*
@@ -4842,6 +5107,22 @@ $('sourceParse').addEventListener('click', () => {
 $('sourceAccept').addEventListener('change', updateSourceButtons);
 $('sourceCheck').addEventListener('click', managerAction(checkSource));
 $('sourceSave').addEventListener('click', managerAction(saveSource));
+$('rosterSourceLoad').addEventListener('click', managerAction(loadRosterSource));
+$('rosterSourceSearch').addEventListener('input', () => {
+  state.rosterVisible = 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceNeeds').addEventListener('change', () => {
+  state.rosterVisible = 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceMore').addEventListener('click', () => {
+  state.rosterVisible += 50;
+  renderRosterSourceRows();
+});
+$('rosterSourceConfirm').addEventListener('change', updateRosterSourceButtons);
+$('rosterSourceCheck').addEventListener('click', managerAction(checkRosterSource));
+$('rosterSourceSave').addEventListener('click', managerAction(saveRosterSource));
 addEventListener('resize', refitAll);
 
 function managerSetupNotice(text, retry) {
@@ -4914,6 +5195,9 @@ function resetScopedWorkspace() {
     pendingCutover: null,
     sourceTable: null, sourceMap: null, sourceActive: null,
     sourcePlan: null, sourceBusy: false, sourceDirty: false,
+    rosterSource: null, rosterPlan: null, rosterPending: null,
+    rosterRevision: 0, rosterPlanRevision: null,
+    rosterBusy: false, rosterDirty: false, rosterVisible: 50,
     importAliases: {}, importMatrix: null, importLabelSpans: null,
     importFileName: null, importSelectedFile: null, importedDraft: null,
     importStationMap: null, importDisplay: null, importReport: null,
@@ -4936,6 +5220,7 @@ function resetScopedWorkspace() {
   [
     'modeTargets', 'modeMessage', 'policySubs', 'policySteps', 'policyChanges',
     'policyMessage', 'sourceMap', 'sourceActiveValues', 'sourceCounts',
+    'rosterSourceMessage', 'rosterSourceCounts', 'rosterSourceRows',
     'sourceReport', 'sourceMessage', 'importStationMapGrid', 'importCounts',
     'importBlocks', 'importUnresolved', 'importDuplicates', 'importMessage',
     'overrideList', 'draftSummary', 'gapSummary', 'gapDays', 'gapMessage',
@@ -4947,7 +5232,7 @@ function resetScopedWorkspace() {
   ].forEach((id) => { const element = $(id); if (element) clear(element); });
 
   ['sourceMap', 'sourceActive', 'sourceCounts', 'sourceAcceptWrap',
-    'sourceReportWrap', 'importStationMap', 'importReport', 'gapCard',
+    'sourceReportWrap', 'rosterSourceEditor', 'importStationMap', 'importReport', 'gapCard',
     'editCard', 'editReport', 'editPolicyChanged', 'editGaps', 'draftGaps']
     .forEach((id) => { const element = $(id); if (element) element.hidden = true; });
   $('modeCard').hidden = true;
@@ -4961,6 +5246,9 @@ function resetScopedWorkspace() {
   $('draftBadge').hidden = true;
   $('sourceSummary').textContent = 'טוען מדיניות ומקור נתונים…';
   $('sourceSummaryLine').textContent = 'אין מקור כוח-אדם פעיל.';
+  $('rosterSourceSearch').value = '';
+  $('rosterSourceNeeds').checked = false;
+  $('rosterSourceConfirm').checked = false;
   $('policyVersion').textContent = '';
   $('importFileStatus').textContent = 'לא נבחר קובץ. אפשר לבחור XLSX, CSV או TSV.';
   $('importDisplayStatus').textContent = 'הייבוא אינו מפעיל את המנוע ואינו שולח התראות.';

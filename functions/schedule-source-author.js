@@ -211,6 +211,11 @@ function readRow(raw, index, policy, directory, seenEmployee) {
     return { rejected: Object.assign({ code: ROW.AMBIGUOUS, matches: matches.length }, line) };
   }
   const uid = matches[0].uid;
+  // Roster-driven requests bind the displayed identity to the live directory.
+  // Legacy spreadsheet rows without expected_uid retain their old contract.
+  if (raw.expected_uid !== undefined && raw.expected_uid !== uid) {
+    return { rejected: Object.assign({ code: ROW.UNKNOWN_PERSON }, line) };
+  }
   /* ⭐ P1-4. השם שיישמר בא מכאן — מהפרופיל החי — ולא מהגיליון.
    * פרופיל בלי שם הוא תקלה במערכת, ולכן הוא נדחה בקוד משלו במקום
    * ליפול חזרה על מה שהודבק. */

@@ -986,6 +986,7 @@ try {
   await forcedPage.locator('#appMain:not(.hide)').waitFor();
 
   const MUTATING = ['saveSchedulePolicy', 'previewSchedulePolicy', 'saveScheduleSource',
+    'getScheduleSourceRoster',
     'previewScheduleSource', 'runSchedulePlanner', 'publishSchedule', 'rollbackSchedule',
     'setScheduleRuntimeMode', 'manageScheduleGuard', 'assignGuard',
     // ⭐ שתי אלה מזיזות את כל התחנה לסידור אחר.
@@ -998,7 +999,8 @@ try {
     // הסרת כל שכבת התצוגה, בדיוק כפי שאפשר לעשות מקונסולה.
     const clicked = await forcedPage.evaluate(() => {
       const ids = ['manageTab', 'manageView', 'modeCard', 'modeApply', 'savePolicy',
-        'sourceCheck', 'sourceSave', 'runPlanner', 'publish', 'rollback'];
+        'sourceCheck', 'sourceSave', 'rosterSourceLoad', 'rosterSourceCheck',
+        'rosterSourceSave', 'runPlanner', 'publish', 'rollback'];
       const hit = [];
       for (const id of ids) {
         const el = document.getElementById(id);
@@ -1432,6 +1434,69 @@ try {
     assert.ok(String(saved.payload.request_id || '').startsWith('source_'));
   });
   await importer.close();
+
+  const rosterEditor = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
+  const rosterData = {
+    station_id:'test_station', active_source_id:'source_old', policy_id:'policy_1',
+    sub_stations:[{ id:'main', label:'תחנה ראשית' }], roles:['driver', 'fighter'],
+    rotation_groups:['A', 'B', 'C'],
+    rows:[
+      { uid:'worker_a', employee_number:'9001', full_name:'בדיקה אלף',
+        sub_station:'main', roles:['driver'], active:false, group:'C', status:'carried_for_review' },
+      { uid:'worker_b', employee_number:'9002', full_name:'בדיקה בית',
+        sub_station:'', roles:[], active:true, group:null, status:'needs_assignment' }
+    ],
+    counts:{ total:2, carried:1, needs_assignment:1, identity_conflict:0 }
+  };
+  await prepare(rosterEditor, 'firefighter', {
+    getScheduleRuntimeStatus:[{ data:statusManager }],
+    getScheduleManagerSetup:[{ data:setup }],
+    getScheduleSourceRoster:[{ data:rosterData }, { data:rosterData }],
+    previewScheduleSource:[{ delay:180, data:{
+      kind:'created', blocked:false, active_source_id:'source_old',
+      counts:{ people:2 }, report:{ total:2, accepted:2, rejected:0, rows:[] },
+      carried_dropped:{ availability:0, locked:0 }, missing_staff:0
+    } }],
+    saveScheduleSource:[{ delay:180, data:{ written:true, revision:8 } }],
+    getStationScheduleRange:[{ data:stationRange }]
+  });
+  const rosterPage = await rosterEditor.newPage();
+  rosterPage.on('dialog', (dialog) => dialog.accept());
+  await rosterPage.goto(base + '?tab=manage', { waitUntil:'load' });
+  await rosterPage.locator('#appMain:not(.hide)').waitFor();
+  await test('built-in station roster requires explicit assignment and review before save', async () => {
+    await rosterPage.locator('#rosterSourceLoad').click();
+    await rosterPage.locator('.roster-source-person').first().waitFor();
+    assert.equal(await rosterPage.locator('#rosterSourceCheck').isEnabled(), false);
+    const second = rosterPage.locator('.roster-source-person').filter({ hasText:'בדיקה בית' });
+    await second.locator('select').first().selectOption('main');
+    await second.locator('summary').click();
+    await second.locator('input[type=checkbox]').last().check();
+    await second.locator('select').last().selectOption('B');
+    assert.equal(await rosterPage.locator('#rosterSourceCheck').isEnabled(), false);
+    await rosterPage.locator('#rosterSourceConfirm').check();
+    await rosterPage.locator('#rosterSourceCheck').click();
+    assert.equal(await second.locator('select').first().isEnabled(), false,
+      'preview must lock the assignment it is validating');
+    await rosterPage.locator('#rosterSourceSave:enabled').waitFor();
+    await rosterPage.locator('#rosterSourceSave').click();
+    assert.equal(await second.locator('select').first().isEnabled(), false,
+      'an uncertain save must keep the displayed payload immutable');
+    await rosterPage.locator('#rosterSourceMessage .ok').waitFor();
+    const calls = await rosterPage.evaluate(() => window.__CALLABLE_CALLS);
+    const saved = calls.find((item) => item.name === 'saveScheduleSource');
+    assert.equal(saved.payload.rows.length, 2);
+    assert.equal(saved.payload.rows[1].employee_number, '9002');
+    assert.equal(saved.payload.rows[1].sub_station, 'main');
+    assert.equal(saved.payload.activate, true);
+    assert.equal(saved.payload.expected_source_id, 'source_old');
+    assert.equal(saved.payload.rows[0].roles[0], 'driver');
+    assert.equal(saved.payload.rows[0].active, false);
+    assert.equal(saved.payload.rows[0].group, 'C');
+    assert.equal(saved.payload.rows[0].expected_uid, 'worker_a');
+    assert.equal(saved.payload.rows[1].group, 'B');
+  });
+  await rosterEditor.close();
 
   const fastViewer = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });
   await prepare(fastViewer, 'commander', {
@@ -3850,5 +3915,5 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 
-assert.equal(passed, 103);
+assert.equal(passed, 104);
 console.log('\n' + passed + ' schedule management browser checks passed.');

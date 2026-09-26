@@ -395,6 +395,12 @@
       font-size:12px;line-height:1.6;white-space:pre;direction:ltr;text-align:start}
     .maprow{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:12px}
     .actvals{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #rosterSourceRows{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px;margin:12px 0}
+    .roster-source-person{padding:12px;border:1px solid var(--line,#dfe5ec);border-radius:12px;background:var(--card,#fff)}
+    .roster-source-person label{display:block;margin-top:8px}
+    .roster-source-person select{width:100%;min-height:44px}
+    .roster-source-person details{margin-top:8px}
+    .roster-source-person .req-flag{display:flex;margin-top:4px}
     .actval{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
       border:1px solid var(--line,#dfe5ec);border-radius:8px;padding:6px 10px;
       background:var(--card,#fff);min-height:40px}
@@ -602,6 +608,32 @@
       </div>
       <div class="changes" id="policyChanges"></div>
       <div id="policyMessage" aria-live="polite"></div>
+    </article>
+
+    <article class="card" id="rosterSourceCard">
+      <h2>עובדים לטיוטת הסידור</h2>
+      <div class="sub">הרשימה נבנית מחשבונות התחנה. שיוך קודם מגיע רק ממקור חתום; עובד חדש או שיוך לא תקף מחייבים בחירה מפורשת. שום שינוי אינו מתפרסם לפני בדיקה ושמירה.</div>
+      <div class="btns"><button class="btn primary" id="rosterSourceLoad" type="button">פתח רשימת עובדים</button></div>
+      <div id="rosterSourceMessage" aria-live="polite"></div>
+      <div id="rosterSourceEditor" hidden>
+        <div class="sub" id="rosterSourceCounts"></div>
+        <label for="rosterSourceSearch">חיפוש עובד בשם או במספר עובד</label>
+        <input id="rosterSourceSearch" type="search" autocomplete="off" placeholder="חיפוש ברשימת התחנה">
+        <label class="req-flag" for="rosterSourceNeeds">
+          <input id="rosterSourceNeeds" type="checkbox"> הצג רק עובדים שדורשים שיוך או תיקון זהות
+        </label>
+        <div id="rosterSourceRows"></div>
+        <div class="btns">
+          <button class="btn" id="rosterSourceMore" type="button" hidden>הצג עוד</button>
+        </div>
+        <label class="req-flag" for="rosterSourceConfirm">
+          <input id="rosterSourceConfirm" type="checkbox"> בדקתי את השיוכים שהועברו מהמקור החתום ואת העובדים החדשים
+        </label>
+        <div class="btns">
+          <button class="btn primary" id="rosterSourceCheck" type="button" disabled>בדוק את הסגל</button>
+          <button class="btn dark" id="rosterSourceSave" type="button" disabled>שמור מקור כוח אדם</button>
+        </div>
+      </div>
     </article>
 
     <details class="advanced" id="managerAdvanced">

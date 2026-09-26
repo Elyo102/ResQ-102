@@ -15,6 +15,7 @@ const sourceAuthorModule = require('./schedule-source-author');
 const sheetImport = require('./schedule-sheet-import');
 const scheduleEdit = require('./schedule-edit');
 const qualifications = require('./schedule-qualifications');
+const rosterCandidates = require('./schedule-roster-candidates');
 const scheduleGaps = require('./schedule-gaps');
 const importPipeline = require('./schedule-import-pipeline');
 const identityStoreContract = require('./schedule-identity-store-contract');
@@ -1996,6 +1997,89 @@ function createScheduleRuntime(deps) {
     return out;
   }
 
+  // The visual roster sends an expected UID for every row. A changed employee
+  // number must never silently redirect an assignment to a different account.
+  async function verifyBoundRoster(ctx, rows, directory) {
+    if (!Array.isArray(rows) || !rows.some((row) => row && row.expected_uid !== undefined)) return;
+    if (rows.some((row) => !row || !nonEmpty(row.expected_uid))) {
+      throw new ScheduleRuntimeError('source-identity-incomplete',
+        'זהות הסגל השתנתה. יש לרענן ולבדוק שוב לפני שמירה.', 'aborted');
+    }
+    const byEmployee = new Map();
+    directory.forEach((person) => {
+      const key = String(person.employee_number || '').trim();
+      if (!byEmployee.has(key)) byEmployee.set(key, []);
+      byEmployee.get(key).push(person.uid);
+    });
+    const requested = new Map(rows.map((row) => [String(row.employee_number || '').trim(), row]));
+    const employees = Array.from(requested.keys());
+    for (let offset = 0; offset < employees.length; offset += 100) {
+      const chunk = employees.slice(offset, offset + 100);
+      const snaps = await db.getAll(...chunk.map((employee) => db.doc('emp_index/' + employee)));
+      snaps.forEach((snap, index) => {
+        const employee = chunk[index];
+        const expected = requested.get(employee);
+        const identity = snap.exists ? snap.data() || {} : {};
+        const matches = byEmployee.get(employee) || [];
+        if (!expected || matches.length !== 1 || matches[0] !== expected.expected_uid
+            || identity.uid !== expected.expected_uid || identity.stationId !== ctx.sid
+            || identity.active !== true || identity.retired === true) {
+          throw new ScheduleRuntimeError('source-identity-changed',
+            'שיוך מספר עובד השתנה מאז פתיחת הרשימה. יש לרענן ולבדוק מחדש.', 'aborted');
+        }
+      });
+    }
+  }
+
+  // Loaded only when the manager opens the roster editor. A signed source may
+  // prefill assignments, but never activates them or invents missing values.
+  async function getSourceRoster(req) {
+    const ctx = await context(req);
+    requireManager(ctx);
+    const config = await configuration(ctx.sid);
+    const policy = await sourcePolicyContext(ctx, config);
+    const previous = await readActiveSource(ctx.sid, config.active_source_id);
+    const snap = await stationRef(ctx.sid).collection('users')
+      .limit(MAX_SOURCE_PEOPLE + 1).get();
+    if (snap.size > MAX_SOURCE_PEOPLE) {
+      throw new ScheduleRuntimeError('station-directory-too-large',
+        'רשימת המשתמשים של התחנה גדולה מהתקרה הבטוחה.', 'resource-exhausted');
+    }
+    const users = snap.docs.filter((doc) => activeOperationalMember(doc.data() || {}, ctx.sid))
+      .map((doc) => Object.assign({ uid: doc.id }, doc.data() || {}));
+    const employeeNumbers = Array.from(new Set(users.map((user) =>
+      String(user.employee_number || '').trim()).filter((value) => /^[0-9]{1,20}$/.test(value))));
+    const indexes = new Map();
+    for (let offset = 0; offset < employeeNumbers.length; offset += 100) {
+      const chunk = employeeNumbers.slice(offset, offset + 100);
+      const refs = chunk.map((employee) => db.doc('emp_index/' + employee));
+      const entries = await db.getAll(...refs);
+      entries.forEach((entry, index) => {
+        if (entry.exists) indexes.set(chunk[index], entry.data() || {});
+      });
+    }
+    const rows = rosterCandidates.buildRosterCandidates({
+      stationId: ctx.sid, users, previous: previous ? previous.people : [], policy, indexes
+    });
+    return {
+      station_id: ctx.sid, active_source_id: config.active_source_id || null,
+      policy_id: config.active_policy_id, rows,
+      sub_stations: Object.keys(policy.sub_stations).sort().map((id) => ({
+        id, label: policy.sub_stations[id].label || id
+      })),
+      roles: Array.from(new Set(Object.values(policy.sub_stations)
+        .flatMap((sub) => (sub.requirements || []).map((item) => item.role)))).sort(),
+      rotation_groups: policy.rotation && Array.isArray(policy.rotation.groups)
+        ? policy.rotation.groups : [],
+      counts: {
+        total: rows.length,
+        carried: rows.filter((row) => row.status === 'carried_for_review').length,
+        needs_assignment: rows.filter((row) => row.status === 'needs_assignment').length,
+        identity_conflict: rows.filter((row) => row.status === 'identity_conflict').length
+      }
+    };
+  }
+
   // המדיניות הפעילה, בצורה שהמודול מצפה לה. בלי מדיניות אין לפי מה
   // לדעת אילו תחנות קצה ואילו תפקידים קיימים.
   async function sourcePolicyContext(ctx, config) {
@@ -2004,7 +2088,8 @@ function createScheduleRuntime(deps) {
         'אי אפשר לייבא מקור לפני שהוגדרו חוקי תחנה.', 'failed-precondition');
     }
     const policy = await loadPolicy(ctx, config.active_policy_id);
-    return { station_id: ctx.sid, sub_stations: policy.value.sub_stations };
+    return { station_id: ctx.sid, sub_stations: policy.value.sub_stations,
+      rotation: policy.value.rotation || null };
   }
 
   function sourceRows(data) {
@@ -2206,6 +2291,7 @@ function createScheduleRuntime(deps) {
     const config = await configuration(ctx.sid);
     const policy = await sourcePolicyContext(ctx, config);
     const directory = await stationDirectory(ctx);
+    await verifyBoundRoster(ctx, data.rows, directory);
     const previous = await readActiveSource(ctx.sid, config.active_source_id);
     // התצוגה המקדימה מריצה את אותו קוד בדיוק, ובלי `accept_rejected`
     // היא נופלת על הדחיות — וזה הדוח שמוחזר.
@@ -2270,6 +2356,7 @@ function createScheduleRuntime(deps) {
     }
     const policy = await sourcePolicyContext(ctx, config);
     const directory = await stationDirectory(ctx);
+    await verifyBoundRoster(ctx, data.rows, directory);
     const previous = await readActiveSource(ctx.sid, config.active_source_id);
     const plan = authorSource(ctx, data, policy, directory, previous);
 
@@ -10170,6 +10257,7 @@ function createScheduleRuntime(deps) {
     getStatus,
     getGuardManagementStatus,
     getManagerSetup,
+    getSourceRoster,
     previewPolicy,
     savePolicy,
     previewSource,
