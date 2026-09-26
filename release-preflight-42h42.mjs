@@ -210,7 +210,9 @@ export function assessSnapshot(snapshot, candidate) {
       candidateFields.size !== (candidate.field_overrides || []).length) errors.push('duplicate_field_override');
   if ([...liveFields.keys()].some(key => !candidateFields.has(key))) errors.push('field_override_removal_detected');
   for (const [key, field] of liveFields) {
-    if (field.ttl !== candidateFields.get(key)?.ttl) errors.push(`ttl_changed:${key}`);
+    const candidateTtl = candidateFields.get(key)?.ttl;
+    if (candidateTtl !== undefined && typeof candidateTtl !== 'boolean') errors.push(`invalid_ttl_value:${key}`);
+    if ((field.ttl === true) !== (candidateTtl === true)) errors.push(`ttl_changed:${key}`);
     if (field.ttl === true && field.ttl_state !== 'ACTIVE') errors.push(`live_ttl_not_active:${key}`);
     if ((field.indexes || []).some(index => index.state !== 'READY')) errors.push(`live_field_index_not_ready:${key}`);
     if (JSON.stringify(fieldIndexModes(field)) !== JSON.stringify(fieldIndexModes(candidateFields.get(key) || {}))) {
