@@ -427,6 +427,16 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "photos",
+      "fieldPath": "data",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "blobs",
+      "fieldPath": "data",
+      "indexes": []
+    },
+    {
       "collectionGroup": "attendance_shadow_runs",
       "fieldPath": "expires_at",
       "ttl": true,

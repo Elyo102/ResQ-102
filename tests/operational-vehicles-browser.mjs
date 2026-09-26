@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
@@ -122,6 +123,34 @@ try {
     .find(call => call.name === 'saveVehicleCompartmentPhoto').payload);
   assert.equal(photoRequest.compartment_id, 'cabin');
   assert.match(photoRequest.data, /^data:image\/jpeg;base64,/);
+  passed++;
+  const historicalJpeg = 'data:image/jpeg;base64,' + Buffer.from([255,216,255,0,1]).toString('base64');
+  const historicalHash = createHash('sha256').update(historicalJpeg).digest('hex');
+  await officer.evaluate(({ image, digest }) => {
+    window.__VEHICLE_PHOTO_REVISIONS = [['00000001', {
+      revision:1, image_sha256:digest, source:'upload', by_uid:'stub-uid'
+    }]];
+    window.__VEHICLE_PHOTO_BLOBS = { '00000001':{
+      data:image, image_sha256:digest, w:1, h:1
+    } };
+    window.__CALLABLE_PLAN = { restoreVehicleCompartmentPhoto:[{
+      data:{ revision:2, written:true }
+    }] };
+  }, { image:historicalJpeg, digest:historicalHash });
+  await officer.locator('#photoHistory > summary').click();
+  await officer.locator('#photoHistoryList .event').first().waitFor();
+  assert.equal(await officer.evaluate(() => (window.__FIRESTORE_GETDOC_PATHS || [])
+    .some(path => path.includes('/photos/current/blobs/'))), false,
+  'listing photo history must not fetch image blobs');
+  await officer.locator('#photoHistoryList button', { hasText:'הצג תמונה' }).click();
+  await officer.locator('#historicalPhoto img').waitFor();
+  await officer.locator('#photoHistoryList button', { hasText:'שחזר כגרסה חדשה' }).click();
+  await officer.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some(call => call.name === 'restoreVehicleCompartmentPhoto'));
+  const restoreRequest = await officer.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'restoreVehicleCompartmentPhoto').payload);
+  assert.equal(restoreRequest.source_revision, 1);
+  assert.equal(restoreRequest.expected_revision, 1);
   passed++;
   await officer.locator('#addItem').click();
   await officer.locator('#itemName').fill('טיוטה שאסור למחוק');

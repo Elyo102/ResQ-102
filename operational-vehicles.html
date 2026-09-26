@@ -86,10 +86,18 @@
               <button id="saveSectorPhoto" class="secondary" type="button">שמור תמונת תא</button>
             </div>
             <p id="photoMessage" class="muted" role="status"></p>
+            <details id="photoHistory">
+              <summary>היסטוריית תמונות התא</summary>
+              <p id="photoHistoryStatus" class="muted" role="status"></p>
+              <div id="photoHistoryList" class="fault-list"></div>
+              <button id="morePhotoHistory" class="secondary" type="button" hidden>עוד גרסאות</button>
+              <div id="historicalPhoto" class="photo" hidden></div>
+            </details>
             <div class="equipment">
               <h3>רשימת ציוד</h3>
               <p id="equipmentStatus" class="muted"></p>
               <div id="equipmentList"></div>
+              <div id="itemHistory" class="fault-list" hidden></div>
               <button id="moreEquipment" class="secondary" type="button" hidden>עוד ציוד</button>
               <form id="itemForm" hidden>
                 <h3 id="itemFormTitle">הוסף ציוד</h3>
@@ -164,11 +172,13 @@
   const changeEventStatus = httpsCallable(functions, 'transitionVehicleEquipmentEvent');
   const writeItem = httpsCallable(functions, 'saveVehicleCompartmentItem');
   const writePhoto = httpsCallable(functions, 'saveVehicleCompartmentPhoto');
+  const restorePhoto = httpsCallable(functions, 'restoreVehicleCompartmentPhoto');
   let generation = 0, stationId = '', selectedVehicle = '', selectedSector = '', currentUid = '';
   let fleet = [], canFleet = false, canEvent = false, activeContext = null;
   let photoRevision = 0, equipmentCursor = null, eventsCursor = null, faultsCursor = null;
   let equipmentHasMore = false, eventHasMore = false, faultsHasMore = false;
   let selectedItem = null, pendingEvent = null, pendingItem = null, pendingPhoto = null;
+  let pendingRestore = null, photoHistoryCursor = null, photoHistoryHasMore = false;
   let pendingVehicle = null, tokenCheck = 0, roleKey = '', superMode = false;
   let compartmentLoad = 0, vehicleLoad = 0;
   renderStuckNav('');
@@ -199,6 +209,32 @@
     return previous && previous.key === key ? previous :
       { key, id:crypto.randomUUID() };
   }
+  async function showItemHistory(row, context) {
+    const box = $('itemHistory');
+    box.hidden = false; box.textContent = 'טוען יומן שינויי ציוד…';
+    const loadId = compartmentLoad;
+    try {
+      const snapshot = await getDocs(query(collection(db, ...pathFor(context, context.compartment_id),
+        'items', row.id, 'changes'), orderBy('created_at', 'desc'), limit(20)));
+      if (!sameContext(context) || selectedSector !== context.compartment_id ||
+          compartmentLoad !== loadId) return;
+      box.replaceChildren();
+      if (snapshot.empty) { box.textContent = 'אין עריכות מתועדות מאז הפעלת היומן.'; return; }
+      snapshot.forEach(change => {
+        const data = change.data() || {};
+        const card = document.createElement('div'); card.className = 'event';
+        const before = data.before || {}, after = data.after || {};
+        card.textContent = 'גרסה ' + data.revision + ' · ' +
+          (before.name || 'פריט חדש') + ' (' + (before.quantity ?? '—') + ') ← ' +
+          (after.name || '—') + ' (' + (after.quantity ?? '—') + ') · ' +
+          'בוצע על ידי ' + (data.by_uid || 'לא ידוע');
+        box.append(card);
+      });
+    } catch (_) {
+      if (sameContext(context) && compartmentLoad === loadId)
+        box.textContent = 'יומן שינויי הציוד לא נטען. נסו שוב.';
+    }
+  }
   function renderEquipment(rows, append = false) {
     if (!append) $('equipmentList').replaceChildren();
     rows.forEach(row => {
@@ -220,6 +256,10 @@
         });
         wrap.append(edit);
       }
+      wrap.append(makeButton('יומן שינויים', 'secondary', false, () => {
+        const context = activeCellContext();
+        if (context) void showItemHistory(row, context);
+      }));
       $('equipmentList').append(wrap);
     });
   }
@@ -254,6 +294,11 @@
     if (!sameContext(context) || selectedVehicle !== context.vehicleId) return;
     const loadId = ++compartmentLoad;
     selectedSector = item.id; selectedItem = null; pendingItem = null; pendingPhoto = null;
+    pendingRestore = null; photoHistoryCursor = null; photoHistoryHasMore = false;
+    $('photoHistory').open = false;
+    $('photoHistoryList').replaceChildren(); $('historicalPhoto').hidden = true;
+    $('morePhotoHistory').hidden = true; $('photoHistoryStatus').textContent = '';
+    $('itemHistory').hidden = true; $('itemHistory').replaceChildren();
     $('saveItem').disabled = false; $('saveSectorPhoto').disabled = false;
     equipmentCursor = null; equipmentHasMore = false; photoRevision = 0;
     $('sectorDetail').hidden = false;
@@ -289,6 +334,104 @@
     }
     await loadEquipment(request, false, loadId);
   }
+  async function loadPhotoHistory(context, append = false) {
+    if (!sameContext(context) || selectedSector !== context.compartment_id ||
+        !$('photoHistory').open) return;
+    const loadId = compartmentLoad;
+    $('photoHistoryStatus').textContent = 'טוען גרסאות תמונה…';
+    $('morePhotoHistory').disabled = true;
+    try {
+      const parts = [orderBy('revision', 'desc'), limit(11)];
+      if (append && photoHistoryCursor) parts.push(startAfter(photoHistoryCursor));
+      const snapshot = await getDocs(query(collection(db, ...pathFor(context, context.compartment_id),
+        'photos', 'current', 'revisions'), ...parts));
+      if (!sameContext(context) || selectedSector !== context.compartment_id ||
+          compartmentLoad !== loadId || !$('photoHistory').open) return;
+      if (!append) $('photoHistoryList').replaceChildren();
+      const page = snapshot.docs.slice(0, 10);
+      photoHistoryCursor = page.at(-1) || null;
+      photoHistoryHasMore = snapshot.docs.length > 10;
+      page.forEach(snapshot => {
+        const revision = snapshot.data() || {};
+        const card = document.createElement('div'); card.className = 'event';
+        const heading = document.createElement('strong');
+        heading.textContent = 'גרסה ' + revision.revision +
+          (revision.source === 'legacy_baseline' ? ' · תמונת בסיס' :
+            revision.source === 'restore' ? ' · שוחזרה מגרסה ' + revision.restored_from_revision : '');
+        card.append(heading);
+        const show = makeButton('הצג תמונה', 'secondary', false, async () => {
+          if (!sameContext(context) || selectedSector !== context.compartment_id) return;
+          const oldLoad = compartmentLoad;
+          $('historicalPhoto').hidden = false;
+          $('historicalPhoto').textContent = 'טוען תמונה נבחרת…';
+          try {
+            const blob = await getDoc(doc(db, ...pathFor(context, context.compartment_id),
+              'photos', 'current', 'blobs', snapshot.id));
+            if (!sameContext(context) || compartmentLoad !== oldLoad ||
+                selectedSector !== context.compartment_id) return;
+            const value = blob.exists() ? blob.data() || {} : {};
+            if (value.image_sha256 !== revision.image_sha256 ||
+                !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.data || '')) {
+              $('historicalPhoto').textContent = 'התמונה ההיסטורית חסרה או לא תואמת לרישום.'; return;
+            }
+            const image = document.createElement('img');
+            image.alt = 'תמונת תא מגרסה ' + revision.revision;
+            image.src = value.data; $('historicalPhoto').replaceChildren(image);
+          } catch (_) {
+            if (sameContext(context) && compartmentLoad === oldLoad)
+              $('historicalPhoto').textContent = 'התמונה ההיסטורית לא נטענה.';
+          }
+        });
+        card.append(show);
+        if (canFleet && Number.isSafeInteger(revision.revision) && revision.revision > 0) {
+          const restore = makeButton('שחזר כגרסה חדשה', 'secondary', false, async () => {
+            if (!sameContext(context) || selectedSector !== context.compartment_id) return;
+            const body = { vehicle_id:context.vehicleId, compartment_id:context.compartment_id,
+              expected_revision:photoRevision, source_revision:revision.revision };
+            if (pendingRestore && pendingRestore.key !== JSON.stringify(body)) {
+              $('photoHistoryStatus').textContent = 'השחזור הקודם טרם הוכרע. רעננו לפני ניסיון אחר.'; return;
+            }
+            pendingRestore = attempt(pendingRestore, body);
+            restore.disabled = true; $('photoHistoryStatus').textContent = 'משחזר כגרסה חדשה…';
+            try {
+              await restorePhoto(scopedWrite({ ...body, request_id:pendingRestore.id }, context));
+              if (!sameContext(context) || selectedSector !== context.compartment_id) return;
+              pendingRestore = null;
+              await showCompartment({ id:context.compartment_id,
+                label:$('sectorTitle').textContent }, context);
+              $('photoHistory').open = true;
+              await loadPhotoHistory(activeCellContext());
+              $('photoHistoryStatus').textContent = 'התמונה שוחזרה כגרסה חדשה.';
+            } catch (_) {
+              if (sameContext(context)) $('photoHistoryStatus').textContent =
+                'השחזור לא אומת. נסו שוב באותו כפתור או רעננו את התא.';
+            } finally { restore.disabled = false; }
+          });
+          card.append(restore);
+        }
+        $('photoHistoryList').append(card);
+      });
+      $('photoHistoryStatus').textContent = $('photoHistoryList').children.length
+        ? $('photoHistoryList').children.length + ' גרסאות מוצגות. תמונה נטענת רק בבחירה.'
+        : 'אין תמונות היסטוריות לתא זה.';
+      $('morePhotoHistory').hidden = !photoHistoryHasMore;
+    } catch (_) {
+      if (sameContext(context) && compartmentLoad === loadId)
+        $('photoHistoryStatus').textContent = 'היסטוריית התמונות לא נטענה. נסו שוב.';
+    } finally {
+      if (sameContext(context) && compartmentLoad === loadId)
+        $('morePhotoHistory').disabled = false;
+    }
+  }
+  $('photoHistory').addEventListener('toggle', () => {
+    const context = activeCellContext();
+    if (context && $('photoHistory').open) void loadPhotoHistory(context);
+    if (!$('photoHistory').open) $('historicalPhoto').hidden = true;
+  });
+  $('morePhotoHistory').addEventListener('click', () => {
+    const context = activeCellContext();
+    if (context && photoHistoryHasMore) void loadPhotoHistory(context, true);
+  });
   function vehicleContext(context) {
     return sameContext(context) && selectedVehicle === context.vehicleId &&
       vehicleLoad === context.load;

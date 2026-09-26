@@ -168,6 +168,16 @@ async function test() {
     await assert.rejects(() => f.service.saveItem(f.req(item(0, 'anotherrequest12345'))),
       error => error.code === 'aborted');
     assert.equal((await f.service.saveItem(f.req(item(1, 'anotherrequest12345')))).revision, 2);
+    assert.deepEqual(await f.service.saveItem(f.req(item())), {
+      item_id:'item-1', revision:1, written:false
+    });
+    const path = `stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/items/item-1`;
+    const first = f.data.get(path + '/changes/' + item().request_id);
+    assert.equal(first.before, null);
+    assert.equal(first.after.name, 'זרנוק');
+    assert.equal(f.data.get(path + '/changes/anotherrequest12345').from_revision, 1);
+    await assert.rejects(() => f.service.saveItem(f.req({ ...item(), name:'שינוי אחר' })),
+      error => error.code === 'already-exists');
   });
   await check('officer photo is one bounded versioned document', async () => {
     const f = fixture('commander');
@@ -177,6 +187,59 @@ async function test() {
       error => error.code === 'aborted');
     const saved = f.data.get(`stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/photos/current`);
     assert.equal(saved.data, jpeg);
+    const root = `stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/photos/current`;
+    assert.equal(f.data.get(root + '/revisions/00000001').revision, 1);
+    assert.equal(f.data.get(root + '/blobs/00000001').data, jpeg);
+    assert.equal(f.data.get(root + '/revisions/00000001').data, undefined);
+    const second = await f.service.savePhoto(f.req(photo(1, 'anotherrequest12345')));
+    assert.equal(second.revision, 2);
+    assert.equal((await f.service.savePhoto(f.req(photo()))).revision, 1);
+    assert.equal(f.data.get(root + '/revisions/00000002').revision, 2);
+    const restored = await f.service.restorePhoto(f.req({
+      vehicle_id:'v407', compartment_id:'bay-1', request_id:'restorerequest12345',
+      expected_revision:2, source_revision:1
+    }));
+    assert.equal(restored.revision, 3);
+    assert.equal(f.data.get(root + '/revisions/00000003').restored_from_revision, 1);
+    assert.equal(f.data.get(root + '/blobs/00000003').data, jpeg);
+    await assert.rejects(() => f.service.restorePhoto(f.req({
+      vehicle_id:'v407', compartment_id:'bay-1', request_id:'anotherrestore12345',
+      expected_revision:2, source_revision:1
+    })), error => error.code === 'aborted');
+  });
+  await check('legacy current photo is captured as immutable baseline on first change', async () => {
+    const f = fixture('commander');
+    const root = `stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/photos/current`;
+    f.data.set(root, { schema:'vehicle-compartment-photo-v1', data:jpeg,
+      w:1, h:1, revision:5, by_uid:f.uid, updated_at:'old-time' });
+    assert.equal((await f.service.savePhoto(f.req(photo(5)))).revision, 6);
+    assert.equal(f.data.get(root + '/revisions/00000005').source, 'legacy_baseline');
+    assert.equal(f.data.get(root + '/blobs/00000005').data, jpeg);
+    assert.equal(f.data.has(root + '/revisions/00000004'), false);
+  });
+  await check('corrupt legacy photo is not silently archived as a valid baseline', async () => {
+    const f = fixture('commander');
+    const root = `stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/photos/current`;
+    f.data.set(root, { schema:'vehicle-compartment-photo-v1', data:'broken',
+      w:1, h:1, revision:5, by_uid:f.uid });
+    await assert.rejects(() => f.service.savePhoto(f.req(photo(5))),
+      error => error.code === 'failed-precondition');
+    assert.equal(f.data.has(root + '/revisions/00000006'), false);
+    assert.equal(f.data.has(root + '/blobs/00000006'), false);
+  });
+  await check('near-limit photo fits one blob and malformed history cannot restore', async () => {
+    const f = fixture('commander');
+    const bytes = Buffer.alloc(contract.IMAGE_MAX, 0);
+    bytes[0] = 0xff; bytes[1] = 0xd8; bytes[2] = 0xff;
+    const large = { ...photo(), data:'data:image/jpeg;base64,' + bytes.toString('base64') };
+    assert.equal((await f.service.savePhoto(f.req(large))).revision, 1);
+    const root = `stations/${f.sid}/vehicle_inventory/v407/compartments/bay-1/photos/current`;
+    assert.equal(f.data.get(root + '/blobs/00000001').data, large.data);
+    f.data.get(root + '/blobs/00000001').image_sha256 = 'wrong';
+    await assert.rejects(() => f.service.restorePhoto(f.req({
+      vehicle_id:'v407', compartment_id:'bay-1', request_id:'restorerequest12345',
+      expected_revision:1, source_revision:1
+    })), error => error.code === 'failed-precondition');
   });
   await check('event rate quota is bounded per actor/hour', async () => {
     const f = fixture();

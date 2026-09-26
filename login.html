@@ -315,10 +315,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
        מעבר לדף הבית הבהב חצי שנייה של "מספר עובד וסיסמה". -->
   <section id="joinPanel" class="hide" aria-labelledby="joinTitle"></section>
   <details id="invitationPanel" class="hide">
-    <summary>הצטרפות באמצעות הזמנה</summary>
-    <p>קיבלת הזמנה ממנהל־על? אין צורך למלא בקשת הרשמה רגילה. הזן את שני הפרטים בערוץ פרטי בלבד; הם אינם נשמרים בדפדפן.</p>
-    <label for="invitationId">מזהה הזמנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
-    <label for="invitationSecret">סוד הזמנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    <summary>הצטרפות מהזמנה אישית</summary>
+    <p id="personalInviteHint">פתחו את קישור ההזמנה שנשלח אליכם. אם קיבלתם בעבר מזהה וסוד בנפרד, אפשר להזין אותם כאן.</p>
+    <div id="legacyInviteFields">
+      <label for="invitationId">מזהה הזמנה ישנה</label><input id="invitationId" dir="ltr" autocomplete="off" maxlength="128">
+      <label for="invitationSecret">סוד הזמנה ישנה</label><input id="invitationSecret" type="password" dir="ltr" autocomplete="off" maxlength="256">
+    </div>
     <div id="invitationAccount">
       <label for="invitationEmail">המייל שאליו נשלחה ההזמנה</label><input id="invitationEmail" type="email" dir="ltr" autocomplete="username">
       <label for="invitationPassword">סיסמה</label><input id="invitationPassword" type="password" autocomplete="current-password">
@@ -692,6 +694,7 @@ import { initHomeCommand, destroyHomeCommand } from './home-command.js?v=42h39';
 import { ROLE_VIEW_OPTIONS, resolveRoleView } from './role-view.js?v=42h39';
 import { consumeActualRoleViewNavigation } from './role-view-page.js?v=42h39';
 import { readJoinToken, createJoinPanel, renderJoinStatus, renderReadinessBanner } from './join-ui.js?v=42h39';
+import { consumePersonalInvitation } from './invitation-link.js?v=42h42';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signOut, onIdTokenChanged,
@@ -769,6 +772,14 @@ const callRedeemJoin = httpsCallable(fns, 'redeemJoinCampaign');
 const callMyJoinStatus = httpsCallable(fns, 'getMyJoinStatus');
 const callMyReadiness = httpsCallable(fns, 'getMyReadiness');
 const JOIN_TOKEN = readJoinToken(location.search);
+const PERSONAL_INVITE = consumePersonalInvitation(window);
+if (PERSONAL_INVITE) {
+  $('invitationId').value = PERSONAL_INVITE.invite_id;
+  $('invitationSecret').value = PERSONAL_INVITE.secret;
+  $('legacyInviteFields').classList.add('hide');
+  $('personalInviteHint').textContent = 'הקישור נקלט. בחרו סיסמה, אמתו את המייל ואשרו את התקנון כדי לשלוח את הבקשה. ההרשאה תינתן רק אחרי אישור התחנה.';
+  $('invitationPanel').open = true;
+}
 let joinPanel = null, joinRegistered = false;
 function ensureJoinPanel(){
   if (!JOIN_TOKEN || joinPanel) return joinPanel;

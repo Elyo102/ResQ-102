@@ -19,6 +19,10 @@ const outsider = env.authenticatedContext('outside', { email:'outside@example.te
   stationId:'other_station', districtId:'north', shift:'B' }).firestore();
 const item = `stations/${sid}/vehicle_inventory/v1/compartments/cabin/items/hose`;
 const photo = `stations/${sid}/vehicle_inventory/v1/compartments/cabin/photos/current`;
+const itemChange = `${item}/changes/request1234567890`;
+const photoRevision = `${photo}/revisions/00000001`;
+const photoBlob = `${photo}/blobs/00000001`;
+const photoRequest = `${photo}/requests/request1234567890`;
 const event = `stations/${sid}/vehicle_inventory/v1/equipment_events/event1`;
 const transition = `${event}/transitions/transition1`;
 const quota = `stations/${sid}/vehicle_event_quotas/actor`;
@@ -32,24 +36,29 @@ try {
       consent_key:'1.3|2026-09-24', terms_version:'1.3',
       privacy_version:'2026-09-24',
       receipt_path:'registration_consents/ff/events/test-receipt' });
+    await setDoc(doc(db, `registration_terms_active/outside`), { uid:'outside',
+      consent_key:'1.3|2026-09-24', terms_version:'1.3',
+      privacy_version:'2026-09-24',
+      receipt_path:'registration_consents/outside/events/test-receipt' });
     await setDoc(doc(db, `stations/${sid}`), { status:'active', active:true,
       districtId:'south', lifecycle:{ revision:1 } });
     await setDoc(doc(db, `stations/${sid}/users/ff`), { role:'firefighter',
       employee_number:'1', is_active:true, crew:'A' });
-    for (const path of [item, photo, event, transition, quota, batch, photoQuota]) {
+    for (const path of [item, photo, itemChange, photoRevision, photoBlob,
+      photoRequest, event, transition, quota, batch, photoQuota]) {
       await setDoc(doc(db, path), { seed:true });
     }
   });
-  for (const path of [item, photo, event, transition]) {
+  for (const path of [item, photo, itemChange, photoRevision, photoBlob, event, transition]) {
     await assertSucceeds(getDoc(doc(member, path)));
     await assertFails(getDoc(doc(outsider, path)));
     await assertFails(setDoc(doc(member, path), { changed:true }));
   }
-  for (const path of [quota, batch, photoQuota]) {
+  for (const path of [photoRequest, quota, batch, photoQuota]) {
     await assertFails(getDoc(doc(member, path)));
     await assertFails(setDoc(doc(member, path), { changed:true }));
   }
-  console.log('operational vehicle and photo batch Rules: 18 checks passed');
+  console.log('operational vehicle and photo batch Rules: 29 checks passed');
 } finally {
   await env.cleanup();
 }

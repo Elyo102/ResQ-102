@@ -20,6 +20,9 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError,
   const userRef = (sid, uid) => db.doc(`${station(sid)}/users/${uid}`);
   const compartmentRoot = (sid, vid, cell) =>
     `${station(sid)}/vehicle_inventory/${vid}/compartments/${cell}`;
+  const versionKey = value => String(value).padStart(8, '0');
+  const photoRoot = (sid, vid, cell) => `${compartmentRoot(sid, vid, cell)}/photos/current`;
+  const imageDigest = data => crypto.createHash('sha256').update(data).digest('hex');
   const eventRef = (sid, vid, id) =>
     db.doc(`${station(sid)}/vehicle_inventory/${vid}/equipment_events/${id}`);
   const bodyOf = req => {
@@ -197,13 +200,21 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError,
     const input = parse(contract.parseItem, bodyOf(req));
     const ctx = await actor(req, contract.FLEET_WRITERS);
     const ref = db.doc(`${compartmentRoot(ctx.sid, input.vehicle_id, input.compartment_id)}/items/${input.item_id}`);
+    const receipt = db.doc(`${ref.path}/changes/${input.request_id}`);
     const digest = hash({ input, uid:ctx.uid });
     const time = timestamp();
     return db.runTransaction(async tx => {
-      const existing = await tx.get(ref);
+      const [existing, prior] = await Promise.all([tx.get(ref), tx.get(receipt)]);
       await liveStationUser(tx, ctx);
       await activeBoardVehicle(tx, ctx, input.vehicle_id);
       const old = existing.exists ? existing.data() || {} : null;
+      if (prior.exists) {
+        const saved = prior.data() || {};
+        if (saved.digest === digest && saved.by_uid === ctx.uid) {
+          return { item_id:input.item_id, revision:saved.revision, written:false };
+        }
+        return fail('already-exists', 'מזהה הפעולה כבר שימש לשינוי אחר.', 'request_conflict');
+      }
       if (old && old.last_request_id === input.request_id && old.last_digest === digest) {
         return { item_id:input.item_id, revision:old.revision, written:false };
       }
@@ -219,21 +230,38 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError,
       };
       if (old) tx.update(ref, body);
       else tx.create(ref, { ...body, created_at:time.stamp });
+      tx.create(receipt, { schema:'vehicle-item-change-v1',
+        vehicle_id:input.vehicle_id, compartment_id:input.compartment_id,
+        item_id:input.item_id, by_uid:ctx.uid, created_at:time.stamp,
+        from_revision:previous, revision:previous + 1, digest,
+        before:old ? { name:old.name, quantity:old.quantity,
+          status:old.status, notes:old.notes || '' } : null,
+        after:{ name:input.name, quantity:input.quantity,
+          status:input.status, notes:input.notes } });
       return { item_id:input.item_id, revision:previous + 1, written:true };
     });
   }
 
-  async function savePhoto(req) {
-    const input = parse(contract.parsePhoto, bodyOf(req));
+  async function mutatePhoto(req, restored) {
+    const input = parse(restored ? contract.parsePhotoRestore : contract.parsePhoto, bodyOf(req));
     const ctx = await actor(req, contract.FLEET_WRITERS);
-    const ref = db.doc(`${compartmentRoot(ctx.sid, input.vehicle_id, input.compartment_id)}/photos/current`);
+    const root = photoRoot(ctx.sid, input.vehicle_id, input.compartment_id);
+    const ref = db.doc(root);
+    const receipt = db.doc(`${root}/requests/${input.request_id}`);
     const digest = hash({ input, uid:ctx.uid });
     const time = timestamp();
     return db.runTransaction(async tx => {
-      const existing = await tx.get(ref);
+      const [existing, prior] = await Promise.all([tx.get(ref), tx.get(receipt)]);
       await liveStationUser(tx, ctx);
       await activeBoardVehicle(tx, ctx, input.vehicle_id);
       const old = existing.exists ? existing.data() || {} : null;
+      if (prior.exists) {
+        const saved = prior.data() || {};
+        if (saved.digest === digest && saved.by_uid === ctx.uid) {
+          return { revision:saved.revision, written:false };
+        }
+        return fail('already-exists', 'מזהה הפעולה כבר שימש לתמונה אחרת.', 'request_conflict');
+      }
       if (old && old.last_request_id === input.request_id && old.last_digest === digest) {
         return { revision:old.revision, written:false };
       }
@@ -241,18 +269,79 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError,
       if (!Number.isSafeInteger(previous) || previous !== input.expected_revision) {
         return fail('aborted', 'תמונת התא השתנתה בינתיים. רעננו לפני שמירה.', 'revision_conflict');
       }
+      if (previous >= 1000000) return fail('failed-precondition', 'מספר הגרסאות הגיע לגבול.', 'revision_limit');
+      const oldKey = versionKey(previous), next = previous + 1, nextKey = versionKey(next);
+      const oldMetaRef = old && previous > 0 ? db.doc(`${root}/revisions/${oldKey}`) : null;
+      const oldBlobRef = old && previous > 0 ? db.doc(`${root}/blobs/${oldKey}`) : null;
+      const nextMetaRef = db.doc(`${root}/revisions/${nextKey}`);
+      const nextBlobRef = db.doc(`${root}/blobs/${nextKey}`);
+      const [oldMeta, oldBlob, nextMeta, nextBlob, source] = await Promise.all([
+        oldMetaRef ? tx.get(oldMetaRef) : null,
+        oldBlobRef ? tx.get(oldBlobRef) : null,
+        tx.get(nextMetaRef), tx.get(nextBlobRef),
+        restored ? tx.get(db.doc(`${root}/blobs/${versionKey(input.source_revision)}`)) : null
+      ]);
+      if (nextMeta.exists || nextBlob.exists) {
+        return fail('failed-precondition', 'גרסת התמונה הבאה כבר קיימת.', 'revision_exists');
+      }
+      if (oldMetaRef && oldMeta.exists !== oldBlob.exists) {
+        return fail('failed-precondition', 'היסטוריית התמונה אינה עקבית.', 'history_incomplete');
+      }
+      if (oldMetaRef && !oldMeta.exists &&
+          (typeof old.data !== 'string' || !/^data:image\/jpeg;base64,/.test(old.data) ||
+            Buffer.byteLength(JSON.stringify({ data:old.data, w:old.w, h:old.h }), 'utf8') > 950000)) {
+        return fail('failed-precondition', 'תמונת הבסיס הישנה אינה תקינה.', 'legacy_image_invalid');
+      }
+      if (restored && (!source || !source.exists)) {
+        return fail('not-found', 'התמונה ההיסטורית אינה זמינה לשחזור.', 'source_missing');
+      }
+      const image = restored ? source.data() || {} : input;
+      if (typeof image.data !== 'string' || !/^data:image\/jpeg;base64,/.test(image.data)) {
+        return fail('failed-precondition', 'נתוני התמונה אינם תקינים.', 'image_invalid');
+      }
+      const imageHash = imageDigest(image.data);
+      if (restored && imageHash !== image.image_sha256) {
+        return fail('failed-precondition', 'התמונה ההיסטורית אינה תואמת לרישום.', 'image_digest_mismatch');
+      }
+      // Each blob document contains one JPEG only. Keep explicit headroom for
+      // Firestore document metadata and first-edit baseline transaction size.
+      if (Buffer.byteLength(JSON.stringify({ data:image.data, w:image.w, h:image.h }), 'utf8') > 950000) {
+        return fail('invalid-argument', 'התמונה גדולה מדי לשמירה בטוחה.', 'image_document_limit');
+      }
       const body = {
-        schema:'vehicle-compartment-photo-v1', data:input.data, w:input.w, h:input.h,
-        revision:previous + 1, by_uid:ctx.uid, updated_at:time.stamp,
+        schema:'vehicle-compartment-photo-v1', data:image.data, w:image.w, h:image.h,
+        revision:next, by_uid:ctx.uid, updated_at:time.stamp,
         last_request_id:input.request_id, last_digest:digest
       };
+      if (oldMetaRef && !oldMeta.exists) {
+        const oldHash = imageDigest(old.data);
+        tx.create(oldMetaRef, { schema:'vehicle-photo-revision-v1', revision:previous,
+          by_uid:old.by_uid || '', created_at:old.updated_at || old.created_at || time.stamp,
+          image_sha256:oldHash, w:old.w, h:old.h,
+          source:'legacy_baseline', restored_from_revision:null });
+        tx.create(oldBlobRef, { schema:'vehicle-photo-blob-v1', data:old.data,
+          w:old.w, h:old.h, image_sha256:oldHash });
+      }
+      tx.create(nextMetaRef, { schema:'vehicle-photo-revision-v1', revision:next,
+        by_uid:ctx.uid, created_at:time.stamp, image_sha256:imageHash,
+        w:image.w, h:image.h, source:restored ? 'restore' : 'upload',
+        restored_from_revision:restored ? input.source_revision : null });
+      tx.create(nextBlobRef, { schema:'vehicle-photo-blob-v1', data:image.data,
+        w:image.w, h:image.h, image_sha256:imageHash });
+      tx.create(receipt, { schema:'vehicle-photo-change-v1', by_uid:ctx.uid,
+        created_at:time.stamp, from_revision:previous, revision:next,
+        image_sha256:imageHash, digest,
+        restored_from_revision:restored ? input.source_revision : null });
       if (old) tx.update(ref, body);
       else tx.create(ref, { ...body, created_at:time.stamp });
-      return { revision:previous + 1, written:true };
+      return { revision:next, written:true };
     });
   }
 
-  return Object.freeze({ listAvailableStations, recordEvent, transitionEvent, saveItem, savePhoto });
+  const savePhoto = req => mutatePhoto(req, false);
+  const restorePhoto = req => mutatePhoto(req, true);
+
+  return Object.freeze({ listAvailableStations, recordEvent, transitionEvent, saveItem, savePhoto, restorePhoto });
 }
 
 module.exports = Object.freeze({ createOperationalVehicleService, HOUR_LIMIT });

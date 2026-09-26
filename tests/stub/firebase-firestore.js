@@ -655,6 +655,11 @@ export async function runTransaction(dbRef, updateFunction){
 function getDoc0(ref){
   const p = (ref && ref.path) || '';
   if (typeof window !== 'undefined') { (window.__FIRESTORE_GETDOC_PATHS = window.__FIRESTORE_GETDOC_PATHS || []).push(p); }
+  if (/\/photos\/current\/blobs\/[^/]+$/.test(p) && typeof window !== 'undefined') {
+    const value = (window.__VEHICLE_PHOTO_BLOBS || {})[p.split('/').pop()];
+    return Promise.resolve(value ? docSnap(value, p.split('/').pop()) :
+      { exists:() => false, data:() => undefined, id:p.split('/').pop() });
+  }
   if (/\/callouts\/[^/]+\/responses\/[^/]+$/.test(p)) {
     // 42H.20 §5.4 · alerts-feed.js reads `seen_at` here for the trusted
     // callout-viewed state. window.__CALLOUT_SEEN_EXTRA (a Set/array of
@@ -855,6 +860,14 @@ function constrainedRows(source, constraints) {
 export function getDocs(q){
   const p = (q && q.path) || '';
   const delayed = value => delayedRead(value, p).then(result => corruptRead(result, p));
+  if (/\/photos\/current\/revisions$/.test(p) && typeof window !== 'undefined') {
+    return delayed(listSnap(constrainedRows(window.__VEHICLE_PHOTO_REVISIONS || [],
+      (q && q.constraints) || [])));
+  }
+  if (/\/items\/[^/]+\/changes$/.test(p) && typeof window !== 'undefined') {
+    return delayed(listSnap(constrainedRows(window.__VEHICLE_ITEM_CHANGES || [],
+      (q && q.constraints) || [])));
+  }
   if (/\/attendance_shadow_people$/.test(p) && typeof window !== 'undefined' &&
       Array.isArray(window.__SHADOW_PEOPLE_PLAN)) {
     const step = window.__SHADOW_PEOPLE_PLAN.length

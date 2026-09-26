@@ -206,13 +206,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <label for="spEmail">מייל המוזמן</label><input id="spEmail" type="email" dir="ltr" autocomplete="off">
         <label for="spPhone">טלפון</label><input id="spPhone" type="tel" dir="ltr" autocomplete="off">
         <label for="spShift">משמרת</label><select id="spShift"><option value="A">א׳</option><option value="B">ב׳</option><option value="C">ג׳</option></select>
-        <button type="button" id="spIssue">צור ושלח הזמנה</button>
+        <button type="button" id="spIssue">צור קישור הזמנה</button>
         <button type="button" id="spIssueEdit" class="ghost">תקן פרטי הזמנה שלא נוצרה</button>
         <div id="spSecretBox" class="hide">
-          <p>שמור והעבר למוזמן בערוץ פרטי. הסוד מוצג פעם אחת בלבד ואינו ניתן לשחזור כאן.</p>
-          <label for="spInviteId">מזהה הזמנה</label><input id="spInviteId" readonly dir="ltr" autocomplete="off">
-          <label for="spSecret">סוד הזמנה</label><input id="spSecret" readonly dir="ltr" autocomplete="off">
-          <button type="button" id="spCopy">העתק פרטי הזמנה</button><button type="button" id="spHide" class="ghost">הסתר סוד</button>
+          <p>העתק את הקישור ושלח אותו למוזמן בלבד בערוץ פרטי. הקישור מוצג פעם אחת; יצירתו אינה שולחת הודעה אוטומטית.</p>
+          <label for="spInviteLink">קישור הצטרפות אישי</label><input id="spInviteLink" readonly dir="ltr" autocomplete="off">
+          <input id="spInviteId" type="hidden"><input id="spSecret" type="hidden">
+          <button type="button" id="spCopy">העתק קישור</button><button type="button" id="spHide" class="ghost">הסתר קישור</button>
         </div>
         <button type="button" id="spReady" class="ghost">בדיקת מוכנות והפעלה</button>
         <p>בדיקה זו מפעילה את התחנה רק אם כל תנאי המוכנות מתקיימים. מצב שקט אינו מוסר בפעולה זו.</p>
@@ -411,6 +411,7 @@ const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
 import { initAppCheck } from './appcheck.js?v=42h39';
 import { createJoinAdmin } from './join-admin-ui.js?v=42h39';
+import { personalInvitationLink } from './invitation-link.js?v=42h42';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -469,6 +470,7 @@ function initJoinAdmin(claims){
 }
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
+const callApprovalMailStatus = httpsCallable(fns, 'approvalMailStatus');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 // הרשאות הסידור נקראות ונכתבות רק דרך השרת. הדפדפן אינו שולח
@@ -524,7 +526,7 @@ const stationUiCalls = {
 let stationUiEpoch = 0, stationUiUid = '', stationUiBusy = false;
 let stationUiIntent = null, stationUiIssueIntent = null, stationUiCreated = false;
 function clearStationSecret(){
-  $('spInviteId').value = ''; $('spSecret').value = '';
+  $('spInviteId').value = ''; $('spSecret').value = ''; $('spInviteLink').value = '';
   $('spSecretBox').classList.add('hide');
 }
 function resetStationUi(){
@@ -571,8 +573,9 @@ async function stationUiAction(kind){
       clearStationSecret();
       if (result.secret_available === true && typeof result.secret === 'string') {
         $('spInviteId').value = result.invite_id; $('spSecret').value = result.secret;
+        $('spInviteLink').value = personalInvitationLink(location.href, result.invite_id, result.secret);
         $('spSecretBox').classList.remove('hide');
-        msg('spStatus', 'ההזמנה נוצרה. העבר את שני השדות למוזמן; המימוש נמצא במסך הכניסה תחת הצטרפות באמצעות הזמנה.', 'ok');
+        msg('spStatus', 'הקישור נוצר. העתק אותו ושלח למוזמן בערוץ פרטי; לא נשלח מייל אוטומטי.', 'ok');
       } else msg('spStatus', 'ההזמנה כבר נוצרה. הסוד אינו זמין שוב; אין כאן שחזור או הנפקה חוזרת אוטומטית.', 'info');
     } else msg('spStatus', 'השרת אישר מוכנות והפעלה. התחנה עדיין במצב שקט.', 'ok');
   } catch (error) {
@@ -588,9 +591,9 @@ $('spIssueEdit').onclick=()=>{
 };
 $('spHide').onclick=clearStationSecret;
 $('spCopy').onclick=async()=>{
-  if (!$('spSecret').value) return;
-  try { await navigator.clipboard.writeText('מזהה הזמנה: '+$('spInviteId').value+'\nסוד הזמנה: '+$('spSecret').value); }
-  catch { msg('spStatus', 'העתקה אוטומטית אינה זמינה. ניתן לסמן ולהעתיק את שני השדות ידנית.', 'info'); }
+  if (!$('spInviteLink').value) return;
+  try { await navigator.clipboard.writeText($('spInviteLink').value); msg('spStatus','הקישור הועתק. יש לשלוח אותו למוזמן בערוץ פרטי.','ok'); }
+  catch { msg('spStatus', 'העתקה אוטומטית אינה זמינה. ניתן לסמן ולהעתיק את הקישור ידנית.', 'info'); }
 };
 window.addEventListener('pagehide', clearStationSecret);
 initPWA({ offer: false });
@@ -1675,6 +1678,39 @@ $('btnUsers').onclick = async () => {
         (u.email_verified
           ? '<div class="match found">המייל מאומת</div>'
           : '<div class="match none">המייל לא מאומת — לא יוכל להיכנס</div>');
+
+      if (c.emp && c.super !== true) {
+        const mailButton = document.createElement('button');
+        mailButton.type = 'button'; mailButton.className = 'ghost';
+        mailButton.textContent = 'בדוק מייל מספר עובד';
+        const mailState = document.createElement('p');
+        mailState.setAttribute('role', 'status');
+        mailButton.onclick = async () => {
+          mailButton.disabled = true; mailState.textContent = 'בודק מצב הודעה…';
+          try {
+            const result = (await callApprovalMailStatus({ uid:u.uid })).data;
+            const state = result.state;
+            mailState.textContent = ({ 'SUCCESS':'המייל נשלח.', 'PENDING':'המייל בתור.',
+              'PROCESSING':'המייל בשליחה.', 'SUPPRESSED':'המייל דוכא לפי מצב השקט של התחנה.',
+              'ERROR':'שליחת המייל נכשלה.', 'MISSING':'לא נמצא מייל אישור.' })[state] || 'מצב המייל אינו ידוע.';
+            if (['SUPPRESSED','ERROR','MISSING'].includes(state)) {
+              mailButton.textContent = 'נסה לשלוח שוב אחרי בדיקת מצב התחנה';
+              mailButton.onclick = async () => {
+                mailButton.disabled = true;
+                try {
+                  const retried = (await callApprovalMailStatus({ uid:u.uid, resend:true })).data;
+                  mailState.textContent = retried.state === 'PENDING'
+                    ? 'הודעה חדשה הוכנסה לתור; עדיין לא אושרה מסירה.'
+                    : 'לא נוצרה הודעה חדשה. מצב: ' + retried.state;
+                } catch (_) { mailState.textContent = 'הניסיון החוזר נכשל. בדקו את מצב התחנה.'; }
+                finally { mailButton.disabled = false; }
+              };
+            }
+          } catch (_) { mailState.textContent = 'לא ניתן לבדוק כעת את מצב המייל.'; }
+          finally { mailButton.disabled = false; }
+        };
+        row.append(mailButton, mailState);
+      }
 
       box.appendChild(row);
     });

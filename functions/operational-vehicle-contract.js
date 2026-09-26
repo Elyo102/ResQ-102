@@ -135,7 +135,22 @@ function parsePhoto(value) {
   });
 }
 
+function parsePhotoRestore(value) {
+  const data = exactObject(value, [
+    'vehicle_id', 'compartment_id', 'request_id', 'expected_revision', 'source_revision'
+  ]);
+  const source = revision(data.source_revision);
+  if (source < 1) throw inputError('Invalid source revision.');
+  return Object.freeze({
+    vehicle_id:id(data.vehicle_id, 'vehicle'),
+    compartment_id:compartment(data.compartment_id),
+    request_id:requestId(data.request_id),
+    expected_revision:revision(data.expected_revision), source_revision:source
+  });
+}
+
 module.exports = Object.freeze({
   COMPARTMENTS, MEMBER_ROLES, EVENT_WRITERS, FLEET_WRITERS,
-  parseEvent, parseTransition, parseItem, parsePhoto, ID, REQUEST_ID, IMAGE_MAX
+  parseEvent, parseTransition, parseItem, parsePhoto, parsePhotoRestore,
+  ID, REQUEST_ID, IMAGE_MAX
 });

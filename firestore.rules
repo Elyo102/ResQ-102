@@ -1129,10 +1129,25 @@ service cloud.firestore {
           match /items/{itemId} {
             allow read: if member(sid);
             allow write: if false;
+            match /changes/{requestId} {
+              allow read: if member(sid);
+              allow write: if false;
+            }
           }
           match /photos/{photoId} {
             allow read: if member(sid);
             allow write: if false;
+            match /revisions/{revisionId} {
+              allow read: if member(sid);
+              allow write: if false;
+            }
+            match /blobs/{revisionId} {
+              allow read: if member(sid);
+              allow write: if false;
+            }
+            match /requests/{requestId} {
+              allow read, write: if false;
+            }
           }
         }
         match /equipment_events/{eventId} {

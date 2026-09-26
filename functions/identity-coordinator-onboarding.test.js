@@ -129,12 +129,18 @@ const denied = fn => assert.rejects(fn, error => error.onboardingAuthority === t
     assert.equal(done.status, 'completed'); assert.deepEqual(done.onboarding_authority, f.authority);
     assert.equal(done.actor_uid, 'super_1'); assert.equal(done.request_id, f.params.requestId);
     assert.equal(f.store.get(f.registryPath).stage, 'assignment_completed');
+    const mail = f.store.get('mail/approval-' + f.opId);
+    assert.deepEqual(mail.to, ['member@example.test']);
+    assert.equal(mail.station_id, 'station_1');
+    assert(mail.message.text.includes('601'));
+    assert(!mail.message.text.includes('password123'));
     assert.equal(f.events.includes('auth-write'), true); assert.equal(f.events.includes('finalize-write'), true);
   });
   await test('completed retry works after request deletion without another Auth write', async () => {
     const f = setup(); await f.acquire(); await f.run();
     assert.equal((await f.acquire()).type, 'completed'); assert.deepEqual(await f.run(), { ok: true });
     assert.equal(f.auth.setCalls, 1);
+    assert.equal(f.writes.filter(path => path === 'mail/approval-' + f.opId).length, 1);
     const done = f.store.get(f.operationPath);
     assert.equal((await f.coordinator.resumeOperation({ uid: f.uid, opId: f.opId,
       planFingerprint: done.plan_fingerprint, actorUid: 'super_2' })).type, 'completed');

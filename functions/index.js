@@ -444,6 +444,8 @@ exports.saveVehicleCompartmentItem = onCall({ enforceAppCheck: true },
   req => operationalVehicleService.saveItem(req));
 exports.saveVehicleCompartmentPhoto = onCall({ enforceAppCheck: true, memory:'512MiB' },
   req => operationalVehicleService.savePhoto(req));
+exports.restoreVehicleCompartmentPhoto = onCall({ enforceAppCheck: true, memory:'512MiB' },
+  req => operationalVehicleService.restorePhoto(req));
 
 const invitationEngine = invitationsModule.createInvitations({
   clock: Date.now,
@@ -1865,6 +1867,38 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
   if (acquired.type === 'completed') return operation.result;
   return identityCoordinator.runAssignment(uid, operation.op_id, result, uid === auth.uid,
     { uid: auth.uid, email: auth.token.email });
+});
+
+// A suppressed or failed approval notice can be retried by the live super
+// admin after the station leaves silent mode. This never reassigns a number.
+exports.approvalMailStatus = onCall({ enforceAppCheck:true }, async req => {
+  await requireFreshOnboardingSuper(req);
+  const uid = String(req.data?.uid || '');
+  const resend = req.data?.resend === true;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) ||
+      Object.keys(req.data || {}).some(key => !['uid', 'resend'].includes(key))) {
+    throw new HttpsError('invalid-argument', 'נדרש מזהה חשבון תקין.');
+  }
+  const op = await identityCoordinator.getOperation(uid);
+  if (!op || op.kind !== 'approve' || op.status !== 'completed') {
+    throw new HttpsError('failed-precondition', 'לא נמצא אישור חשבון שהושלם.');
+  }
+  const id = 'approval-' + op.op_id;
+  const base = db.doc('mail/' + id);
+  return db.runTransaction(async tx => {
+    const refs = [base, ...[1, 2, 3].map(n => db.doc('mail/' + id + '-retry-' + n))];
+    const snaps = await Promise.all(refs.map(ref => tx.get(ref)));
+    let latest = -1;
+    for (let i = 0; i < snaps.length; i++) if (snaps[i].exists) latest = i;
+    const state = latest < 0 ? 'MISSING' : String(snaps[latest].data()?.delivery?.state || 'PENDING');
+    if (!resend || !['MISSING','ERROR','SUPPRESSED'].includes(state)) {
+      return { ok:true, state, attempts:Math.max(0, latest) };
+    }
+    if (latest === 3) throw new HttpsError('resource-exhausted', 'מכסת ניסיונות המייל הסתיימה.');
+    const job = require('./approval-mail').approvalMailJob(op, FV.serverTimestamp());
+    tx.create(refs[latest + 1], job.document);
+    return { ok:true, state:'PENDING', attempts:latest + 1 };
+  });
 });
 
 // דחייה עוברת בשרת ונקשרת למזהה הבקשה שהמנהל ראה. מחיקה

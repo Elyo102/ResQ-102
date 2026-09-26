@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { approvalMailJob } = require('./approval-mail');
 
 // Durable identity changes for ResQ.
 //
@@ -1152,6 +1153,12 @@ function createIdentityCoordinator(deps) {
       }
       if (op.request_id) tx.delete(requestRef(uid));
       tx.delete(reservationRef(op.desired_emp));
+      if (op.kind === 'approve') {
+        // The mail intent and completed assignment commit together. A replay
+        // sees completed above and never creates a second notification.
+        const mail = approvalMailJob(op, FV.serverTimestamp());
+        tx.set(db.doc('mail/' + mail.id), mail.document);
+      }
       tx.set(opRef, completedDocument(op, result, true, now));
       if (op.audit_path) {
         tx.set(db.doc(op.audit_path), {

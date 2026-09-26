@@ -21,6 +21,22 @@ is acceptance input for the schedule UI; it is not an instruction source.
 | Linked vehicle and equipment faults in vehicle view | yes | browser smoke; index emulator open | no | no | Existing faults collection filtered by vehicle, sorted and paged 25. |
 | Compact expandable sectors on mobile and desktop | yes | browser widths 320/360/390/1280 | no | no | Expands only selected vehicle/cell; no horizontal overflow in tested widths. |
 
+## Additional local package — invitation and vehicle history (26 September)
+
+| Requirement | Written | Local test | Deployed | Production verified | Notes |
+|---|---|---|---|---|---|
+| Personal invitation as one link | yes | link and onboarding UI pass | no | no | Fragment secret is removed from browser history; legacy invitation remains compatible. Group invitations remain the route for ordinary staff. |
+| Approval email with employee number | yes | builder and identity transaction pass | no | no | Uses existing mail queue and sends no password. Delivery is asynchronous and may be suppressed by station mail policy; super-admin status and bounded manual retry are included. SMTP delivery is not production-verified. |
+| Immutable before/after equipment edit log | yes | service pass | no | no | Each successful edit gets a station-scoped, idempotent change record. |
+| Compartment photo revision list and restoration | yes | service, browser, focused Rules pass | no | no | Binary blobs load only for a selected version; restore creates a new revision. First modification archives the legacy current image. Cloud backup/restore remains unproved. |
+
+Focused Node 22 checks passed for these additions: vehicle service 14/14,
+vehicle browser 13/13, onboarding UI 14/14, identity coordinator 22/22,
+personal link, approval mail, backup coverage (180 paths), function source
+checker, and demo Firestore Rules vehicle isolation (29 checks). A stale
+provider-source receipt still blocks the full release gate. These checks are
+not an attestation for a clean release tree.
+
 ## Owner decisions (approved 2026-09-26)
 
 1. Active station members except HR may append equipment removal/replacement

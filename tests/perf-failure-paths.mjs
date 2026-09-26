@@ -84,10 +84,11 @@ const deferred = () => {
   let reads = 0;
   const paints = [];
   const context = {
-    SID: 'station-a', AUTH_GEN: 1, shots: {}, shotsInflight: {}, db: {},
+    SID: 'station-a', AUTH_GEN: 1, shots: {}, shotsPages: {}, shotsInflight: {}, db: {},
     collection: (...parts) => parts.join('/'),
+    query: ref => ref, orderBy: () => 'id', documentId: () => 'id', limit: n => n,
     getDocs: () => (++reads === 1 ? old.promise : fresh.promise),
-    paintShots: (list, box) => paints.push({ list, box })
+    paintShots: (list, box) => paints.push({ list, box }), moreShots: () => {}
   };
   vm.createContext(context);
   vm.runInContext(functionText(body, 'loadShots'), context);
@@ -97,11 +98,11 @@ const deferred = () => {
   context.shotsInflight = {};
   const second = context.loadShots({ id: 'fault-1' }, { isConnected:true });
   const newRequest = context.shotsInflight['station-a:fault-1'];
-  old.resolve({ forEach: fn => fn({ data: () => ({ data: 'old' }) }) });
+  old.resolve({ docs:[{ data: () => ({ data: 'old' }) }] });
   await first;
   assert.equal(context.shotsInflight['station-a:fault-1'], newRequest);
   assert.equal(paints.length, 0);
-  fresh.resolve({ forEach: fn => fn({ data: () => ({ data: 'new' }) }) });
+  fresh.resolve({ docs:[{ data: () => ({ data: 'new' }) }] });
   await second;
   assert.equal(reads, 2);
   assert.equal(paints.length, 1);

@@ -43,6 +43,7 @@ try{
     const $=id=>document.getElementById(id);
     const DISTRICTS=[{id:'south',name:'דרום'}];let serial=0;
     const newOperationId=prefix=>prefix+'test_request_'+(++serial);
+    const personalInvitationLink=(base,id,secret)=>'https://example.test/login.html#invite='+id+'.'+secret;
     function msg(el,text,kind){const m=$(el);m.textContent=text;m.className='msg '+kind;}
     window.calls=[];window.nextError=false;window.delay=null;
     const auth={currentUser:{uid:'super1',getIdTokenResult:async()=>({claims:{super:true}})}};
@@ -63,6 +64,10 @@ try{
   check('admin actual message helper reports created, not active',await page.locator('#spStatus').textContent().then(s=>s.includes('עדיין אינה פעילה')));
   await page.locator('#spFirstName').fill('מפקד בדיקה');await page.locator('#spEmail').fill('test@example.invalid');await page.locator('#spPhone').fill('0500000000');await page.locator('#spShift').selectOption('A');
   await page.locator('#spIssue').click();await page.waitForFunction(()=>document.getElementById('spSecret').value==='secret_mock_only');
+  check('personal invite exposes one copyable link, not two credential fields',
+    await page.locator('#spInviteLink').inputValue().then(v=>v.includes('login.html#invite=invite_test.secret_mock_only')) &&
+    await page.locator('#spInviteId').getAttribute('type') === 'hidden' &&
+    await page.locator('#spSecret').getAttribute('type') === 'hidden');
   check('issue bound to created station request without role override',await page.evaluate(()=>{const p=calls.at(-1).payload;return p.provision_request_id===calls[0].payload.request_id&&p.station_id==='test_station'&&!('role'in p);}));
   await screenshot(page,'admin-onboarding','stationProvisionCard');
   await page.evaluate(()=>switchActor('super2'));
