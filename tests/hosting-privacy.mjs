@@ -46,6 +46,8 @@ for (const id of ['knob', 'master', 'mState', 'ready',
 }
 check(firebaseConfig.hosting.ignore.includes('roster-import.js'),
       'Firebase Hosting excludes roster-import.js as defense in depth');
+check(hostingIgnore.includes('release-targets-42h42.json'),
+      'Firebase Hosting excludes the private release target manifest');
 for (const name of ['firebase.attendance-test.json', 'firebase.emulator.42h11.json']) {
   check(ignoredSensitiveConfig(name), 'Firebase Hosting excludes ' + name);
 }

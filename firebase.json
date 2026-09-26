@@ -102,6 +102,7 @@
       "firestore.rules",
       "firestore_1.rules",
       "firestore.indexes.json",
+      "release-targets-42h42.json",
       "firebase.attendance-test.json",
       "firebase.*-test.json",
       "firebase.emulator*.json",

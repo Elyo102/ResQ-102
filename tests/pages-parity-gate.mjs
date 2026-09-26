@@ -8,6 +8,7 @@ const PRIVATE_PATTERNS = Object.freeze([
   /(?:^|\/)(?:_דיונים|_מסירות|_מסירה-[^/]*|_ניטור|_גיבוי)(?:\/|$)/u,
   /(?:^|\/)\.(?!nojekyll$)/i,
   /(?:^|\/)(?:firebase(?:\..+)?|firestore(?:\..+)?)\.json$/i,
+  /(?:^|\/)release-targets-42h42\.json$/i,
   /(?:^|\/)(?:credentials|token)\.json$/i,
   /(?:^|\/).*?(?:adminsdk|service[-_]?account).*$/i,
   /\.(?:mjs|md|txt|bat|ps1|log|rules|key|pem|zip|bundle|mbox|patch)$/i

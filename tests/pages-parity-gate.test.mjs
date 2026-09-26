@@ -33,6 +33,19 @@ try {
   assert.equal(baseline.expected_count, 3);
   assert.deepEqual(sourcePublicManifest(source, APPROVED), APPROVED);
 
+  write(source, 'release-targets-42h42.json', '{"private":true}');
+  assert.deepEqual(sourcePublicManifest(source, APPROVED), APPROVED);
+  fs.appendFileSync(path.join(source, '.firebase', 'hosting..cache'),
+    '\nrelease-targets-42h42.json,private-hash');
+  assert.throws(() => hostingManifest(source, APPROVED), /non-public path/);
+  fs.writeFileSync(path.join(source, '.firebase', 'hosting..cache'), [
+    'index.html,hash-a', 'app.js,hash-b', 'vehicle-41/front.jpg,hash-c'
+  ].join('\n'));
+  write(pages, 'release-targets-42h42.json', '{"private":true}');
+  assert.deepEqual(comparePublicTrees(source, pages, APPROVED).private_present,
+    ['release-targets-42h42.json']);
+  fs.rmSync(path.join(pages, 'release-targets-42h42.json'));
+
   write(source, 'unapproved-release.js', 'export default true;');
   assert.throws(() => sourcePublicManifest(source, APPROVED),
     /Hosting source differs from approved public asset inventory/);
