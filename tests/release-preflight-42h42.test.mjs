@@ -201,10 +201,14 @@ assert.equal(fieldQueries[1].pageToken, 'next');
 assert.equal(fieldQueries[1].filter, 'indexConfig.usesAncestorConfig=false OR ttlConfig:*');
 passed++;
 const indexQueries = [];
-await pagedFirestore({ apiClient:{ async get(_endpoint, { queryParams }) {
-  indexQueries.push(queryParams); return { status:200, body:{ indexes:[] } };
-} } }, '/indexes', 'indexes');
-assert.equal(indexQueries[0].pageSize, 1000);
+const indexRows = await pagedFirestore({ apiClient:{ async get(_endpoint, { queryParams }) {
+  indexQueries.push(queryParams); return { status:200, body:indexQueries.length === 1
+    ? { indexes:[{ name:'first' }], nextPageToken:'next' }
+    : { indexes:[{ name:'second' }] } };
+} } }, '/indexes', 'indexes', { pageSize:0 });
+assert.equal(indexQueries[0].pageSize, 0);
+assert.equal(indexQueries[1].pageToken, 'next');
+assert.equal(indexRows.length, 2);
 passed++;
 await assert.rejects(pagedFirestore({ apiClient:{ async get() {
   return { status:400, body:{} };

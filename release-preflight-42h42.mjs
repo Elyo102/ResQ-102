@@ -299,7 +299,7 @@ async function captureLive(targets) {
   if (!publicResponse.ok) throw new Error('public Hosting version unavailable');
   const publicVersion = await publicResponse.json();
   const [indexes, fieldOverrides, fnResult, services] = await Promise.all([
-    pagedFirestore(api, `/${parent}/indexes`, 'indexes'),
+    pagedFirestore(api, `/${parent}/indexes`, 'indexes', { pageSize:0 }),
     pagedFirestore(api, `/${parent}/fields`, 'fields', {
       filter:'indexConfig.usesAncestorConfig=false OR ttlConfig:*', pageSize:0 }),
     require('./gcp/cloudfunctionsv2.js').listAllFunctions(PROJECT),
