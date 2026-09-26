@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessSnapshot, exportCallMetadata, globalOptionsSafe } from '../release-preflight-42h42.mjs';
+import { assessSnapshot, exportCallMetadata, globalOptionsSafe, pagedFirestore } from '../release-preflight-42h42.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const newNames = [
@@ -187,4 +187,31 @@ for (const id of targets) {
   if (oldMeta[id]) assert.equal(currentMeta[id].options, oldMeta[id].options, `${id} changed options`);
   passed++;
 }
+const fieldQueries = [];
+const fieldsApi = { apiClient:{ async get(_endpoint, { queryParams }) {
+  fieldQueries.push(queryParams);
+  return { status:200, body:fieldQueries.length === 1
+    ? { fields:[{ name:'first' }], nextPageToken:'next' }
+    : { fields:[{ name:'second' }] } };
+} } };
+assert.equal((await pagedFirestore(fieldsApi, '/fields', 'fields',
+  { filter:'indexConfig.usesAncestorConfig=false OR ttlConfig:*', pageSize:0 })).length, 2);
+assert.equal(fieldQueries[0].pageSize, 0);
+assert.equal(fieldQueries[1].pageToken, 'next');
+assert.equal(fieldQueries[1].filter, 'indexConfig.usesAncestorConfig=false OR ttlConfig:*');
+passed++;
+const indexQueries = [];
+await pagedFirestore({ apiClient:{ async get(_endpoint, { queryParams }) {
+  indexQueries.push(queryParams); return { status:200, body:{ indexes:[] } };
+} } }, '/indexes', 'indexes');
+assert.equal(indexQueries[0].pageSize, 1000);
+passed++;
+await assert.rejects(pagedFirestore({ apiClient:{ async get() {
+  return { status:400, body:{} };
+} } }, '/fields', 'fields', { pageSize:0 }), /list failed/);
+passed++;
+await assert.rejects(pagedFirestore({ apiClient:{ async get() {
+  return { status:200, body:{ fields:[], nextPageToken:'again' } };
+} } }, '/fields', 'fields', { pageSize:0 }), /pagination loop/);
+passed++;
 console.log(`release preflight 42H.42: ${passed}/${passed} passed`);

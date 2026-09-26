@@ -258,13 +258,13 @@ function firebaseLib() {
   return { require:createRequire(path.join(lib, 'auth.js')), version };
 }
 
-async function pagedFirestore(api, endpoint, key, filter = '') {
+export async function pagedFirestore(api, endpoint, key, { filter = '', pageSize = 1000 } = {}) {
   const rows = [], tokens = new Set();
   let pageToken = '';
   do {
     if (tokens.has(pageToken)) throw new Error(`Firestore ${key} pagination loop`);
     tokens.add(pageToken);
-    const queryParams = { pageSize:1000 };
+    const queryParams = { pageSize };
     if (pageToken) queryParams.pageToken = pageToken;
     if (filter) queryParams.filter = filter;
     const response = await api.apiClient.get(endpoint, { queryParams });
@@ -300,8 +300,8 @@ async function captureLive(targets) {
   const publicVersion = await publicResponse.json();
   const [indexes, fieldOverrides, fnResult, services] = await Promise.all([
     pagedFirestore(api, `/${parent}/indexes`, 'indexes'),
-    pagedFirestore(api, `/${parent}/fields`, 'fields',
-      'indexConfig.usesAncestorConfig=false OR ttlConfig:*'),
+    pagedFirestore(api, `/${parent}/fields`, 'fields', {
+      filter:'indexConfig.usesAncestorConfig=false OR ttlConfig:*', pageSize:0 }),
     require('./gcp/cloudfunctionsv2.js').listAllFunctions(PROJECT),
     require('./gcp/runv2.js').listServices(PROJECT)
   ]);
