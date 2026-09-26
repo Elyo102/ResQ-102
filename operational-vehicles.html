@@ -53,6 +53,10 @@
   <h1>רכבים מבצעיים</h1>
   <p class="muted">בחרו רכב ותא כדי לראות את מצב התיעוד. התקלות מוצגות מתוך מסך התקלות הקיים.</p>
   <div id="notice" class="banner" role="status" aria-live="polite">מאמת הרשאה וטוען רכבים…</div>
+  <div id="stationPicker" class="card" hidden>
+    <label for="selectedStation">תחנה לניהול רכבים — בחירה מפורשת של מנהל־על</label>
+    <select id="selectedStation"><option value="">בחרו תחנה</option></select>
+  </div>
   <div id="layout" class="layout" hidden>
     <aside class="card">
       <h2>רכבי התחנה</h2>
@@ -156,6 +160,8 @@
   const db = getFirestore(app);
   const functions = getFunctions(app, 'europe-west1');
   const writeEvent = httpsCallable(functions, 'recordVehicleEquipmentEvent');
+  const listStations = httpsCallable(functions, 'listOperationalVehicleStations');
+  const changeEventStatus = httpsCallable(functions, 'transitionVehicleEquipmentEvent');
   const writeItem = httpsCallable(functions, 'saveVehicleCompartmentItem');
   const writePhoto = httpsCallable(functions, 'saveVehicleCompartmentPhoto');
   let generation = 0, stationId = '', selectedVehicle = '', selectedSector = '', currentUid = '';
@@ -163,7 +169,7 @@
   let photoRevision = 0, equipmentCursor = null, eventsCursor = null, faultsCursor = null;
   let equipmentHasMore = false, eventHasMore = false, faultsHasMore = false;
   let selectedItem = null, pendingEvent = null, pendingItem = null, pendingPhoto = null;
-  let pendingVehicle = null, tokenCheck = 0, roleKey = '';
+  let pendingVehicle = null, tokenCheck = 0, roleKey = '', superMode = false;
   let compartmentLoad = 0, vehicleLoad = 0;
   renderStuckNav('');
   initPWA({ offer:false });
@@ -183,6 +189,8 @@
     return generation === context.gen && stationId === context.sid &&
       currentUid === context.uid && auth.currentUser?.uid === context.uid;
   }
+  const scopedWrite = (body, context) => superMode
+    ? { ...body, target_station_id:context.sid } : body;
   const pathFor = (context, cell) =>
     ['stations', context.sid, 'vehicle_inventory', context.vehicleId,
       'compartments', cell];
@@ -343,6 +351,40 @@
           ' · החלפה: ' + (event.was_replaced ? event.replacement_equipment || 'כן' : 'לא') +
           ' · מצב: ' + ({open:'פתוח', in_progress:'בטיפול', resolved:'טופל'}[event.status] || 'לא ידוע');
         card.append(heading, details); $('eventsList').append(card);
+        const next = event.status === 'open' ? 'in_progress' :
+          event.status === 'in_progress' ? 'resolved' : '';
+        if (canFleet && next) {
+          const note = document.createElement('input');
+          note.type = 'text'; note.maxLength = 240;
+          note.placeholder = 'הערת טיפול (לא חובה)';
+          note.setAttribute('aria-label', 'הערת טיפול לציוד ' + String(event.equipment || ''));
+          const status = document.createElement('small');
+          status.setAttribute('role', 'status');
+          let pending = null;
+          const button = makeButton(next === 'in_progress' ? 'סמן בטיפול' : 'סמן טופל',
+            'secondary', false, async () => {
+              if (!vehicleContext(context) || !card.isConnected) return;
+              const body = { vehicle_id:context.vehicleId, event_id:item.id,
+                expected_revision:Number(event.revision || 0), status:next,
+                note:note.value.trim() };
+              if (pending && pending.key !== JSON.stringify(body)) {
+                status.textContent = 'העדכון הקודם טרם הוכרע. החזירו את ההערה הקודמת ונסו שוב.';
+                return;
+              }
+              pending = attempt(pending, body);
+              button.disabled = true; status.textContent = 'מעדכן מצב טיפול…';
+              try {
+                await changeEventStatus(scopedWrite({ ...body, request_id:pending.id }, context));
+                if (!vehicleContext(context) || !card.isConnected) return;
+                eventsCursor = null;
+                await loadEvents(context);
+              } catch (error) {
+                if (vehicleContext(context) && card.isConnected) status.textContent =
+                  'מצב הטיפול לא אומת. נסו שוב באותו כפתור או רעננו את היומן.';
+              } finally { if (card.isConnected) button.disabled = false; }
+            });
+          card.append(note, button, status);
+        }
       });
       $('eventsStatus').textContent = $('eventsList').children.length
         ? $('eventsList').children.length + ' רישומים מוצגים.' : 'עדיין אין רישומים ביומן הציוד.';
@@ -440,7 +482,7 @@
     pendingItem.itemId = itemId;
     $('saveItem').disabled = true; $('itemMessage').textContent = 'שומר ציוד…';
     try {
-      await writeItem({ ...body, request_id:pendingItem.id });
+      await writeItem(scopedWrite({ ...body, request_id:pendingItem.id }, context));
       if (!vehicleContext(context) || selectedSector !== context.compartment_id) return;
       $('itemMessage').textContent = 'הציוד נשמר.';
       $('itemForm').hidden = true; pendingItem = null; selectedItem = null;
@@ -470,7 +512,7 @@
         return;
       }
       pendingPhoto = attempt(pendingPhoto, body);
-      const result = await writePhoto({ ...body, request_id:pendingPhoto.id });
+      const result = await writePhoto(scopedWrite({ ...body, request_id:pendingPhoto.id }, context));
       if (!vehicleContext(context) || selectedSector !== context.compartment_id) return;
       photoRevision = result.data.revision;
       const view = document.createElement('img');
@@ -502,7 +544,7 @@
     pendingEvent = attempt(pendingEvent, body);
     $('saveEvent').disabled = true; $('eventMessage').textContent = 'שומר רישום…';
     try {
-      await writeEvent({ ...body, request_id:pendingEvent.id });
+      await writeEvent(scopedWrite({ ...body, request_id:pendingEvent.id }, context));
       if (!vehicleContext(context)) return;
       pendingEvent = null; $('eventForm').reset();
       $('eventMessage').textContent = 'הרישום נשמר ביומן.';
@@ -555,36 +597,17 @@
         'הרכב לא נוסף. נסו שוב לאחר בדיקת הרשאה ונתוני התחנה.';
     } finally { if (sameContext(context)) $('createVehicle').disabled = false; }
   });
-  onIdTokenChanged(auth, async user => {
-    const check = ++tokenCheck;
-    let claims = {};
-    if (user) {
-      try { claims = (await user.getIdTokenResult()).claims || {}; }
-      catch (error) { if (check === tokenCheck) notice('אימות ההרשאות נכשל. נסו שוב.', true); return; }
-      if (check !== tokenCheck || auth.currentUser?.uid !== user.uid) return;
-      const newKey = JSON.stringify([claims.stationId || '', claims.role || '', claims.super === true]);
-      if (currentUid === user.uid && stationId === claims.stationId && roleKey === newKey) return;
-      roleKey = newKey;
-    } else roleKey = '';
-    const gen = ++generation;
-    stationId = ''; selectedVehicle = ''; selectedSector = '';
-    currentUid = user?.uid || ''; activeContext = null;
-    fleet = []; canFleet = canEvent = false;
-    ++vehicleLoad; ++compartmentLoad;
+  function resetStationView() {
+    stationId = ''; selectedVehicle = ''; selectedSector = ''; activeContext = null;
+    fleet = []; pendingEvent = pendingItem = pendingPhoto = pendingVehicle = null;
+    selectedItem = null; ++vehicleLoad; ++compartmentLoad;
     $('layout').hidden = true; $('vehicleContent').hidden = true;
-    if (!user) {
-      location.replace('./login.html?next=operational-vehicles.html');
-      return;
-    }
+  }
+  async function loadStation(sid, user, claims, gen) {
+    stationId = sid;
+    canFleet = managesFleet(claims);
+    canEvent = claims.super === true || claims.role !== 'hr_coordinator';
     try {
-      const sid = claims.stationId || '';
-      if (!sid || !(claims.super === true || MEMBER_ROLES.includes(claims.role))) {
-        notice(claims.super === true ? 'נדרש שיוך תחנה מאומת לפני ניהול רכבים.' : 'אין הרשאה לצפות ברכבי התחנה.', true); return;
-      }
-      stationId = sid;
-      canFleet = managesFleet(claims);
-      canEvent = claims.super === true || claims.role !== 'hr_coordinator';
-      renderNav(claims, 'operational-vehicles.html', user.email || '');
       const board = await getDoc(doc(db, 'stations', sid, 'config', 'board'));
       if (!sameContext({ gen, sid, uid:user.uid })) return;
       fleet = operationalFleet(board.exists() ? board.data().vehicles : []);
@@ -598,6 +621,68 @@
         button.dataset.vehicle = vehicle.id;
         $('vehicles').append(button);
       });
+    } catch (error) {
+      if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
+      $('layout').hidden = true;
+      notice('לא ניתן לטעון את רכבי התחנה. רעננו ונסו שוב.', true);
+    }
+  }
+  $('selectedStation').addEventListener('change', () => {
+    if (!superMode || !auth.currentUser) return;
+    const select = $('selectedStation');
+    const sid = select.value;
+    const allowed = Array.from(select.options).some(option => option.value === sid && sid);
+    const gen = ++generation;
+    resetStationView();
+    if (!allowed) { notice('בחרו תחנה כדי לצפות ברכביה.'); return; }
+    notice('טוען את רכבי התחנה…');
+    void loadStation(sid, auth.currentUser, { super:true }, gen);
+  });
+  onIdTokenChanged(auth, async user => {
+    const check = ++tokenCheck;
+    let claims = {};
+    if (user) {
+      try { claims = (await user.getIdTokenResult()).claims || {}; }
+      catch (error) { if (check === tokenCheck) notice('אימות ההרשאות נכשל. נסו שוב.', true); return; }
+      if (check !== tokenCheck || auth.currentUser?.uid !== user.uid) return;
+      const newKey = JSON.stringify([claims.stationId || '', claims.role || '', claims.super === true]);
+      if (currentUid === user.uid && roleKey === newKey) return;
+      roleKey = newKey;
+    } else roleKey = '';
+    const gen = ++generation;
+    resetStationView();
+    currentUid = user?.uid || '';
+    canFleet = canEvent = superMode = false;
+    $('stationPicker').hidden = true;
+    $('selectedStation').replaceChildren(new Option('בחרו תחנה', ''));
+    if (!user) {
+      location.replace('./login.html?next=operational-vehicles.html');
+      return;
+    }
+    try {
+      const sid = claims.stationId || '';
+      if (claims.super === true) {
+        superMode = true;
+        renderNav(claims, 'operational-vehicles.html', user.email || '');
+        const response = await listStations({});
+        if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
+        const stations = response.data?.stations;
+        if (!Array.isArray(stations)) throw new Error('stations-unavailable');
+        const select = $('selectedStation');
+        stations.forEach(row => {
+          if (row && /^[A-Za-z0-9_-]{1,80}$/.test(String(row.id || '')))
+            select.add(new Option(String(row.name || row.id), row.id));
+        });
+        $('stationPicker').hidden = false;
+        notice(stations.length ? 'בחרו תחנה מפורשת כדי לצפות ברכביה.' :
+          'אין תחנות פעילות זמינות לבחירה.');
+        return;
+      }
+      if (!sid || !MEMBER_ROLES.includes(claims.role)) {
+        notice('אין הרשאה לצפות ברכבי התחנה.', true); return;
+      }
+      renderNav(claims, 'operational-vehicles.html', user.email || '');
+      await loadStation(sid, user, claims, gen);
     } catch (error) {
       if (gen !== generation || auth.currentUser?.uid !== user.uid) return;
       $('layout').hidden = true;

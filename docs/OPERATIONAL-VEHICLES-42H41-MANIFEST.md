@@ -17,7 +17,7 @@ is acceptance input for the schedule UI; it is not an instruction source.
 | Cabin, crew compartment, compartments 1–7, roof | yes | browser + model | no | no | Station-scoped nested records; direct client writes denied. |
 | Photo first on compartment open, then equipment list | yes | browser photo write smoke | no | no | Image is read before paged items; missing data is not presented as an empty compartment. |
 | Manual equipment updates | yes | service 8/8; browser write smoke | no | no | Officer/owner only, revision and idempotent receipt. |
-| Guided removal/replacement log, location, source vehicle, status | partial | service 8/8; browser write smoke | no | no | Active members except HR append open events; no implicit mutation of canonical inventory. A verified officer-only status transition/audit is still open; no user can mark a new event resolved. |
+| Guided removal/replacement log, location, source vehicle, status | yes | service 11/11; browser 12/12; Rules 18/18 | no | no | Active members except HR append open events. Live officer/owner advances open → in progress → resolved with revision, retry receipt and audit; no implicit mutation of canonical inventory. |
 | Linked vehicle and equipment faults in vehicle view | yes | browser smoke; index emulator open | no | no | Existing faults collection filtered by vehicle, sorted and paged 25. |
 | Compact expandable sectors on mobile and desktop | yes | browser widths 320/360/390/1280 | no | no | Expands only selected vehicle/cell; no horizontal overflow in tested widths. |
 
@@ -61,18 +61,19 @@ from this local branch.
 
 ## Current local evidence
 
-Node 22 focused checks: operational vehicle service 8/8, operational vehicle
-browser 10/10, nav 27/27, fault service PASS, faults browser 18/18, fleet history
+Node 22 focused checks: operational vehicle service 11/11, operational vehicle
+browser 12/12, nav 27/27, fault service PASS, faults browser 18/18, fleet history
 15/15, F-01 photos 4 scenarios, backup policy 28/28. These are not a Node 22
 release attestation. Java 21 and Node 22 binaries were located in the
-workspace. Full demo-resq Firestore Rules emulator suite passed on this tree
-(exit 0), including 15 new isolation checks. The provider source receipt is
+workspace. Full demo-resq Firestore Rules emulator suite passed on the earlier
+candidate (exit 0); the updated focused vehicle/photo Rules suite passed 18/18.
+The provider source receipt is
 stale after functions/index.js changed; its dedicated Node 22 gate correctly
 fails with `provider-source-receipt-unavailable-or-stale`. A full release gate
 has not been run because source roster and receipt remain open. No
 push/merge/deploy has occurred.
 
-The finite incident-monitoring catalogs now include the new page and four
+The finite incident-monitoring catalogs now include the new page and six
 new callables on both client and server; ops cross-component contracts pass
 35/35. Test inventory registers all 336 candidate test files. The new
 vehicle equipment and photo upload paths are explicitly included in the DR
@@ -84,10 +85,11 @@ Two read-only reviewers found release blockers. The legacy photo sort was
 changed to document-ID paging and the F-01 fixture now models Firestore's
 missing-field exclusion. Existing-report photo append and same-user token
 draft preservation were added and locally exercised. Remaining open issues:
-the owner's super account without a signed stationId cannot write vehicle
-inventory, so the page fails closed rather than implying write access;
-vehicle equipment status needs an authenticated officer-only transition;
-schedule roster authoring still depends on manual paste; the index must be
+the owner's super account without a signed stationId now chooses an explicit
+server-owned active station with no Eilat default; normal users cannot inject
+a target station. Equipment status now has a locally tested authenticated
+officer-only transition with audit. Schedule roster authoring still depends on
+manual paste; the index must be
 deployed and READY before the linked-fault query is exposed; backup/restore of
 new paths, provider receipt, release gate and production checks are unproved.
 Do not deploy this worktree as a complete 42H.41 release yet.

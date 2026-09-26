@@ -959,6 +959,10 @@ export function getDocs(q){
     return delayed(listSnap(rows));
   }
   if (/\/photos$/.test(p))          return delayed(listSnap(FAULT_PHOTOS));
+  if (/\/equipment_events$/.test(p) && typeof window !== 'undefined' &&
+      Array.isArray(window.__VEHICLE_EVENTS)) {
+    return delayed(listSnap(constrainedRows(window.__VEHICLE_EVENTS, (q && q.constraints) || [])));
+  }
   if (/\/faults$/.test(p))          return delayed(listSnap(FAULTS));
   if (/\/vehicles$/.test(p))        return delayed(listSnap(VEHICLES));
   if (/\/vehicle_views$/.test(p))   return delayed(listSnap(VIEWS));

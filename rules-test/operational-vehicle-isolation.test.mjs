@@ -20,6 +20,7 @@ const outsider = env.authenticatedContext('outside', { email:'outside@example.te
 const item = `stations/${sid}/vehicle_inventory/v1/compartments/cabin/items/hose`;
 const photo = `stations/${sid}/vehicle_inventory/v1/compartments/cabin/photos/current`;
 const event = `stations/${sid}/vehicle_inventory/v1/equipment_events/event1`;
+const transition = `${event}/transitions/transition1`;
 const quota = `stations/${sid}/vehicle_event_quotas/actor`;
 const batch = `stations/${sid}/faults/f1/photo_batches/batch1`;
 const photoQuota = `stations/${sid}/fault_photo_quotas/actor`;
@@ -35,11 +36,11 @@ try {
       districtId:'south', lifecycle:{ revision:1 } });
     await setDoc(doc(db, `stations/${sid}/users/ff`), { role:'firefighter',
       employee_number:'1', is_active:true, crew:'A' });
-    for (const path of [item, photo, event, quota, batch, photoQuota]) {
+    for (const path of [item, photo, event, transition, quota, batch, photoQuota]) {
       await setDoc(doc(db, path), { seed:true });
     }
   });
-  for (const path of [item, photo, event]) {
+  for (const path of [item, photo, event, transition]) {
     await assertSucceeds(getDoc(doc(member, path)));
     await assertFails(getDoc(doc(outsider, path)));
     await assertFails(setDoc(doc(member, path), { changed:true }));
@@ -48,7 +49,7 @@ try {
     await assertFails(getDoc(doc(member, path)));
     await assertFails(setDoc(doc(member, path), { changed:true }));
   }
-  console.log('operational vehicle and photo batch Rules: 15 checks passed');
+  console.log('operational vehicle and photo batch Rules: 18 checks passed');
 } finally {
   await env.cleanup();
 }

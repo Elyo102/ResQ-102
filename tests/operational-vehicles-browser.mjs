@@ -131,6 +131,47 @@ try {
   assert.equal(await officer.locator('#itemName').inputValue(), 'טיוטה שאסור למחוק',
     'same-user token refresh must preserve an unsent inventory draft');
   passed++;
+  await officer.evaluate(() => { window.__VEHICLE_EVENTS = [[
+    'request1234567890', { vehicle_id:'v1', equipment:'זרנוק', location:'מחסן',
+      was_replaced:false, status:'open', revision:0,
+      created_at:'2026-09-26T10:00:00Z' }
+  ]]; });
+  await officer.locator('#vehicles button').first().click();
+  await officer.locator('#eventsList .event').first().waitFor();
+  await officer.locator('#eventsList input').fill('נלקח לטיפול');
+  await officer.locator('#eventsList button').first().click();
+  await officer.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some(call => call.name === 'transitionVehicleEquipmentEvent'));
+  const statusRequest = await officer.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'transitionVehicleEquipmentEvent').payload);
+  assert.equal(statusRequest.event_id, 'request1234567890');
+  assert.equal(statusRequest.status, 'in_progress');
+  assert.equal(statusRequest.note, 'נלקח לטיפול');
+  passed++;
+  const superPage = await context.newPage();
+  await superPage.addInitScript(() => {
+    window.__SMOKE_ROLE = 'super_no_emp';
+    window.__SMOKE_EXTRA_CLAIMS = { stationId:null };
+    window.__CALLABLE_PLAN = { listOperationalVehicleStations:[{
+      data:{ stations:[{ id:'eilat_102', name:'תחנה 102' }] }
+    }] };
+  });
+  await superPage.goto('http://127.0.0.1:' + server.address().port + '/operational-vehicles.html');
+  await superPage.locator('#stationPicker:not([hidden])').waitFor();
+  assert.equal(await superPage.locator('#layout').isVisible(), false,
+    'super must choose a station rather than inherit Eilat');
+  await superPage.locator('#selectedStation').selectOption('eilat_102');
+  await superPage.locator('#layout:not([hidden])').waitFor();
+  await superPage.locator('#vehicles button').first().click();
+  await superPage.locator('#eventEquipment').fill('מטף רזרבי');
+  await superPage.locator('#eventLocation').fill('מכולה');
+  await superPage.locator('#saveEvent').click();
+  await superPage.waitForFunction(() => (window.__CALLABLE_CALLS || [])
+    .some(call => call.name === 'recordVehicleEquipmentEvent'));
+  const superRequest = await superPage.evaluate(() => (window.__CALLABLE_CALLS || [])
+    .find(call => call.name === 'recordVehicleEquipmentEvent').payload);
+  assert.equal(superRequest.target_station_id, 'eilat_102');
+  passed++;
   for (const width of [320, 360, 1280]) {
     await page.setViewportSize({ width, height:844 });
     const overflow = await page.locator('body').evaluate(el => ({

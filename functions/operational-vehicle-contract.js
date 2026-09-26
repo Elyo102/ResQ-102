@@ -77,6 +77,20 @@ function parseEvent(value) {
     source_vehicle_id:source, status:data.status
   });
 }
+function parseTransition(value) {
+  const data = exactObject(value, [
+    'vehicle_id', 'event_id', 'request_id', 'expected_revision', 'status', 'note'
+  ]);
+  if (!['in_progress', 'resolved'].includes(data.status)) {
+    throw inputError('Invalid equipment status.');
+  }
+  return Object.freeze({
+    vehicle_id:id(data.vehicle_id, 'vehicle'),
+    event_id:requestId(data.event_id), request_id:requestId(data.request_id),
+    expected_revision:revision(data.expected_revision),
+    status:data.status, note:text(data.note || '', 240, false)
+  });
+}
 function parseItem(value) {
   const data = exactObject(value, [
     'vehicle_id', 'compartment_id', 'item_id', 'request_id', 'expected_revision',
@@ -123,5 +137,5 @@ function parsePhoto(value) {
 
 module.exports = Object.freeze({
   COMPARTMENTS, MEMBER_ROLES, EVENT_WRITERS, FLEET_WRITERS,
-  parseEvent, parseItem, parsePhoto, ID, REQUEST_ID, IMAGE_MAX
+  parseEvent, parseTransition, parseItem, parsePhoto, ID, REQUEST_ID, IMAGE_MAX
 });

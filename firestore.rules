@@ -1138,6 +1138,10 @@ service cloud.firestore {
         match /equipment_events/{eventId} {
           allow read: if member(sid);
           allow write: if false;
+          match /transitions/{requestId} {
+            allow read: if member(sid);
+            allow write: if false;
+          }
         }
       }
       match /vehicle_event_quotas/{quotaId} {

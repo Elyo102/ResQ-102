@@ -7,10 +7,12 @@ const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).
 const HOUR_LIMIT = 40;
 const uidKey = uid => crypto.createHash('sha256').update(uid).digest('hex').slice(0, 32);
 
-function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now = () => new Date() }) {
+function createOperationalVehicleService({ db, auth, Timestamp, HttpsError,
+  resolveStation, listStations, now = () => new Date() }) {
   if (!db || typeof db.runTransaction !== 'function' || !auth ||
-      typeof auth.getUser !== 'function' || !Timestamp || typeof HttpsError !== 'function') {
-    throw new TypeError('db, auth, Timestamp and HttpsError are required');
+      typeof auth.getUser !== 'function' || !Timestamp || typeof HttpsError !== 'function' ||
+      typeof resolveStation !== 'function' || typeof listStations !== 'function') {
+    throw new TypeError('db, auth, Timestamp, HttpsError and station resolvers are required');
   }
   const fail = (code, message, reason) => { throw new HttpsError(code, message, { reason }); };
   const station = sid => `stations/${sid}`;
@@ -20,6 +22,13 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
     `${station(sid)}/vehicle_inventory/${vid}/compartments/${cell}`;
   const eventRef = (sid, vid, id) =>
     db.doc(`${station(sid)}/vehicle_inventory/${vid}/equipment_events/${id}`);
+  const bodyOf = req => {
+    const data = req && req.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+    const body = { ...data };
+    delete body.target_station_id;
+    return body;
+  };
 
   function timestamp() {
     const value = now();
@@ -32,12 +41,16 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
     const a = req && req.auth;
     const token = a && a.token || {};
     const uid = a && a.uid;
-    const sid = token.stationId;
+    const isSuper = token.super === true;
+    const requested = req && req.data && req.data.target_station_id;
+    if (!isSuper && requested !== undefined) {
+      return fail('permission-denied', 'תחנת יעד שמורה למנהל־על.', 'station_injection');
+    }
+    const sid = isSuper ? requested : token.stationId;
     if (typeof uid !== 'string' || !uid) return fail('unauthenticated', 'נדרשת התחברות.', 'auth_required');
     if (typeof sid !== 'string' || !contract.ID.test(sid)) {
       return fail('permission-denied', 'שיוך התחנה אינו תקין.', 'station_invalid');
     }
-    const isSuper = token.super === true;
     if (!isSuper && !roles.includes(token.role)) {
       return fail('permission-denied', 'אין הרשאה לפעולה.', 'role_forbidden');
     }
@@ -49,11 +62,34 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
     }
     const liveClaims = user.customClaims || {};
     if (isSuper !== (liveClaims.super === true) ||
-        liveClaims.stationId !== sid ||
+        (!isSuper && liveClaims.stationId !== sid) ||
         (!isSuper && liveClaims.role !== token.role)) {
       return fail('permission-denied', 'הרשאות החשבון השתנו.', 'claims_changed');
     }
+    if (isSuper && !(await resolveStation(sid))) {
+      return fail('permission-denied', 'תחנת היעד אינה פעילה.', 'station_inactive');
+    }
     return Object.freeze({ uid, sid, role:token.role, super:isSuper });
+  }
+  async function listAvailableStations(req) {
+    const token = req && req.auth && req.auth.token || {};
+    const uid = req && req.auth && req.auth.uid;
+    if (!uid || token.super !== true) {
+      return fail('permission-denied', 'רק מנהל־על יכול לבחור תחנה.', 'super_required');
+    }
+    let user;
+    try { user = await auth.getUser(uid); }
+    catch (error) { return fail('permission-denied', 'לא ניתן לאמת את החשבון.', 'auth_unavailable'); }
+    if (!user || user.disabled || user.uid !== uid || user.customClaims?.super !== true) {
+      return fail('permission-denied', 'הרשאת מנהל־על אינה פעילה.', 'super_revoked');
+    }
+    const stations = await listStations();
+    if (!Array.isArray(stations) || stations.length > 250) {
+      return fail('failed-precondition', 'רשימת התחנות אינה זמינה.', 'stations_invalid');
+    }
+    return { stations:stations.filter(row => row && row.active === true &&
+      contract.ID.test(row.id)).map(row => ({ id:row.id,
+        name:String(row.name || row.id).slice(0, 160) })) };
   }
   async function liveStationUser(tx, ctx) {
     if (ctx.super) return;
@@ -81,7 +117,7 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
   }
 
   async function recordEvent(req) {
-    const input = parse(contract.parseEvent, req && req.data);
+    const input = parse(contract.parseEvent, bodyOf(req));
     const ctx = await actor(req, contract.EVENT_WRITERS);
     const ref = eventRef(ctx.sid, input.vehicle_id, input.request_id);
     const digest = hash({ input, uid:ctx.uid });
@@ -110,7 +146,7 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
         was_replaced:input.was_replaced,
         replacement_equipment:input.replacement_equipment,
         source_vehicle_id:input.source_vehicle_id, status:input.status,
-        by_uid:ctx.uid, created_at:time.stamp, digest
+        revision:0, by_uid:ctx.uid, created_at:time.stamp, digest
       });
       // One reusable quota document per actor, not one document per hour.
       tx.set(quotaRef, { hour, count:count + 1,
@@ -119,8 +155,46 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
     });
   }
 
+  async function transitionEvent(req) {
+    const input = parse(contract.parseTransition, bodyOf(req));
+    const ctx = await actor(req, contract.FLEET_WRITERS);
+    const ref = eventRef(ctx.sid, input.vehicle_id, input.event_id);
+    const receipt = db.doc(`${ref.path}/transitions/${input.request_id}`);
+    const digest = hash({ input, uid:ctx.uid });
+    const time = timestamp();
+    return db.runTransaction(async tx => {
+      const [event, prior] = await Promise.all([tx.get(ref), tx.get(receipt)]);
+      await liveStationUser(tx, ctx);
+      if (!event.exists || (event.data() || {}).vehicle_id !== input.vehicle_id) {
+        return fail('not-found', 'אירוע הציוד לא נמצא ברכב.', 'event_missing');
+      }
+      const old = event.data() || {};
+      if (prior.exists) {
+        const saved = prior.data() || {};
+        if (saved.digest === digest && saved.by_uid === ctx.uid) {
+          return { event_id:input.event_id, revision:saved.revision, written:false };
+        }
+        return fail('already-exists', 'מזהה הפעולה כבר שימש לעדכון אחר.', 'request_conflict');
+      }
+      const currentRevision = old.revision === undefined ? 0 : Number(old.revision);
+      if (!Number.isSafeInteger(currentRevision) || currentRevision !== input.expected_revision) {
+        return fail('aborted', 'מצב הטיפול השתנה. רעננו את היומן.', 'revision_conflict');
+      }
+      const allowed = (old.status === 'open' && input.status === 'in_progress') ||
+        (old.status === 'in_progress' && input.status === 'resolved');
+      if (!allowed) return fail('failed-precondition', 'מעבר מצב הטיפול אינו תקין.', 'transition_invalid');
+      tx.update(ref, { status:input.status, revision:currentRevision + 1,
+        status_by_uid:ctx.uid, status_at:time.stamp });
+      tx.create(receipt, { schema:'vehicle-equipment-transition-v1',
+        from:old.status, to:input.status, note:input.note,
+        revision:currentRevision + 1, by_uid:ctx.uid,
+        created_at:time.stamp, digest });
+      return { event_id:input.event_id, revision:currentRevision + 1, written:true };
+    });
+  }
+
   async function saveItem(req) {
-    const input = parse(contract.parseItem, req && req.data);
+    const input = parse(contract.parseItem, bodyOf(req));
     const ctx = await actor(req, contract.FLEET_WRITERS);
     const ref = db.doc(`${compartmentRoot(ctx.sid, input.vehicle_id, input.compartment_id)}/items/${input.item_id}`);
     const digest = hash({ input, uid:ctx.uid });
@@ -150,7 +224,7 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
   }
 
   async function savePhoto(req) {
-    const input = parse(contract.parsePhoto, req && req.data);
+    const input = parse(contract.parsePhoto, bodyOf(req));
     const ctx = await actor(req, contract.FLEET_WRITERS);
     const ref = db.doc(`${compartmentRoot(ctx.sid, input.vehicle_id, input.compartment_id)}/photos/current`);
     const digest = hash({ input, uid:ctx.uid });
@@ -178,7 +252,7 @@ function createOperationalVehicleService({ db, auth, Timestamp, HttpsError, now 
     });
   }
 
-  return Object.freeze({ recordEvent, saveItem, savePhoto });
+  return Object.freeze({ listAvailableStations, recordEvent, transitionEvent, saveItem, savePhoto });
 }
 
 module.exports = Object.freeze({ createOperationalVehicleService, HOUR_LIMIT });

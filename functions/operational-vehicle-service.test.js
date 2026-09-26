@@ -41,6 +41,8 @@ function fixture(role = 'firefighter') {
   const auth = { async getUser() { return authUser; } };
   const service = createOperationalVehicleService({
     db, auth, Timestamp:{ fromDate:date => date.toISOString() }, HttpsError:TestError,
+    resolveStation:async id => id === sid ? { id, active:true } : null,
+    listStations:async () => [{ id:sid, name:'אילת', active:true }],
     now:() => new Date('2026-09-26T10:00:00.000Z')
   });
   const req = body => ({ auth:{ uid, token:{ ...claims } }, data:body });
@@ -50,6 +52,11 @@ const event = (id = 'request1234567890') => ({
   vehicle_id:'v407', request_id:id, kind:'removed', equipment:'זרנוק',
   location:'במחסן התחנה', was_replaced:false,
   replacement_equipment:'', source_vehicle_id:'', status:'open'
+});
+const transition = (status = 'in_progress', revision = 0,
+  id = 'transition1234567890') => ({
+  vehicle_id:'v407', event_id:event().request_id,
+  request_id:id, expected_revision:revision, status, note:'נבדק במחסן'
 });
 const item = (revision = 0, id = 'request1234567890') => ({
   vehicle_id:'v407', compartment_id:'bay-1', item_id:'item-1', request_id:id,
@@ -88,6 +95,53 @@ async function test() {
       error => error.code === 'invalid-argument');
     await assert.rejects(() => f.service.recordEvent(f.req({ ...event(), status:'in_progress' })),
       error => error.code === 'invalid-argument');
+  });
+  await check('only a live officer can advance equipment treatment with an audit receipt', async () => {
+    const f = fixture('commander');
+    await f.service.recordEvent(f.req(event()));
+    const first = await f.service.transitionEvent(f.req(transition()));
+    assert.deepEqual(first, { event_id:event().request_id, revision:1, written:true });
+    assert.equal((await f.service.transitionEvent(f.req(transition()))).written, false);
+    const ref = `stations/${f.sid}/vehicle_inventory/v407/equipment_events/${event().request_id}`;
+    assert.equal(f.data.get(ref).status, 'in_progress');
+    assert.equal(f.data.get(ref + '/transitions/transition1234567890').from, 'open');
+    await assert.rejects(() => f.service.transitionEvent(f.req(transition('resolved', 0,
+      'transition2234567890'))), error => error.code === 'aborted');
+    assert.equal((await f.service.transitionEvent(f.req(transition('resolved', 1,
+      'transition2234567890')))).revision, 2);
+    await assert.rejects(() => f.service.transitionEvent(f.req(transition('in_progress', 2,
+      'transition3234567890'))), error => error.code === 'failed-precondition');
+  });
+  await check('archived vehicle can finish existing treatment, revoked officer cannot', async () => {
+    const f = fixture('commander');
+    await f.service.recordEvent(f.req(event()));
+    f.data.set(`stations/${f.sid}/config/board`, { vehicles:[{ id:'v407', active:false }] });
+    assert.equal((await f.service.transitionEvent(f.req(transition()))).revision, 1);
+    f.authUser.customClaims = { stationId:f.sid, role:'firefighter' };
+    await assert.rejects(() => f.service.transitionEvent(f.req(transition('resolved', 1,
+      'transition2234567890'))), error => error.code === 'permission-denied');
+    const ff = fixture('firefighter');
+    await ff.service.recordEvent(ff.req(event()));
+    await assert.rejects(() => ff.service.transitionEvent(ff.req(transition())),
+      error => error.code === 'permission-denied');
+  });
+  await check('super selects an active station; ordinary roles cannot inject a target', async () => {
+    const f = fixture('commander');
+    await assert.rejects(() => f.service.recordEvent(f.req({ ...event(),
+      target_station_id:f.sid })), error => error.code === 'permission-denied');
+    f.claims.super = true;
+    f.authUser.customClaims.super = true;
+    delete f.claims.stationId;
+    delete f.authUser.customClaims.stationId;
+    assert.deepEqual(await f.service.listAvailableStations({ auth:{ uid:f.uid,
+      token:{ super:true } } }), { stations:[{ id:f.sid, name:'אילת' }] });
+    await assert.rejects(() => f.service.recordEvent(f.req({ ...event(),
+      target_station_id:'other_station' })), error => error.code === 'permission-denied');
+    assert.equal((await f.service.recordEvent(f.req({ ...event(),
+      target_station_id:f.sid }))).created, true);
+    f.authUser.customClaims.super = false;
+    await assert.rejects(() => f.service.listAvailableStations({ auth:{ uid:f.uid,
+      token:{ super:true } } }), error => error.code === 'permission-denied');
   });
   await check('HR may not append; firefighter may not edit canonical inventory', async () => {
     const hr = fixture('hr_coordinator');

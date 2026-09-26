@@ -431,10 +431,15 @@ exports.createFaultReport = onCall({ enforceAppCheck: true, memory: '512MiB', ti
 exports.appendFaultPhotos = onCall({ enforceAppCheck: true, memory: '512MiB', timeoutSeconds: 60 },
   req => faultReportService.appendPhotos(req));
 const operationalVehicleService = operationalVehicleModule.createOperationalVehicleService({
-  db, auth: admin.auth(), Timestamp: admin.firestore.Timestamp, HttpsError
+  db, auth: admin.auth(), Timestamp: admin.firestore.Timestamp, HttpsError,
+  resolveStation: resolveTransferStation, listStations: listTransferStations
 });
+exports.listOperationalVehicleStations = onCall({ enforceAppCheck: true },
+  req => operationalVehicleService.listAvailableStations(req));
 exports.recordVehicleEquipmentEvent = onCall({ enforceAppCheck: true },
   req => operationalVehicleService.recordEvent(req));
+exports.transitionVehicleEquipmentEvent = onCall({ enforceAppCheck: true },
+  req => operationalVehicleService.transitionEvent(req));
 exports.saveVehicleCompartmentItem = onCall({ enforceAppCheck: true },
   req => operationalVehicleService.saveItem(req));
 exports.saveVehicleCompartmentPhoto = onCall({ enforceAppCheck: true, memory:'512MiB' },
