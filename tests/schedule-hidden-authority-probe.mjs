@@ -204,6 +204,7 @@ const CALLABLES = Object.freeze([
   { name: 'saveSchedulePolicy', method: 'savePolicy', gate: GATE.MANAGER },
   { name: 'previewSchedulePolicy', method: 'previewPolicy', gate: GATE.MANAGER },
   { name: 'saveScheduleSource', method: 'saveSource', gate: GATE.MANAGER },
+  { name: 'getScheduleSourceRoster', method: 'getSourceRoster', gate: GATE.MANAGER },
   { name: 'previewScheduleSource', method: 'previewSource', gate: GATE.MANAGER },
   { name: 'runSchedulePlanner', method: 'runPlanner', gate: GATE.MANAGER },
   // ייבוא הגיליון הקיים כטיוטה (4.9) — אותו שער כמו המנוע: אחראי סידור.
