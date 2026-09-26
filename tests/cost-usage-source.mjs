@@ -107,9 +107,15 @@ check('batch enforces event time and measurement start inside its transaction',
   /MAX_EVENT_AGE_DAYS = 30/.test(service) &&
   /tx\.get\(configRef\)/.test(service) &&
   /before-measurement-start/.test(service) && /event-age/.test(service));
-check('daily and ledger TTL field overrides are declared',
+check('cost retention stays manual with an indexed expiry field',
   ['cost_usage_daily', 'cost_usage_station_daily', 'cost_usage_global_daily', 'cost_usage_batch_ledger'].every((name) =>
-    indexes.fieldOverrides.some((item) => item.collectionGroup === name && item.fieldPath === 'expires_at' && item.ttl === true)));
+    !indexes.fieldOverrides.some((item) => item.collectionGroup === name && item.fieldPath === 'expires_at')) &&
+  /manual_cleanup_not_configured/.test(service) &&
+  /retention_enforced:\s*false/.test(service));
+check('new photo and vehicle quotas do not enable automatic deletion',
+  ['fault_photo_quotas', 'vehicle_event_quotas'].every((name) =>
+    indexes.fieldOverrides.some((item) => item.collectionGroup === name && item.fieldPath === 'expires_at' &&
+      item.ttl !== true && Array.isArray(item.indexes) && item.indexes.length === 0)));
 check('station counts are sharded, private, restorable and rendered only as partial coverage',
   /STATION_SHARDS = 16/.test(service) && /station_aggregate_start_at/.test(service) &&
   /tx\.set\(stationRef/.test(service) && /station_calls: stationCalls/.test(service) &&

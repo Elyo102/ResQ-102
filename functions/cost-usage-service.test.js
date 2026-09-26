@@ -156,12 +156,13 @@ async function check(name, fn) { await fn(); passed += 1; console.log('PASS ' + 
     assert.equal(dash.attribution.status, 'disabled_no_hmac_secret');
   });
 
-  await check('retention daily TTL is 90 days; lifetime collection separate', async () => {
+  await check('90-day retention is a target only; lifetime collection separate', async () => {
     const { service, db } = build();
     await service.setCostUsageMeasurementStart(req('super1', {}));
     const out = await record(service, [{ event_id: 'evt-push-1', subject_id: 'w1', feature: 'push_queued', calls: 2 }]);
-    assert.equal(out.retention_days, 90);
-    assert.equal(out.ledger_retention_days, 90);
+    assert.equal(out.retention_target_days, 90);
+    assert.equal(out.ledger_retention_target_days, 90);
+    assert.equal(out.retention_enforced, false);
     assert.equal(mod.RETENTION_DAYS, 90);
     const dailyKeys = [...db._store.keys()].filter((k) => k.startsWith('cost_usage_daily/'));
     const lifeKeys = [...db._store.keys()].filter((k) => k.startsWith('cost_usage_lifetime/'));

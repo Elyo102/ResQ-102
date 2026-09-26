@@ -2,6 +2,11 @@
 
 Status: **LOCAL CANDIDATE ONLY**. No Cloud Billing export, BigQuery dataset,
 authorized view, IAM binding, production secret, or deploy is created by this file.
+The 90-day expiry timestamps on cost counters and the replay ledger are a
+retention target, not an active deletion policy. This release does not enable
+TTL for those collections. The internal prune stub is neither scheduled nor
+exposed as an operator action. Keep the cost event feeder off until a reviewed
+manual cleanup process, owner, and privacy retention decision exist.
 The Billing account linked to `station-102` also pays for another project;
 Standard export is account-wide. Never give the ResQ runtime identity direct
 read access to the raw export table.

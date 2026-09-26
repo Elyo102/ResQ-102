@@ -527,10 +527,11 @@ function createCostUsageService(deps) {
       }),
       self_cost_note_he: 'קריאת הלוח: Auth listUsers בעמוד + metrics_daily + עד 16 רשומות סך יומי ו-400 רשומות תחנות לעמוד + נתוני משתמשי העמוד. כיסוי הקריאות חלקי; שיוך למשתמשים אינו חשבונית.',
       retention: Object.freeze({
-        daily_days: RETENTION_DAYS,
-        ledger_days: LEDGER_RETENTION_DAYS,
+        daily_target_days: RETENTION_DAYS,
+        ledger_target_days: LEDGER_RETENTION_DAYS,
         lifetime: 'keep_while_account_active_explicit_delete',
-        prune: 'stub_not_scheduled'
+        prune: 'stub_not_scheduled',
+        enforcement: 'manual_cleanup_not_configured'
       })
     });
   }
@@ -885,8 +886,9 @@ function createCostUsageService(deps) {
       written,
       skipped_duplicates: skipped,
       day: dayOf(nowMs),
-      retention_days: RETENTION_DAYS,
-      ledger_retention_days: LEDGER_RETENTION_DAYS,
+      retention_target_days: RETENTION_DAYS,
+      ledger_retention_target_days: LEDGER_RETENTION_DAYS,
+      retention_enforced: false,
       max_event_age_days: MAX_EVENT_AGE_DAYS,
       source: entries.every((entry) => entry.source === entries[0].source) ? entries[0].source : 'mixed',
       idempotent: true,

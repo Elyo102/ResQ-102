@@ -690,39 +690,13 @@
       "indexes": []
     },
     {
-      "collectionGroup": "cost_usage_daily",
-      "fieldPath": "expires_at",
-      "ttl": true,
-      "indexes": []
-    },
-    {
-      "collectionGroup": "cost_usage_station_daily",
-      "fieldPath": "expires_at",
-      "ttl": true,
-      "indexes": []
-    },
-    {
-      "collectionGroup": "cost_usage_global_daily",
-      "fieldPath": "expires_at",
-      "ttl": true,
-      "indexes": []
-    },
-    {
-      "collectionGroup": "cost_usage_batch_ledger",
-      "fieldPath": "expires_at",
-      "ttl": true,
-      "indexes": []
-    },
-    {
       "collectionGroup": "fault_photo_quotas",
       "fieldPath": "expires_at",
-      "ttl": true,
       "indexes": []
     },
     {
       "collectionGroup": "vehicle_event_quotas",
       "fieldPath": "expires_at",
-      "ttl": true,
       "indexes": []
     }
   ]
