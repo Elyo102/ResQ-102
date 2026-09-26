@@ -118,16 +118,18 @@ check('unreviewed new index', candidate => {
 }, 'unexpected_index_delta');
 check('active TTL removal', candidate => { candidate.field_overrides[0] = { ...oldField, ttl:false }; }, 'ttl_changed');
 check('omitted TTL matches inactive live override', candidate => {
+  candidate.field_overrides[1] = { ...candidate.field_overrides[1] };
   delete candidate.field_overrides[1].ttl;
 }, null);
 check('active TTL cannot become omitted', candidate => {
+  candidate.field_overrides[0] = { ...candidate.field_overrides[0] };
   delete candidate.field_overrides[0].ttl;
 }, 'ttl_changed');
 check('inactive TTL cannot become active', candidate => {
-  candidate.field_overrides[1].ttl = true;
+  candidate.field_overrides[1] = { ...candidate.field_overrides[1], ttl:true };
 }, 'unexpected_field_override_delta');
 check('malformed TTL value rejected', candidate => {
-  candidate.field_overrides[0].ttl = 'true';
+  candidate.field_overrides[0] = { ...candidate.field_overrides[0], ttl:'true' };
 }, 'invalid_ttl_value');
 check('existing field index changes', candidate => {
   candidate.field_overrides[0] = { ...oldField, indexes:[{ order:'ASCENDING', queryScope:'COLLECTION' }] };
