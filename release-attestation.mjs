@@ -50,7 +50,9 @@ export function writeReceipt(options = {}) {
   const evidence = currentEvidence(options);
   const target = receiptPath(evidence.tree, options.tmp);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  const receipt = { ...evidence, gate: 'npm --prefix tests run all', completed_at: new Date().toISOString() };
+  const receipt = { ...evidence, gate: 'npm --prefix tests run all',
+    validation_scope:'LOCAL_VALIDATION_ONLY', production_release_ready:false,
+    completed_at: new Date().toISOString() };
   const temporary = `${target}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx' });
   fs.renameSync(temporary, target);
@@ -62,7 +64,9 @@ export function verifyReceipt(options = {}) {
   const target = receiptPath(evidence.tree, options.tmp);
   if (!fs.existsSync(target)) throw new Error(`validated release receipt is missing for tree ${evidence.tree}`);
   const receipt = JSON.parse(fs.readFileSync(target, 'utf8'));
-  if (receipt.schema !== 1 || receipt.gate !== 'npm --prefix tests run all') throw new Error('release receipt contract is invalid');
+  if (receipt.schema !== 1 || receipt.gate !== 'npm --prefix tests run all' ||
+      receipt.validation_scope !== 'LOCAL_VALIDATION_ONLY' ||
+      receipt.production_release_ready !== false) throw new Error('release receipt contract is invalid');
   if (receipt.tree !== evidence.tree || receipt.node_major !== evidence.node_major) throw new Error('release receipt does not match this runtime/tree');
   if (JSON.stringify(receipt.files) !== JSON.stringify(evidence.files)) throw new Error('release-bound files changed after validation');
   const age = Date.now() - Date.parse(receipt.completed_at);
@@ -74,13 +78,13 @@ function main() {
   const command = process.argv[2];
   if (command === 'write') {
     const result = writeReceipt();
-    console.log(`Release validation receipt written for tree ${result.receipt.tree}`);
+    console.log(`Local validation receipt written for tree ${result.receipt.tree}; production blocked`);
     console.log(result.target);
     return;
   }
   if (command === 'verify') {
     const result = verifyReceipt();
-    console.log(`Release validation receipt verified for tree ${result.receipt.tree}`);
+    console.log(`Local validation receipt verified for tree ${result.receipt.tree}; production blocked`);
     return;
   }
   throw new Error('usage: node release-attestation.mjs <write|verify>');

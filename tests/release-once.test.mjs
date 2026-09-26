@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { assertOnlyFunctionsPredeployRemoved, makeFunctionsDeployConfig, parseArgs } from '../release-functions-once.mjs';
@@ -34,6 +35,15 @@ test('production arguments require an exact project and full candidate SHA', () 
   assert.deepEqual(parseArgs(['--candidate', sha, '--project', 'station-102', '--execute']), { execute: true, project: 'station-102', candidate: sha });
   assert.throws(() => parseArgs(['--candidate', 'abc', '--project', 'station-102']), /40-character/);
   assert.throws(() => parseArgs(['--candidate', sha, '--project', 'demo-resq']), /station-102/);
+});
+
+test('legacy broad Functions helper stays blocked even with execute and a full SHA', () => {
+  assert.throws(() => execFileSync(process.execPath,
+    [path.join(root, 'release-functions-once.mjs'), '--candidate', 'a'.repeat(40),
+      '--project', 'station-102', '--execute'], { cwd:root, stdio:'pipe' }),
+  /retired broad Functions release route/);
+  const source = fs.readFileSync(path.join(root, 'release-functions-once.mjs'), 'utf8');
+  assert.doesNotMatch(source, /['"]deploy['"][\s\S]*['"]--only['"]\s*,\s*['"]functions['"]/);
 });
 
 test('firebase-functions is pinned and the v2 barrel import is absent', () => {

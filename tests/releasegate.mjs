@@ -301,6 +301,53 @@ ok('5.5 CI מריץ את שער השחרור הקנוני ולא רשימה חל
  * ================================================================== */
 
 const doc = read('README-פריסה.md');
+const releaseVersion = JSON.parse(read('release-manifest.json')).version;
+
+if (releaseVersion === '42H.42') {
+  const targets = JSON.parse(read('release-targets-42h42.json'));
+  const expectedTargets = [
+    'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
+    'listOperationalVehicleStations', 'recordVehicleEquipmentEvent',
+    'restoreVehicleCompartmentPhoto', 'saveVehicleCompartmentItem',
+    'saveVehicleCompartmentPhoto', 'transitionVehicleEquipmentEvent',
+    'activateScheduleMonthAuthority', 'approveRegistration', 'getCostUsageDashboard',
+    'getMaintenanceDashboard', 'prepareMaintenanceHandoff', 'previewScheduleSource',
+    'recordMetrics', 'reportIncident', 'runMaintenanceAnalysis',
+    'resumeIdentityOperation', 'saveScheduleSource', 'setMaintenanceMode', 'systemHeartbeat'
+  ].sort();
+  const validTargets = value => value.project === 'station-102' && value.version === '42H.42' &&
+    JSON.stringify([...value.targets].sort()) === JSON.stringify(expectedTargets) &&
+    new Set(value.targets).size === expectedTargets.length && value.batches.length === 6 &&
+    value.batches.every(batch => batch.length > 0 && batch.length <= 10) &&
+    JSON.stringify(value.batches.flat()) === JSON.stringify(value.targets);
+  ok('6.0א מועמד 42H.42 נושא בדיוק 22 פונקציות בשש קבוצות', validTargets(targets));
+  const omitted = structuredClone(targets);
+  omitted.targets.pop();
+  ok('6.0ב שינוי או השמטת יעד מפילים את השער', !validTargets(omitted));
+  const guarded = text => {
+    const blocks = [...text.matchAll(/^```powershell\r?\n([\s\S]*?)^```/gm)].map(match => match[1]);
+    const mutating = blocks.filter(block =>
+      /(?:firebase-tools@15\.28\.1\s+(?:deploy|hosting:clone|hosting:channel:deploy)|Invoke-ResQDeployWith429Backoff\s+['"]|release-functions-once\.mjs\s+--candidate|gh\s+pr\s+merge|git\s+push)/.test(block));
+    return mutating.length >= 6 && mutating.every(block =>
+      /^throw\s+['"]42H\.42\s/.test(block.split(/\r?\n/).find(line => line.trim())?.trim() || ''));
+  };
+  ok('6.0ג כל בלוק ייצור ישן חסום בשורתו הראשונה',
+    guarded(doc) && !guarded(doc.replace(
+      "throw '42H.42 legacy merge route is blocked'", '# guard removed')) &&
+    !guarded(doc + '\n```powershell\nnpx --yes firebase-tools@15.28.1 deploy --only functions --project station-102\n```'));
+  const legacyHelper = read('release-functions-once.mjs');
+  ok('6.0ד helper הרחב הושבת ואין בו פקודת פריסה',
+    legacyHelper.includes('retired broad Functions release route') &&
+    !/['"]deploy['"][\s\S]*['"]--only['"]\s*,\s*['"]functions['"]/.test(legacyHelper));
+  const preflight = read('release-preflight-42h42.mjs');
+  ok('6.0ה preflight הוא קריאה בלבד ואינו אישור פריסה',
+    preflight.includes("stage:'READ_ONLY_INVENTORY', production_release_ready:false") &&
+    preflight.includes("throw new Error('preflight failed closed')") &&
+    !preflight.includes("'--execute'"));
+  ok('6.0ו נוהל 42H.42 מצהיר במפורש על עצירת ייצור',
+    doc.includes('עצירת שחרור 42H.42') && doc.includes('אין לפרוס') &&
+    doc.includes('אישור כללי לפריסה אינם מסירים עצירה זו'));
+} else {
 
 function between(src, start, end) {
   const from = src.indexOf(start);
@@ -612,6 +659,7 @@ ok('6.31 סקריפטי parity מחווטים לפקודות המדויקות',
   scripts['pages:source'] === 'node pages-parity-gate.mjs ..' &&
   scripts['pages:preview'] === 'node pages-live-parity.mjs' &&
   scripts['pages:live'] === 'node pages-live-parity.mjs');
+}
 
 /* ==================================================================
  * סיכום
@@ -624,5 +672,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
+if (releaseVersion === '42H.42') console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');
