@@ -61,10 +61,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h42';
-import { attachModeChip } from './mode-bar.js?v=42h42';
-import { assertPresentationOnly } from './role-view.js?v=42h42';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h42';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h43';
+import { attachModeChip } from './mode-bar.js?v=42h43';
+import { assertPresentationOnly } from './role-view.js?v=42h43';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h43';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -387,7 +387,39 @@ function styleOnce() {
     '#resqDockSheet a,#resqDockSheet button{display:flex;align-items:center;justify-content:center;',
     'min-height:46px;width:100%;box-sizing:border-box;margin:0;padding:9px;border:1px solid var(--line);',
     'border-radius:11px;background:var(--chip);color:var(--txt);font:700 14px "Segoe UI",Arial,sans-serif;text-decoration:none}',
-    '#resqDockSheet .dockTheme{grid-column:1/-1}}'
+    '#resqDockSheet .dockTheme{grid-column:1/-1}}',
+    // Desktop uses the SAME authorized links; no copied menu or data source.
+    // :has also releases the space immediately when removeNav removes the shell.
+    '@media (min-width:1024px){',
+    'body:has(> #appNav){padding-left:240px!important;padding-right:24px!important}',
+    '#appNav{margin:0 0 20px;width:100%;padding:14px 18px;min-height:72px;',
+    '  border:1px solid var(--line);border-radius:14px;box-shadow:0 2px 8px #00000008}',
+    '#appNav #navLinks{position:fixed;left:0;right:auto;top:0;bottom:0;width:216px;',
+    '  display:flex;flex-direction:column;align-items:stretch;gap:8px;',
+    '  padding:24px 12px;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;',
+    '  background:#172332;color:#f4f7fc;border-right:1px solid #344456;',
+    '  text-align:right;scrollbar-gutter:stable;box-shadow:4px 0 20px #0000000a}',
+    '#appNav #navLinks::before{content:"ResQ";display:block;flex:none;',
+    '  font-size:30px;font-weight:850;letter-spacing:-1px;padding:2px 10px 24px;',
+    '  margin-bottom:12px;border-bottom:1px solid #344456;text-align:left;color:#fff}',
+    '#appNav #navLinks a,#appNav #navLinks button{width:100%;margin:0;flex:none;',
+    '  justify-content:flex-start;white-space:normal;overflow-wrap:anywhere;text-align:right;',
+    '  min-height:48px;padding:12px 10px;font-size:15px;line-height:1.45;',
+    '  background:transparent;border:1px solid transparent;color:#e6edf7;box-shadow:none}',
+    '#appNav #navLinks .navPanel{order:0;display:flex;flex-direction:column;gap:3px;',
+    '  padding:4px 8px 12px 0;border-right:2px solid #53677f;flex:none}',
+    '#appNav #navLinks .navPanel[hidden]{display:none}',
+    '#appNav #navLinks .navPanel a{font-size:14px;min-height:44px}',
+    '#appNav #navLinks :is(a,button):hover{background:#293b50;transform:none;color:#fff}',
+    '#appNav #navLinks :is(.on,.here,[aria-expanded="true"]){background:#30465f;',
+    '  border-color:#7595ba;color:#fff}',
+    '#appNav #navLinks :is(a,button):focus-visible{outline:3px solid #ffb76b;outline-offset:-3px}',
+    '#appNav #navLinks #themeBtn{margin-top:auto;border-top:1px solid #344456}',
+    '#appNav .me{font-size:15px;white-space:normal;overflow-wrap:anywhere}',
+    '#appNav .brand{font-size:20px}',
+    '#appNav .bell{margin-inline-start:0}',
+    '#appNav #navToggle{display:none}',
+    '}'
   ].join('');
   document.head.appendChild(st);
 }
@@ -464,6 +496,10 @@ function fillDockItem(element, id, label) {
 export function renderNav(claims, current, who, presentation, unreadCount) {
   styleOnce();
   claims = claims || {};
+  const reminderAllowed=!assertPresentationOnly(presentation)&&!['alerts.html','device-readiness.html'].includes(current)
+    &&(claims.super===true||!!(claims.emp&&claims.stationId&&claims.role));
+  window.__resqReminderContext={allowed:reminderAllowed};
+  import('./notification-reminder-entry.js?v=42h43').then(module=>module.configureNotificationReminder(window.__resqReminderContext)).catch(()=>{});
 
   const old = document.getElementById('appNav');
   if (old) old.remove();
@@ -658,7 +694,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h42')
+  import('./mode-controller.js?v=42h43')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -866,7 +902,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h42')
+  import('./mode-controller.js?v=42h43')
     .then(module => module.stopModeController())
     .catch(() => {});
 }
