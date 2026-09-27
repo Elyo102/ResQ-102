@@ -14,7 +14,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h42">
+<link rel="stylesheet" href="./theme.css?v=42h43">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -109,20 +109,22 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig } from './firebase-config.js?v=42h42';
-import { renderNav, renderStuckNav } from './nav.js?v=42h42';
-import { initPWA } from './pwa.js?v=42h42';
-import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h42';
-import { blockerText } from './join-ui.js?v=42h42';
-import { errorText, logError } from './error-text.js?v=42h42';
+import { firebaseConfig } from './firebase-config.js?v=42h43';
+import { renderNav, renderStuckNav } from './nav.js?v=42h43';
+import { initPWA } from './pwa.js?v=42h43';
+import { pushSupported, enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h43';
+import { blockerText } from './join-ui.js?v=42h43';
+import { errorText, logError } from './error-text.js?v=42h43';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {rememberPushConfiguration} from './notification-reminder.js?v=42h43';
+let pushConfigurationEpoch=0;
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h42';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h43';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app = initializeApp(firebaseConfig);
-import { initAppCheck } from './appcheck.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h43';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -162,7 +164,7 @@ function controls(){ ['btnEnable', 'btnSend', 'btnAck'].forEach(id => { $(id).di
 
 function render(r){
   const o = $('overall'); o.classList.toggle('ready', r.operational_ready === true);
-  if (r.operational_ready) { $('overallIcon').textContent = '✅'; $('overallTitle').textContent = 'המכשיר מוכן'; $('overallText').textContent = 'התראות מבצעיות יגיעו למכשיר הזה.'; }
+  if (r.operational_ready) { $('overallIcon').textContent = '✅'; $('overallTitle').textContent = 'המכשיר מוכן'; $('overallText').textContent = 'בדיקת המוכנות הושלמה. מסירה עתידית תלויה גם בחיבור ובהגדרות המכשיר.'; }
   else { $('overallIcon').textContent = '🔔'; $('overallTitle').textContent = 'המכשיר עדיין לא מוכן'; $('overallText').textContent = (r.blockers || []).map(blockerText).join(' · '); }
   const d = r.device || {};
   const tokenOk = d.token_present === true && (!myToken || tokens.some(t => t.token === myToken));
@@ -178,8 +180,10 @@ function render(r){
 }
 
 async function refresh(){
-  try { const r = (await callStatus({})).data || {}; render(r); return r; }
-  catch (e) { msg(userError('readiness.status', e, 'לא ניתן לקרוא את מצב המוכנות.'), 'err'); return null; }
+  const epoch=pushConfigurationEpoch,user=auth.currentUser;
+  const current=()=>epoch===pushConfigurationEpoch&&auth.currentUser===user;
+  try { const r = (await callStatus({})).data || {}; if(!current())return null;render(r); return r; }
+  catch (e) { if(current())msg(userError('readiness.status', e, 'לא ניתן לקרוא את מצב המוכנות.'), 'err'); return null; }
 }
 
 async function loadTokens(){
@@ -199,17 +203,25 @@ async function loadTokens(){
 }
 
 $('btnEnable').onclick = async () => {
+  const activationUser=auth.currentUser, activationEpoch=pushConfigurationEpoch;
+  const activationCurrent=()=>!!activationUser&&auth.currentUser===activationUser&&pushConfigurationEpoch===activationEpoch;
   if (busy) return; busy = true; controls(); msg('');
   try {
     const res = await enablePush(MSG, messaging, vapid);
+    if(!activationCurrent())return;
     if (!res.ok) { msg(res.why, 'err'); return; }
     myToken = res.token;
     if (!tokens.some(t => t.token === myToken)) tokens.push({ token: myToken, label: deviceLabel(), added: Date.now() });
     await setDoc(doc(db, 'stations', SID, 'push_tokens', ME.uid), { uid: ME.uid, tokens, updated_at: serverTimestamp() }, { merge: true });
-    try { await callClaim({ token: myToken }); } catch (ignore) {}
+    if(!activationCurrent())return;
+    try { await callClaim({ token: myToken }); }
+    catch (_) {if(activationCurrent())msg('המכשיר נשמר, אך שיוכו לחשבון לא אומת. נסו להפעיל שוב.','err');return;}
+    if(!activationCurrent())return;
+    await rememberPushConfiguration(activationUser.uid,activationCurrent);
+    if(!activationCurrent())return;
     msg('ההתראות הופעלו במכשיר הזה.', 'ok');
-  } catch (e) { msg(userError('readiness.push.enable', e, 'ההפעלה נכשלה.'), 'err'); }
-  finally { busy = false; controls(); await refresh(); }
+  } catch (e) { if(activationCurrent())msg(userError('readiness.push.enable', e, 'ההפעלה נכשלה.'), 'err'); }
+  finally { if(activationCurrent()){busy = false; controls(); await refresh();} }
 };
 
 $('btnSend').onclick = async () => {
@@ -244,6 +256,8 @@ $('btnAck').onclick = async () => {
 };
 
 onAuthStateChanged(auth, async user => {
+  pushConfigurationEpoch++;
+  busy=false;
   if (!user) { location.replace('./login.html?next=device-readiness.html'); return; }
   let c = {};
   try { c = (await user.getIdTokenResult()).claims || {}; } catch (ignore) {}

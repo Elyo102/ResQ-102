@@ -204,7 +204,8 @@ const UNLOCK_TOKEN_MINUTES = 60;
 const db = admin.firestore();
 const stationDeliveryFence = stationDeliveryFenceModule.createStationDeliveryFence({ db });
 const mailDeliveryGuard = require('./mail-delivery-guard').createMailDeliveryGuard({
-  runtimeFresh, stationFence: stationDeliveryFence, normalizeRecipients: asList
+  runtimeFresh, stationFence: stationDeliveryFence, normalizeRecipients: asList,
+  validateSetupMail:job=>ownerSetupMailService.validateDelivery(job)
 });
 const PUSH_SUPPRESSION_REASONS = new Set(['global-silence','station-silence','station-not-ready','station-inactive']);
 function isPolicySuppressedPush(value) {
@@ -541,6 +542,17 @@ const stationFirstAdminService = stationFirstAdminModule.createStationFirstAdmin
 exports.provisionStation = onCall({ enforceAppCheck: true }, req => stationProvisionService.provisionStation(req));
 exports.markStationReady = onCall({ enforceAppCheck: true }, req => stationProvisionService.markStationReady(req));
 exports.issueFirstAdminInvitation = onCall({ enforceAppCheck: true }, req => stationFirstAdminService.issueFirstAdminInvitation(req));
+const hrPersonalInvitations = require('./hr-personal-invitation-service').createHrPersonalInvitationService({
+  db, invitations:invitationEngine, requireSuperAdmin:requireFreshOnboardingSuper, knownDistricts:KNOWN_DISTRICTS,
+  fail:(code, message) => { throw new HttpsError(code, message); }
+});
+exports.issueHrInvitation = onCall({ enforceAppCheck:true }, req => hrPersonalInvitations.issueHrInvitation(req));
+exports.revokeHrInvitation = onCall({ enforceAppCheck:true }, req => hrPersonalInvitations.revokeHrInvitation(req));
+const ownerSetupMailService = require('./owner-setup-mail-service').createOwnerSetupMailService({
+  db, auth:admin.auth(), requireSuperAdmin:requireFreshOnboardingSuper,
+  fail:(code,message)=>{throw new HttpsError(code,message);}
+});
+exports.ownerSetupMail = onCall({ enforceAppCheck:true, timeoutSeconds:120 }, req=>ownerSetupMailService.handle(req));
 exports.redeemInvitation = preApprovalOnCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).redeemInvitation(req));
 exports.resumeOnboarding = onCall({ enforceAppCheck: true }, req => createOnboardingRequestService(req).resumeOnboarding(req));
 
@@ -575,7 +587,7 @@ const scheduleRuntime = scheduleRuntimeModule.createScheduleRuntime({
   // fresh-super activation atomically creates its authority and control record.
   monthAuthorityEnabled: true,
   monthAuthorityControlEnabled: true,
-  monthAuthorityReleaseId: '42H.42',
+  monthAuthorityReleaseId: '42H.43',
   FieldValue: FV,
   FieldPath: admin.firestore.FieldPath,
   clock: function () { return new Date().toISOString(); },
@@ -1799,7 +1811,8 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
       const liveEmail = assignment ? String(r.email || '').trim().toLowerCase() : String(user.email || '').toLowerCase();
       const requestEmail = String(r.email || '').toLowerCase();
 
-      if (assignment && (VALID_ROLES.indexOf(role) === -1 || VALID_SHIFTS.indexOf(shift) === -1)) {
+      if (assignment && (VALID_ROLES.indexOf(role) === -1 ||
+          (VALID_SHIFTS.indexOf(shift) === -1 && !(role === 'hr_coordinator' && shift === '')))) {
         throw new HttpsError('failed-precondition', 'השיוך בהזמנה אינו תקין.');
       }
 
@@ -6948,7 +6961,7 @@ exports.systemHeartbeat = onSchedule({
   timeoutSeconds: 30, region: 'europe-west1', maxInstances: 1, retryCount: 1
 }, async () => {
   await db.doc('system/heartbeat').set({
-    state: 'ok', version: '42H.42', at: FV.serverTimestamp()
+    state: 'ok', version: '42H.43', at: FV.serverTimestamp()
   }, { merge: false });
 });
 

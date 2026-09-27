@@ -1,5 +1,5 @@
-import { assertPresentationOnly } from './role-view.js?v=42h42';
-import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h42';
+import { assertPresentationOnly } from './role-view.js?v=42h43';
+import { readCalloutRosterCache, writeCalloutRosterCache } from './callout-roster-cache.js?v=42h43';
 
 const ACTION_HREF = Object.freeze({
   open_document:'./hr.html', open_schedule_review:'./schedule-management.html',
@@ -8,6 +8,31 @@ const ACTION_HREF = Object.freeze({
 const ALLOWED_ROLES = Object.freeze(['firefighter','team_leader','deputy_team_leader','deputy','commander','station_commander','district_commander','hr_coordinator','super_admin']);
 const COMMAND_ROLES = Object.freeze(['team_leader','deputy_team_leader','deputy','commander','station_commander']);
 let active = null;
+
+// Presentation state only: separate defaults/preferences for each viewport band.
+// Repeated home refreshes must not reopen a disclosure the user collapsed.
+let accountDisclosure = null;
+export function initAccountDisclosure(element) {
+  if (!element || accountDisclosure?.element === element) return;
+  destroyAccountDisclosure();
+  const media = window.matchMedia('(min-width:1024px)');
+  const states = { desktop:true, mobile:false };
+  let band = media.matches ? 'desktop' : 'mobile';
+  element.open = states[band];
+  const change = () => {
+    states[band] = element.open;
+    band = media.matches ? 'desktop' : 'mobile';
+    element.open = states[band];
+  };
+  media.addEventListener('change', change);
+  accountDisclosure = { element, media, change };
+}
+export function destroyAccountDisclosure() {
+  if (!accountDisclosure) return;
+  accountDisclosure.media.removeEventListener('change', accountDisclosure.change);
+  accountDisclosure.element.open = false;
+  accountDisclosure = null;
+}
 
 function text(value, max) { return String(value == null ? '' : value).trim().slice(0, max || 160); }
 function count(value) { const n = Number(value); return Number.isSafeInteger(n) && n >= 0 ? n : 0; }

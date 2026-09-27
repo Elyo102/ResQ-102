@@ -81,24 +81,34 @@
 /* Only the authenticated home becomes a wide multi-column dashboard.
    The same .card also contains login and consent, so never widen it globally. */
 @media (min-width:1024px){
+  body.bulletin-mode:has(> #appNav){
+    background-image:linear-gradient(to right,#172332 0 216px,transparent 216px 100%);
+  }
   body.bulletin-mode > .card{width:100%;max-width:none}
   body.bulletin-mode .bulletin-board{
-    display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;
+    display:grid;grid-template-columns:minmax(280px,.85fr) minmax(0,1.65fr);
+    align-items:start;gap:22px;
   }
   body.bulletin-mode .bulletin-board > *{min-width:0}
-  body.bulletin-mode #homeUrgent{grid-column:1 / -1}
-  body.bulletin-mode #homeTasks,
-  body.bulletin-mode .home-updates,
-  body.bulletin-mode #homeFaults,
-  body.bulletin-mode #homeShiftStatus{grid-column:span 6}
-  body.bulletin-mode #accountDetails{grid-column:1 / -1}
-}
-@media (min-width:1440px){
-  body.bulletin-mode #homeTasks,
-  body.bulletin-mode .home-updates,
-  body.bulletin-mode #homeFaults{grid-column:span 4}
-  body.bulletin-mode #homeShiftStatus{grid-column:span 6}
-  body.bulletin-mode #accountDetails{grid-column:span 6}
+  body.bulletin-mode #homeUrgent{grid-column:1 / -1;grid-row:1}
+  body.bulletin-mode #homeTasks{grid-column:1;grid-row:2}
+  body.bulletin-mode #homeFaults{grid-column:2;grid-row:2 / span 2}
+  body.bulletin-mode #homeShiftStatus{grid-column:1;grid-row:3}
+  body.bulletin-mode .home-updates{grid-column:2;grid-row:4}
+  body.bulletin-mode #accountDetails{grid-column:1;grid-row:4}
+  /* The greeting and station/crew context are not duplicated by the role
+     heading below; keep both visible, compact and readable on desktop. */
+  body.bulletin-mode > .card > h1{font-size:24px;margin:0 0 4px}
+  body.bulletin-mode > .card > .sub{font-size:14px;margin-bottom:16px}
+  body.bulletin-mode .home-command-header{padding:22px 24px;margin-bottom:20px}
+  body.bulletin-mode .home-command-header h2{font-size:26px}
+  body.bulletin-mode .home-command-header p{font-size:16px;max-width:none}
+  body.bulletin-mode .home-panel{padding:22px;border-radius:16px;gap:16px}
+  body.bulletin-mode .home-panel h2{font-size:22px;line-height:1.35}
+  body.bulletin-mode .home-fault-title{font-size:17px}
+  body.bulletin-mode .home-fault-card{padding:15px 16px;gap:7px}
+  body.bulletin-mode :is(.home-fault-meta,.home-fault-status,.home-fault-empty){font-size:14px}
+  body.bulletin-mode .home-shift-metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 }
 
 .home-panel{

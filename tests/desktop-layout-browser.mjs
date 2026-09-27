@@ -60,10 +60,12 @@ try {
           return { top:rect.top, width:rect.width };
         }));
       assert(panels.every(panel => panel.width > 250), `desktop panel too narrow at ${width}`);
-      if (width >= 1440) {
-        assert(panels.every(panel => Math.abs(panel.top - panels[0].top) < 2),
-          `three primary desktop panels do not share a row at ${width}`);
-      }
+      assert(Math.abs(panels[2].top - panels[0].top) < 2,
+        `faults and tasks do not share the desktop top row at ${width}`);
+      assert(panels[1].top > panels[2].top,
+        `updates must follow faults in the main column at ${width}`);
+      assert(panels[2].width > panels[0].width,
+        `faults main column must be wider than tasks at ${width}`);
     }
     await home.close();
 

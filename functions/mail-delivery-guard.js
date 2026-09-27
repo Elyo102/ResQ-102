@@ -7,7 +7,7 @@ const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const result = (allowed, reason, retryable = false, terminal = false) =>
   Object.freeze({ allowed, reason, retryable, terminal });
 
-function createMailDeliveryGuard({ runtimeFresh, stationFence, normalizeRecipients }) {
+function createMailDeliveryGuard({ runtimeFresh, stationFence, normalizeRecipients, validateSetupMail }) {
   if (typeof runtimeFresh !== 'function' || typeof stationFence?.check !== 'function'
       || typeof normalizeRecipients !== 'function') throw new TypeError('Mail guard dependencies required');
 
@@ -16,7 +16,7 @@ function createMailDeliveryGuard({ runtimeFresh, stationFence, normalizeRecipien
     const scoped = own(job, 'station_id');
     const scope = scoped ? job.station_id : null;
     const recipients = ['to', 'cc', 'bcc'].map(key => normalizeRecipients(job[key]));
-    const envelope = JSON.stringify([scoped, scope, ...recipients, job.message || {}]);
+    const envelope = JSON.stringify([scoped, scope, ...recipients, job.message || {}, job.setup_authority || null]);
     return Object.freeze({ scoped, scope, recipients: Object.freeze(recipients.flat()),
       digest: crypto.createHash('sha256').update(envelope).digest('hex') });
   }
@@ -30,6 +30,11 @@ function createMailDeliveryGuard({ runtimeFresh, stationFence, normalizeRecipien
     try { now = capture(current); } catch (_) { return result(false, 'mail-envelope-invalid'); }
     if (!original || original.digest !== now.digest || original.scoped !== now.scoped
         || original.scope !== now.scope) return result(false, 'mail-envelope-changed');
+    if (own(current, 'setup_authority')) {
+      try {
+        if (typeof validateSetupMail !== 'function' || await validateSetupMail(current) !== true) return result(false, 'mail-recipient-changed');
+      } catch (_) { return result(false, 'mail-recipient-check-unavailable', true); }
+    }
     if (!original.scoped) return result(true, 'platform-mail');
     if (typeof original.scope !== 'string' || !/^[a-z0-9_-]{2,80}$/.test(original.scope)) {
       return result(false, 'mail-station-invalid');

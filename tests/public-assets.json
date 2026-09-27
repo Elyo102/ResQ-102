@@ -1,6 +1,10 @@
 [
   "access.html",
   "admin.html",
+  "hr-invitation-ui.js",
+  "owner-setup-mail-ui.js",
+  "notification-reminder.js",
+  "notification-reminder-entry.js",
   "alerts-feed.js",
   "alerts.html",
   "appcheck.js",

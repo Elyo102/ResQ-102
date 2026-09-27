@@ -166,6 +166,9 @@ try {
     listUsersWithClaims:[{ data:{ users:[{
       uid:'u_other_station', full_name:'אור כהן', email:'hidden@example.test',
       claims:{ role:'firefighter', stationId:'other_station', districtId:'north' }
+    }, {
+      uid:'u_numbered', full_name:'עובד <img src=x>', email:'numbered@example.test',
+      claims:{ role:'firefighter', stationId:'eilat_102', emp:'407' }
     }] } }],
     getScheduleManagerAccess:[
       { data:{ members:[{
@@ -188,6 +191,13 @@ try {
     assert.match(await superPage.locator('#scheduleAccessState').textContent(), /בחר אדם/);
     await superPage.locator('#btnUsers').dispatchEvent('click');
     await superPage.locator('#rPick option[value="u_other_station"]').waitFor({ state:'attached' });
+    const userCards = superPage.locator('#usrList .req');
+    assert.equal(await userCards.first().locator('.nm').textContent(), 'אור כהן');
+    assert.match(await userCards.first().textContent(), /hidden@example\.test/);
+    assert.match(await userCards.first().textContent(), /מספר עובד: טרם הוקצה/);
+    assert.match(await userCards.nth(1).textContent(), /מספר עובד: 407/);
+    assert.equal(await userCards.nth(1).locator('.nm').textContent(), 'עובד <img src=x>');
+    assert.equal(await userCards.locator('img').count(), 0);
     await superPage.evaluate(() => {
       const picker = document.getElementById('rPick');
       picker.value = 'u_other_station';

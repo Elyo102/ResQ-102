@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h42">
+<link rel="stylesheet" href="./theme.css?v=42h43">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -285,30 +285,32 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
-import { renderNav, renderStuckNav } from './nav.js?v=42h42';
-import { MEMBER_ROLES } from './roles.js?v=42h42';
-import { initPWA } from './pwa.js?v=42h42';
-import { watchCallouts } from './callout.js?v=42h42';
-import { errorText, logError } from './error-text.js?v=42h42';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h43';
+import { renderNav, renderStuckNav } from './nav.js?v=42h43';
+import { MEMBER_ROLES } from './roles.js?v=42h43';
+import { initPWA } from './pwa.js?v=42h43';
+import { watchCallouts } from './callout.js?v=42h43';
+import { errorText, logError } from './error-text.js?v=42h43';
 import { ALERT_TYPES, isMust, defaultPrefs, pushSupported, permissionState,
-         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h42';
-import { CREW_HE } from './rotation.js?v=42h42';
+         enablePush, deviceLabel, DEFAULT_VAPID } from './push.js?v=42h43';
+import { CREW_HE } from './rotation.js?v=42h43';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {rememberPushConfiguration,clearPushConfiguration} from './notification-reminder.js?v=42h43';
+let pushConfigurationEpoch=0, pushClaimPending=false;
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc,
          query, where, orderBy, limit, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h42';
-import { markCalloutSeen } from './callout.js?v=42h42';
+import { ALERT_FEED_FILTERS, loadAlertsFeed, applyFeedFilter, createDisplayTracker } from './alerts-feed.js?v=42h43';
+import { markCalloutSeen } from './callout.js?v=42h43';
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h42';
+  from './monitored-functions.js?v=42h43';
 import * as MSG from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h43';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -355,6 +357,8 @@ function isWide(){
 // ---------- הרשאה ----------
 
 onAuthStateChanged(auth, async user => {
+  pushConfigurationEpoch++;
+  pushClaimPending=false;$('btnOn').disabled=false;
   if (!user) { location.replace('./login.html?next=alerts.html'); return; }
 
   let c = {};
@@ -554,10 +558,14 @@ function renderState(){
     return;
   }
 
-  if (has) {
+  if (has && pushClaimPending) {
+    el.className='state off';$('pBig').textContent='נדרש אימות שיוך';
+    $('pWhy').textContent='המכשיר נשמר אך שיוכו לחשבון לא אומת. נסו להפעיל שוב.';
+    $('btnOn').classList.remove('hide');$('btnOff').classList.remove('hide');
+  } else if (has) {
     el.className = 'state on';
     $('pBig').textContent = 'פעיל';
-    $('pWhy').textContent = 'המכשיר הזה רשום ויקבל התראות.';
+    $('pWhy').textContent = 'המכשיר רשום להתראות. מומלץ לבצע בדיקת מסירה; הרשמה אינה מבטיחה הגעה.';
     $('btnOn').classList.add('hide');
     $('btnOff').classList.remove('hide');
   } else {
@@ -587,8 +595,9 @@ function renderDevices(){
     const b = document.createElement('button');
     b.className = 'btn sm'; b.textContent = 'הסר';
     b.onclick = async () => {
+      const removingCurrent=t.token===myToken;
       tokens.splice(i, 1);
-      try { await saveTokens('המכשיר הוסר.'); renderState(); }
+      try { await saveTokens('המכשיר הוסר.'); if(removingCurrent)clearPushConfiguration();renderState(); }
       catch (e) { msg(userError('alerts.token.remove', e, 'ההסרה נכשלה.'), 'err'); }
     };
     row.appendChild(b);
@@ -597,8 +606,11 @@ function renderDevices(){
 }
 
 $('btnOn').onclick = async () => {
+  const activationUser=auth.currentUser, activationEpoch=pushConfigurationEpoch;
+  const activationCurrent=()=>!!activationUser&&auth.currentUser===activationUser&&pushConfigurationEpoch===activationEpoch;
   const b = $('btnOn'); b.disabled = true; msg('', '');
   const res = await enablePush(MSG, messaging, vapid);
+  if(!activationCurrent())return;
   if (!res.ok) { msg(res.why, 'err'); b.disabled = false; return; }
 
   myToken = res.token;
@@ -606,7 +618,8 @@ $('btnOn').onclick = async () => {
     tokens.push({ token: myToken, label: deviceLabel(), added: Date.now() });
   }
   try {
-    await saveTokens('התראות הופעלו במכשיר הזה.');
+    await saveTokens();
+    if(!activationCurrent())return;
 
     // המכשיר נרשם עליי — ולכן הוא נגרע מכל מי שנרשם עליו קודם.
     //
@@ -620,6 +633,11 @@ $('btnOn').onclick = async () => {
     // בלי כלום.
     try {
       const r = await httpsCallable(fns, 'claimPushToken')({ token: myToken });
+      if(!activationCurrent())return;
+      pushClaimPending=false;
+      await rememberPushConfiguration(activationUser.uid,activationCurrent);
+      if(!activationCurrent())return;
+      msg('המכשיר נרשם להתראות. מומלץ לבצע בדיקת מסירה.','ok');
       const n = (r && r.data && r.data.evicted) || 0;
       if (n) {
         msg('התראות הופעלו במכשיר הזה. ' +
@@ -627,20 +645,19 @@ $('btnOn').onclick = async () => {
             'הוא יצטרך להפעיל התראות מחדש במכשיר שלו.', 'ok');
       }
     } catch (ignore) {
-      // תפיסה שנכשלה אינה שוברת את ההפעלה. במקרה הגרוע
-      // המכשיר רשום על שניים, וזה בדיוק המצב שהיה קודם.
+      if(activationCurrent()){pushClaimPending=true;msg('המכשיר נשמר, אך שיוכו לחשבון לא אומת. נסו להפעיל שוב.','err');}
     }
 
-    renderState();
+    if(activationCurrent())renderState();
   } catch (e) {
-    msg(userError('alerts.token.save', e, 'השמירה נכשלה.'), 'err');
+    if(activationCurrent())msg(userError('alerts.token.save', e, 'השמירה נכשלה.'), 'err');
   }
-  b.disabled = false;
+  if(activationCurrent())b.disabled = false;
 };
 
 $('btnOff').onclick = async () => {
   tokens = tokens.filter(t => t.token !== myToken);
-  try { await saveTokens('המכשיר הזה כבוי.'); renderState(); }
+  try { await saveTokens('המכשיר הזה כבוי.'); clearPushConfiguration();renderState(); }
   catch (e) { msg(userError('alerts.token.disable', e, 'הכיבוי נכשל.'), 'err'); }
 };
 

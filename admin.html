@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h42">
+<link rel="stylesheet" href="./theme.css?v=42h43">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -219,6 +219,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
     </section>
     <section class="card hide" id="joinAdminCard" aria-labelledby="joinAdminTitle"></section>
+    <section class="card hide" id="hrInvitationCard" aria-label="הזמנת HR אישית"></section>
 
     <div class="card" id="reqCard">
       <h2>בקשות הרשמה</h2>
@@ -233,6 +234,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <button id="btnReindex" class="ghost" style="margin-inline-start:8px">בנה מחדש את מפתח החיפוש</button>
       <div class="msg" id="reindexMsg"></div>
       <div id="usrList"></div>
+      <section id="setupMailPanel" aria-label="מיילי כניסה"></section>
 
       <h2 style="margin-top:26px">הענקת תפקיד ידנית</h2>
       <div class="rotstate">
@@ -389,7 +391,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h42';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h43';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
          sendEmailVerification }
@@ -398,20 +400,20 @@ import { getFirestore, doc, getDoc, collection,
          getDocs, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h42';
-import { CREW_HE } from './rotation.js?v=42h42';
+  from './monitored-functions.js?v=42h43';
+import { CREW_HE } from './rotation.js?v=42h43';
 import { DISTRICTS, STATIONS, stationsInDistrict, stationName }
-  from './stations.js?v=42h42';
-import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h42';
-import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h42';
-import { initPWA } from './pwa.js?v=42h42';
-import { watchCallouts } from './callout.js?v=42h42';
+  from './stations.js?v=42h43';
+import { renderNav, clearNav, renderStuckNav } from './nav.js?v=42h43';
+import { ROLE_HE as ROLES_HE, roleOptionsHtml } from './roles.js?v=42h43';
+import { initPWA } from './pwa.js?v=42h43';
+import { watchCallouts } from './callout.js?v=42h43';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h42';
-import { createJoinAdmin } from './join-admin-ui.js?v=42h42';
-import { personalInvitationLink } from './invitation-link.js?v=42h42';
+import { initAppCheck } from './appcheck.js?v=42h43';
+import { createJoinAdmin } from './join-admin-ui.js?v=42h43';
+import { personalInvitationLink } from './invitation-link.js?v=42h43';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -471,6 +473,11 @@ function initJoinAdmin(claims){
 const callResumeIdentity = httpsCallable(fns, 'resumeIdentityOperation');
 const callListUsers = httpsCallable(fns, 'listUsersWithClaims');
 const callApprovalMailStatus = httpsCallable(fns, 'approvalMailStatus');
+const callIssueHrInvitation = httpsCallable(fns, 'issueHrInvitation');
+const callRevokeHrInvitation = httpsCallable(fns, 'revokeHrInvitation');
+let disposeHrInvitation = null, hrInvitationGeneration = 0;
+let setupMailUi = null;
+const callOwnerSetupMail = httpsCallable(fns, 'ownerSetupMail');
 const callSetRole  = httpsCallable(fns, 'setUserRole');
 const callReindex  = httpsCallable(fns, 'reindexDirectory');
 // הרשאות הסידור נקראות ונכתבות רק דרך השרת. הדפדפן אינו שולח
@@ -1238,6 +1245,11 @@ $('btnVerify').onclick = async () => {
 $('btnRefresh').onclick = () => loadRequests();
 
 onAuthStateChanged(auth, async user => {
+  const hrGeneration=++hrInvitationGeneration;
+  $('btnUsers').disabled=false;
+  if (setupMailUi) { setupMailUi.dispose(); setupMailUi=null; }
+  if (disposeHrInvitation) { disposeHrInvitation(); disposeHrInvitation=null; }
+  $('hrInvitationCard').classList.add('hide');
   if (stationUiUid !== (user?.uid || '')) { resetStationUi(); stationUiUid=user?.uid || ''; }
   $('stationProvisionCard').classList.add('hide');
   scheduleAccessGeneration += 1;
@@ -1328,7 +1340,36 @@ onAuthStateChanged(auth, async user => {
   // מקטעים למנהל-על בלבד.
   $('reqCard').classList.toggle('hide', !isSuper);
   $('stationProvisionCard').classList.toggle('hide', !isSuper);
+  if (isSuper) {
+    const hrActor=user.uid;
+    try {
+    const { mountHrInvitation } = await import('./hr-invitation-ui.js?v=42h43');
+    if (auth.currentUser?.uid !== hrActor || hrGeneration!==hrInvitationGeneration) return;
+    disposeHrInvitation=mountHrInvitation($('hrInvitationCard'), {
+      issue:async data=>(await callIssueHrInvitation(data)).data,
+      revoke:async data=>(await callRevokeHrInvitation(data)).data,
+      stationOptions:stationOptions(STATION_ID), getActor:()=>auth.currentUser?.uid,
+      requestId:()=>newOperationId('hr_')
+    });
+    $('hrInvitationCard').classList.remove('hide');
+    } catch (_) {
+      if (auth.currentUser?.uid !== hrActor || hrGeneration!==hrInvitationGeneration) return;
+      $('hrInvitationCard').textContent='הזמנות HR לא נטענו. אפשר לרענן ולנסות שוב; יתר מסך הניהול זמין.';
+      $('hrInvitationCard').classList.remove('hide');
+    }
+  }
   $('usersCard').classList.toggle('hide', !isSuper);
+  if (isSuper) {
+    const mailActor=user.uid;
+    try {
+      const { mountSetupMail }=await import('./owner-setup-mail-ui.js?v=42h43');
+      if(auth.currentUser?.uid!==mailActor||hrGeneration!==hrInvitationGeneration)return;
+      setupMailUi=mountSetupMail($('setupMailPanel'),{call:async d=>(await callOwnerSetupMail(d)).data,getActor:()=>auth.currentUser?.uid,requestId:()=>newOperationId('mail_')});
+    } catch (_) {
+      if(auth.currentUser?.uid!==mailActor||hrGeneration!==hrInvitationGeneration)return;
+      $('setupMailPanel').textContent='מיילי הכניסה לא נטענו. אפשר לרענן; יתר מסך הניהול זמין.';
+    }
+  }
   // רכז/ת כוח-אדם ומנהל-על יכולים לנהל מינוי נפרד; מפקדים וסגנים
   // נשארים במצב צפייה עד שממונה להם מינוי מפורש. השרת בודק מחדש
   // תחנה, תחום וסמכות — ההסתרה כאן היא ממשק בלבד.
@@ -1418,6 +1459,7 @@ async function loadRequests(){
       '<div class="ln">מספר עובד: <b>' + esc(plan.emp || 'טרם הוקצה') + '</b></div>' : '';
 
     const editablePlan = isPending ?
+      '<p class="ln">בהזמנה אישית, התפקיד והשיוך שנקבעו בהזמנה הם המחייבים בשרת, גם אם הבוררים מציגים ברירת מחדל אחרת.</p>' +
       '<label style="margin-top:10px">תחנה</label>' +
       '<select data-f="station">' + stationOptions(r.stationId || '') + '</select>' +
       '<div class="two" style="margin-top:10px">' +
@@ -1639,6 +1681,8 @@ $('btnReindex').onclick = async () => {
 };
 
 $('btnUsers').onclick = async () => {
+  const listActor=auth.currentUser?.uid, listGeneration=hrInvitationGeneration;
+  const currentList=()=>auth.currentUser?.uid===listActor&&hrInvitationGeneration===listGeneration;
   const btn = $('btnUsers');
   const box = $('usrList');
   btn.disabled = true;
@@ -1647,6 +1691,7 @@ $('btnUsers').onclick = async () => {
 
   try {
     const res = await callListUsers();
+    if(!currentList())return;
     const users = res.data.users || [];
 
     if (!users.length) {
@@ -1657,6 +1702,7 @@ $('btnUsers').onclick = async () => {
 
     $('usrState').textContent = users.length + ' משתמשים רשומים.';
     fillPicker(users);
+    setupMailUi?.setUsers(users);
 
     users.forEach(function (u) {
       const c = u.claims || {};
@@ -1668,11 +1714,12 @@ $('btnUsers').onclick = async () => {
         : (ROLE_HE[c.role] || (c.role ? c.role : 'ללא תפקיד'));
 
       row.innerHTML =
-        '<div class="nm">' + esc(u.email) + '</div>' +
+        '<div class="nm">' + esc(u.full_name || u.email) + '</div>' +
+        (u.full_name ? '<div class="ln">' + esc(u.email) + '</div>' : '') +
         '<div class="ln">תפקיד: <b>' + esc(roleTxt) + '</b></div>' +
         (c.stationId ? '<div class="ln">תחנה: <b>' + esc(stationName(c.stationId)) + '</b></div>' : '') +
         (c.shift ? '<div class="ln">משמרת: <b>' + esc(CREW_HE[c.shift] || c.shift) + '</b></div>' : '') +
-        (c.emp ? '<div class="ln">מספר עובד: <b>' + esc(c.emp) + '</b></div>' : '') +
+        '<div class="ln">מספר עובד: <b>' + esc(c.emp || (c.super === true ? 'לא נדרש למנהל מערכת' : 'טרם הוקצה')) + '</b></div>' +
         (c.districtId ? '<div class="ln">מחוז: <b>' +
            esc(DIST_HE[c.districtId] || c.districtId) + '</b></div>' : '') +
         (u.email_verified
@@ -1716,6 +1763,7 @@ $('btnUsers').onclick = async () => {
     });
 
   } catch (e) {
+    if(!currentList())return;
     $('usrState').textContent = 'שגיאה: ' + (e.message || e.code);
   }
   btn.disabled = false;

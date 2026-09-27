@@ -25,11 +25,11 @@ const completionEvent = read('functions/cost-completion-event.js');
 const completionOutbox = read('functions/cost-completion-outbox.js');
 const privacyMap = read('PRIVACY-DATA-MAP.md');
 
-check('cost-usage.html is RTL Hebrew with theme.css?v=42h42 and one App Check init',
-  /<html lang="he" dir="rtl">/.test(page) && /theme\.css\?v=42h42/.test(page) &&
+check('cost-usage.html is RTL Hebrew with theme.css?v=42h43 and one App Check init',
+  /<html lang="he" dir="rtl">/.test(page) && /theme\.css\?v=42h43/.test(page) &&
   (page.match(/await initAppCheck\(app\)/g) || []).length === 1);
-check('every local module import on cost-usage.html carries ?v=42h42',
-  [...page.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h42$/.test(m[1])) &&
+check('every local module import on cost-usage.html carries ?v=42h43',
+  [...page.matchAll(/from '\.\/([^']+)'/g)].every((m) => /\?v=42h43$/.test(m[1])) &&
   [...page.matchAll(/from '\.\/([^']+)'/g)].length >= 6);
 check('page gates on live super claims; deny for non-super; renderNav cost-usage.html',
   /renderNav\(claims,'cost-usage\.html',user\.email\|\|''\)/.test(page) &&
