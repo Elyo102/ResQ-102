@@ -14,10 +14,16 @@ async function fixture({width=1100,theme='light',connected=true}={}) {
     const url=new URL(route.request().url());if(url.origin!==origin)return route.abort();
     const file=path.resolve(root,'.'+url.pathname);if(!file.startsWith(root+path.sep)||!fs.existsSync(file))return route.fulfill({status:404,body:''});
     let body=fs.readFileSync(file);
-    if(file.endsWith('hr-client.js'))body="import { createHrHoursUI } from './hr-hours-ui.js?v=42h43'; window.__UI=createHrHoursUI(document.getElementById('hr-workspace')"+(connected?',window.__adapter':'')+");";
+    if(file.endsWith('hr-client.js'))body="import { createHrHoursUI } from './hr-hours-ui.js?v=42h44'; window.__UI=createHrHoursUI(document.getElementById('hr-workspace')"+(connected?',window.__adapter':'')+");";
     await route.fulfill({status:200,contentType:file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':'text/javascript',body});
   });
   await context.addInitScript(()=>{
+    window.__liveTimers=new Map();let nextTimer=-1;
+    const set=window.setInterval.bind(window),clear=window.clearInterval.bind(window),now=Date.now;
+    window.__clockOffset=0;Date.now=()=>now()+window.__clockOffset;
+    window.setInterval=(fn,ms,...args)=>{if(ms===30000){const id=nextTimer--;__liveTimers.set(id,fn);return id;}return set(fn,ms,...args);};
+    window.clearInterval=id=>{if(__liveTimers.has(id))__liveTimers.delete(id);else clear(id);};
+    window.__tickLive=()=>{__clockOffset+=30001;for(const fn of __liveTimers.values())fn();};
     window.__session={uid:'hr.fixture',stationId:'fixture_station',role:'hr_coordinator',super:false,epoch:1};
     window.__listeners=[];window.__calls=[];window.__held=[];window.__holdDetails=false;window.__holdLists=false;
     window.__people=[{uid:'u1',full_name:'עובד ראשון',state:'draft',historical:false,reminder_eligible:true},{uid:'u2',full_name:'עובד שני',state:'approved',historical:false,reminder_eligible:false},{uid:'u3',full_name:'עובד לשעבר',state:'draft',historical:true,reminder_eligible:false}];
@@ -154,7 +160,8 @@ try {
   });
   await check('historical report is labelled and contains no action buttons',async()=>{
     const f=await fixture();await f.page.locator('[data-uid="u3"]').click();await f.page.getByText('דוח היסטורי של עובד שאינו פעיל בתחנה.').waitFor();
-    assert.equal(await f.page.locator('[data-hr="detail"] button').count(),0);await f.context.close();
+    assert.equal(await f.page.locator('[data-hr="detail"] button:not([data-hr="detail-fresh"])').count(),0);
+    assert.equal(await f.page.locator('[data-hr="detail-fresh"]').count(),1,'historical report allows read-only refresh');await f.context.close();
   });
   await check('later selected report wins reversed detail completion order',async()=>{
     const f=await fixture();await f.page.evaluate(()=>{__holdDetails=true;});
@@ -425,6 +432,42 @@ try {
     const f=await fixture();await openReview(f);await f.page.evaluate(()=>{__holdDetails=true;});await f.page.locator('[data-uid="u2"]').click();await f.page.locator('[data-uid="u1"]').click();await f.page.evaluate(()=>{const h=__held.find(x=>x.kind==='detail'&&x.uid==='u1');__held=__held.filter(x=>x!==h);h.resolve();});await f.page.locator('[data-hr="review-save"]').waitFor();
     await f.page.evaluate(()=>{__holdReviews=true;});await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));await releaseKind(f,'detail');assert.equal(await f.page.locator('[data-hr="detail"] h2').innerText(),'עובד ראשון');assert.equal(await reviewCallCount(f),1);assert.deepEqual(f.errors,[]);await f.context.close();
     const g=await fixture();await g.page.evaluate(()=>{__cursor='next';__UI.refresh();});await g.page.locator('[data-hr="more"]').waitFor({state:'visible'});await openReview(g);await g.page.evaluate(()=>{__holdLists=true;});await g.page.locator('[data-hr="more"]').click();await g.page.waitForFunction(()=>__held.some(x=>x.kind==='list'));await g.page.locator('[data-hr="review-save"]').dispatchEvent('click');assert.equal(await reviewCallCount(g),0);assert.deepEqual(g.errors,[]);await g.context.close();
+  });
+  await check('foreground refresh is selected-only, coalesced, preserves unchanged DOM and stale data on network failure',async()=>{
+    const f=await fixture();await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="detail"] h2').waitFor();
+    await f.page.locator('[data-hr="detail"]').scrollIntoViewIfNeeded();
+    await f.page.evaluate(()=>{document.activeElement?.blur();window.__oldHeading=document.querySelector('[data-hr="detail"] h2');__calls=[];__holdDetails=true;__tickLive();__tickLive();});
+    await f.page.waitForFunction(()=>__held.some(x=>x.kind==='detail'));
+    assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='detail').length),1);
+    assert.equal(await f.page.evaluate(()=>__calls.filter(c=>c.name==='list').length),0);
+    await releaseKind(f,'detail');await f.page.waitForFunction(()=>document.querySelector('[data-hr="live-message"]').textContent.includes('נבדק מול השרת'));
+    assert.equal(await f.page.evaluate(()=>__oldHeading===document.querySelector('[data-hr="detail"] h2')),true);
+    await f.page.evaluate(()=>{__holdDetails=false;__adapter.getEmployeeMonth=async()=>{throw Error('offline');};__tickLive();});
+    await f.page.waitForFunction(()=>document.querySelector('[data-hr="live-message"]').textContent.includes('הרענון לא הצליח'));
+    assert.equal(await f.page.locator('[data-hr="detail"] h2').innerText(),'עובד ראשון');
+    await f.page.evaluate(()=>__UI.destroy());assert.equal(await f.page.evaluate(()=>__liveTimers.size),0);await f.context.close();
+  });
+  await check('live refresh pauses while offline or editing and discards late response after identity switch',async()=>{
+    const f=await fixture();await f.page.locator('[data-uid="u1"]').click();await f.page.locator('[data-hr="detail"] h2').waitFor();
+    await f.page.locator('[data-hr="detail"]').scrollIntoViewIfNeeded();
+    await f.page.evaluate(()=>{document.activeElement?.blur();__calls=[];Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});__tickLive();});
+    assert.equal(await f.page.evaluate(()=>__calls.length),0);
+    await f.page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>true});const input=document.createElement('textarea');input.value='טיוטה';document.querySelector('[data-hr="detail"]').append(input);__tickLive();});
+    assert.equal(await f.page.evaluate(()=>__calls.length),0);
+    await f.page.evaluate(()=>{document.querySelector('[data-hr="detail"] textarea').remove();__holdDetails=true;__tickLive();});
+    await f.page.waitForFunction(()=>__held.some(x=>x.kind==='detail'));
+    await f.page.evaluate(()=>{__session=null;__emit();});await releaseKind(f,'detail');
+    assert.equal(await f.page.locator('[data-hr="detail"] h2').count(),0);await f.context.close();
+  });
+  await check('background response cannot replace a review started during fetch',async()=>{
+    const f=await fixture();await openReview(f);await f.page.locator('[data-hr="detail"]').scrollIntoViewIfNeeded();
+    await f.page.evaluate(()=>{document.activeElement?.blur();__holdDetails=true;__holdReviews=true;__tickLive();});
+    await f.page.waitForFunction(()=>__held.some(x=>x.kind==='detail'));
+    await f.page.locator('[data-hr="review-save"]').click();await f.page.waitForFunction(()=>__held.some(x=>x.kind==='review'));
+    await releaseKind(f,'detail');
+    assert.equal(await reviewCallCount(f),1);
+    assert.equal(await f.page.locator('[data-hr="review-save"]').isDisabled(),true);
+    assert.equal(await f.page.locator('[data-hr="detail"] h2').innerText(),'עובד ראשון');await f.context.close();
   });
   for(const width of [320,390,1100])for(const theme of ['light','dark'])await check('readable layout '+width+' '+theme,async()=>{
     const f=await fixture({width,theme});await f.page.locator('[data-uid="u1"]').click();await f.page.locator('tbody tr').waitFor();

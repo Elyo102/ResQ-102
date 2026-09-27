@@ -44,9 +44,20 @@
 export const SIDES = [
   { id: 'front', he: 'חזית',    short: 'חזית' },
   { id: 'right', he: 'צד ימין', short: 'ימין' },
-  { id: 'rear',  he: 'אחור',    short: 'אחור' },
-  { id: 'left',  he: 'צד שמאל', short: 'שמאל' }
+  { id: 'rear',  he: 'צד אחורי', short: 'אחור' },
+  { id: 'left',  he: 'צד שמאל', short: 'שמאל' },
+  { id: 'roof',  he: 'גג', short: 'גג', optional: true }
 ];
+
+// Roof is independent of the horizontal ring. Navigation uses loaded photos only.
+export function adjacentPhotoSide(views, vehicleId, side, direction) {
+  const have = viewsOf(views, vehicleId);
+  const available = SIDES.filter(s => !s.optional && have[s.id]).map(s => s.id);
+  if (!available.length) return side;
+  const index = available.indexOf(side);
+  if (index < 0) return direction < 0 ? available[available.length - 1] : available[0];
+  return available[(index + (direction < 0 ? -1 : 1) + available.length) % available.length];
+}
 
 export function sideHe(id) {
   const s = SIDES.filter(function (x) { return x.id === id; })[0];
@@ -136,13 +147,14 @@ export function viewsOf(views, vehicleId) {
 
 export function missingSides(views, vehicleId) {
   const have = viewsOf(views, vehicleId);
-  return SIDES.filter(function (s) { return !have[s.id]; }).map(function (s) { return s.id; });
+  return SIDES.filter(function (s) { return !s.optional && !have[s.id]; }).map(function (s) { return s.id; });
 }
 
 export function coverage(views, vehicleId) {
-  const n = SIDES.length - missingSides(views, vehicleId).length;
-  return { done: n, total: SIDES.length,
-           state: n === 0 ? 'none' : (n < SIDES.length ? 'partial' : 'full') };
+  const total = SIDES.filter(s => !s.optional).length;
+  const n = total - missingSides(views, vehicleId).length;
+  return { done: n, total,
+           state: n === 0 ? 'none' : (n < total ? 'partial' : 'full') };
 }
 
 export function missingHe(views, vehicleId) {

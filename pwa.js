@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=42h43';
+import { APP_VERSION } from './version.js?v=42h44';
 
 // התקנה על מסך הבית.
 //
@@ -122,6 +122,7 @@ export function createPwaUpdateCoordinator(options) {
   let inFlight = null;
   let watchedWorker = null;
   let lastReadyWorker = null;
+  let pollTimer = null;
 
   function ready(reason, worker) {
     if (stopped || !hadController || !registration) return;
@@ -192,11 +193,18 @@ export function createPwaUpdateCoordinator(options) {
     }
     detect();
     void check();
+    if (windowLike && typeof windowLike.setInterval === 'function') {
+      pollTimer = windowLike.setInterval(onVisibility, interval);
+    }
     return api;
   }
   function stop() {
     if (stopped) return;
     stopped = true;
+    if (pollTimer !== null && windowLike && windowLike.clearInterval) {
+      windowLike.clearInterval(pollTimer);
+      pollTimer = null;
+    }
     if (registration && registration.removeEventListener) registration.removeEventListener('updatefound', onUpdateFound);
     if (serviceWorker && serviceWorker.removeEventListener) serviceWorker.removeEventListener('controllerchange', onControllerChange);
     if (windowLike && windowLike.removeEventListener) windowLike.removeEventListener('pageshow', onPageShow);
@@ -251,7 +259,7 @@ function showUpdateReady(info, message) {
   const title = document.createElement('b');
   title.textContent = 'גרסה חדשה של ResQ מוכנה';
   const note = document.createElement('span');
-  note.textContent = message || 'אפשר לעדכן עכשיו בלי לאבד פעולה שלא נשמרה.';
+  note.textContent = message || 'שמור עבודה פתוחה ואז לחץ לעדכון. אין צורך להתנתק מהחשבון.';
   const button = document.createElement('button');
   button.className = 'go';
   button.type = 'button';
@@ -326,6 +334,14 @@ export function createUpdateReadyHandler(options) {
     }
     if (inFlight) return inFlight;
     const operation = Promise.resolve().then(function () {
+      if (o.promptOnly === true) {
+        return fetchLatestReleaseVersion({ fetch:o.fetch, now:o.now }).then(function (version) {
+          return { updated:false, blocked:'', version,
+            reason:version === String(o.runningVersion || APP_VERSION) ? 'version-not-advanced' : 'prompt-ready' };
+        }, function () {
+          return { updated:false, blocked:'', reason:'version-unavailable' };
+        });
+      }
       return apply(info, {
         document:documentLike,
         fetch:o.fetch,
@@ -338,6 +354,8 @@ export function createUpdateReadyHandler(options) {
       if (outcome.reason === 'version-not-advanced') {
         const dismiss = typeof o.dismiss === 'function' ? o.dismiss : dismissUpdateReady;
         dismiss({ document:documentLike });
+      } else if (outcome.reason === 'prompt-ready') {
+        show(info, 'שמור עבודה פתוחה ואז לחץ לעדכון. אין צורך להתנתק מהחשבון.');
       } else if (!outcome.updated) {
         show(info, updateOutcomeMessage(outcome));
       }
@@ -365,7 +383,7 @@ export function retryPendingPwaUpdate() {
   return handleUpdateReady(updateReadyInfo);
 }
 
-const handleUpdateReady = createUpdateReadyHandler();
+const handleUpdateReady = createUpdateReadyHandler({ promptOnly:true });
 
 export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches ||

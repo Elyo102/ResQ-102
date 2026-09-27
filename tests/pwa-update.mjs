@@ -398,8 +398,44 @@ assert.equal(waitingDespiteCheckFailure.replaced.length, 1,
       return { workerActivated:true };
     }
   });
-  assert.equal(result.updated, true, 'a clean page automatically applies the ready release');
+  assert.equal(result.updated, true, 'explicit application on a clean page applies the ready release');
   assert.equal(refreshes, 1, 'automatic activation runs exactly once');
+}
+
+{
+  let applies = 0;
+  let dismissed = 0;
+  const shown = [];
+  let version = futureVersion;
+  let offline = false;
+  const handler = createUpdateReadyHandler({
+    promptOnly:true,
+    runningVersion:'test-current',
+    document:{ querySelectorAll:() => [], querySelector:() => null },
+    fetch:async () => {
+      if (offline) throw new Error('offline');
+      return { ok:true, json:async () => ({ v:version }) };
+    },
+    apply:async () => { applies += 1; return { updated:true }; },
+    show:(info, message) => shown.push(message),
+    dismiss:() => { dismissed += 1; }
+  });
+  const info = { worker:{ state:'installed' } };
+  const first = handler(info);
+  assert.equal(first, handler(info), 'prompt checks coalesce');
+  assert.equal((await first).reason, 'prompt-ready');
+  assert.equal(shown.length, 1);
+  assert.equal(applies, 0, 'prompt never activates or reloads');
+  version = 'test-current';
+  assert.equal((await handler(info)).reason, 'version-not-advanced');
+  assert.equal(dismissed, 1);
+  offline = true;
+  assert.equal((await handler(info)).reason, 'version-unavailable');
+  assert.equal(shown.length, 2, 'offline candidate retains retry guidance');
+  assert.equal(applies, 0);
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../pwa.js', import.meta.url), 'utf8'));
+  assert.ok(source.includes('const handleUpdateReady = createUpdateReadyHandler({ promptOnly:true });'),
+    'production detection and pending retry both use prompt-only handler');
 }
 
 {

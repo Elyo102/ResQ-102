@@ -53,6 +53,9 @@ function fixture(options = {}) {
   serviceWorker.getRegistration = async () => registration;
 
   const windowLike = new Events();
+  const timers = new Map();
+  windowLike.setInterval = (fn, ms) => { const id = Symbol(); timers.set(id, { fn, ms }); return id; };
+  windowLike.clearInterval = (id) => timers.delete(id);
   const replacements = [];
   windowLike.location = {
     href:'https://station-102.web.app/login.html',
@@ -75,7 +78,7 @@ function fixture(options = {}) {
 
   return {
     coordinator, serviceWorker, registration, windowLike, documentLike,
-    ready, replacements,
+    ready, replacements, timers,
     advance(ms) { time += ms; }
   };
 }
@@ -236,4 +239,33 @@ await check('hidden visibility event does not check and stop removes every liste
   assert.equal(f.ready.length, 0);
 });
 
-console.log('PWA update coordinator: 8/8 PASS');
+await check('continuously visible app discovers a deployment; hidden app skips polling and stop clears timer', async () => {
+  const f = fixture();
+  f.coordinator.start(f.registration);
+  f.coordinator.start(f.registration);
+  await settle();
+  assert.equal(f.timers.size, 1);
+  const timer = [...f.timers.values()][0];
+  assert.equal(timer.ms, 1000);
+  f.advance(1000);
+  f.documentLike.visibilityState = 'hidden';
+  timer.fn();
+  await settle();
+  assert.equal(f.registration.updateCalls, 1);
+  f.documentLike.visibilityState = 'visible';
+  f.registration.waiting = worker();
+  timer.fn();
+  timer.fn();
+  await settle();
+  assert.equal(f.registration.updateCalls, 2);
+  assert.equal(f.ready.length, 1);
+  assert.equal(f.replacements.length, 0);
+  f.coordinator.stop();
+  assert.equal(f.timers.size, 0);
+  f.advance(1000);
+  timer.fn();
+  await settle();
+  assert.equal(f.registration.updateCalls, 2);
+});
+
+console.log('PWA update coordinator: 9/9 PASS');

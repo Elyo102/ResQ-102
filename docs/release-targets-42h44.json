@@ -1,0 +1,14 @@
+{
+  "version": "42H.44",
+  "project": "station-102",
+  "services": ["functions", "firestore:rules", "hosting", "github-pages"],
+  "targets": ["createFaultReport", "appendFaultPhotos", "reportIncident", "recordMetrics", "getMaintenanceDashboard", "setMaintenanceMode", "runMaintenanceAnalysis", "prepareMaintenanceHandoff", "activateScheduleMonthAuthority", "previewScheduleCutover", "promoteScheduleToNew", "systemHeartbeat"],
+  "batches": [
+    ["createFaultReport", "appendFaultPhotos"],
+    ["reportIncident", "recordMetrics"],
+    ["getMaintenanceDashboard", "setMaintenanceMode"],
+    ["runMaintenanceAnalysis", "prepareMaintenanceHandoff"],
+    ["activateScheduleMonthAuthority", "previewScheduleCutover", "promoteScheduleToNew"],
+    ["systemHeartbeat"]
+  ]
+}

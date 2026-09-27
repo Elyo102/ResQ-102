@@ -31,7 +31,7 @@ for (const role of ['commander','firefighter']) {
   const ctx=await b.newContext({viewport:{width:900,height:1000}});
   await ctx.route('**/firebasejs/**',r=>{const n=r.request().url().split('/').pop().split('?')[0];
     const f=path.join(STUB,n); r.fulfill({status:200,contentType:'text/javascript',
-      body:fs.existsSync(f)?fs.readFileSync(f,'utf8'):'export default {};'});});
+      body:fs.existsSync(f)?fs.readFileSync(f,'utf8').replace('export function getDocs(q){','export function getDocs(q){ window.__MAP_GETS=(window.__MAP_GETS||0)+1;'):'export default {};'});});
   await ctx.addInitScript('window.__SMOKE_ROLE='+JSON.stringify(role)+';');
   const pg=await ctx.newPage();
   const errs=[]; pg.on('console',m=>{if(m.type()==='error')errs.push(m.text());});
@@ -58,6 +58,25 @@ for (const role of ['commander','firefighter']) {
   // הפגיעה הסגורה יושבת על "אחור" ולכן לא נספרת כאן — וזו
   // בדיוק ההפרדה בין צדדים שצריך לוודא.
   ck('רשימה מתחת', await pg.$$eval('#list .f',e=>e.length).catch(()=>0)>0, 'true');
+  const readsBeforeNavigation = await pg.evaluate(() => window.__MAP_GETS || 0);
+  const geometry = await pg.locator('.pin').first().evaluate(e => ({hit:e.getBoundingClientRect().width,dot:getComputedStyle(e,'::after').width}));
+  ck('small visible point', geometry.dot, '14px');
+  ck('accessible touch target at least 44px', geometry.hit >= 44, true);
+  await pg.locator('.stage img.base').scrollIntoViewIfNeeded();
+  const imageBox = await pg.locator('.stage img.base').boundingBox();
+  await pg.mouse.move(imageBox.x+imageBox.width*.7,imageBox.y+imageBox.height*.7);
+  await pg.mouse.down();
+  await pg.mouse.move(imageBox.x+imageBox.width*.4,imageBox.y+imageBox.height*.7,{steps:8});
+  await pg.mouse.up();
+  ck('swipe moves to next available photo', await pg.locator('#sideChips [aria-pressed="true"]').getAttribute('data-side'), 'rear');
+  ck('swipe never opens report', await pg.locator('#ov').evaluate(e=>e.classList.contains('on')), false);
+  await pg.locator('#viewPrev').click();
+  ck('arrow returns to right', await pg.locator('#sideChips [aria-pressed="true"]').getAttribute('data-side'), 'right');
+  ck('navigation adds no collection reads', await pg.evaluate(()=>window.__MAP_GETS||0), readsBeforeNavigation);
+  await pg.locator('.stage img.base').dispatchEvent('pointerdown',{isPrimary:true,button:0,pointerId:21,clientX:100,clientY:100});
+  await pg.locator('.stage img.base').dispatchEvent('pointercancel',{pointerId:21});
+  await pg.locator('.stage img.base').dispatchEvent('click',{clientX:100,clientY:100});
+  ck('cancelled gesture never opens report',await pg.locator('#ov').evaluate(e=>e.classList.contains('on')),false);
 
   // הלשוניות נבנות מחדש בכל ציור, ולכן מחזיקים אינדקס ולא
   // ידית. ידית שנשמרה מצביעה על אלמנט שכבר הוסר.
@@ -132,6 +151,15 @@ for (const role of ['commander','firefighter']) {
      await pg.$eval('#nShot',e=>e.files.length), 0);
 
   ck('שגיאות מסוף', errs.length, 0);
+  await pg.click('#dlgX');
+  await pg.locator('#sideChips [data-side="roof"]').click();
+  ck('missing roof explicit',await pg.locator('.empty').textContent().then(x=>x.includes('גג')),true);
+  const roofWrites = await pg.evaluate(()=>(window.__FIRESTORE_WRITES||[]).length);
+  const roofChooser = pg.waitForEvent('filechooser');
+  await pg.locator('#photoActs [data-photo-source="gallery"]').click();
+  await (await roofChooser).setFiles({name:'roof.png',mimeType:'image/png',buffer:ONE_PIXEL_PNG});
+  await pg.waitForFunction(before=>(window.__FIRESTORE_WRITES||[]).length>before,roofWrites);
+  ck('roof saved to selected vehicle',await pg.evaluate(()=>window.__FIRESTORE_WRITES.some(w=>w.path.endsWith('/vehicle_views/v2__roof'))),true);
   await ctx.close();
 }
 

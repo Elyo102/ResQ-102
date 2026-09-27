@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../vmap.js', import.meta.url), 'utf8');
+const { adjacentPhotoSide, coverage, viewsOf, hasPoint } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+const vehicle = 'future-vehicle-2099';
+const views = ['right','rear','roof'].map(side => ({ vehicle_id:vehicle, side, photo:'fixture' }));
+assert.equal(adjacentPhotoSide(views,vehicle,'right',1),'rear');
+assert.equal(adjacentPhotoSide(views,vehicle,'rear',1),'right');
+assert.equal(adjacentPhotoSide(views,vehicle,'right',-1),'rear');
+assert.equal(adjacentPhotoSide(views,vehicle,'roof',1),'right');
+assert.equal(adjacentPhotoSide(views,'other','right',1),'right');
+assert.equal(adjacentPhotoSide(views.slice(0,1),vehicle,'right',1),'right');
+assert.equal(viewsOf(views,vehicle).roof.side,'roof');
+assert.equal(hasPoint({side:'roof',x:.1,y:.9}),true);
+assert.deepEqual(coverage(['front','right','rear','left'].map(side=>({vehicle_id:vehicle,side})),vehicle),{done:4,total:4,state:'full'});
+console.log('9 photo navigation/optional roof/future vehicle assertions PASS');

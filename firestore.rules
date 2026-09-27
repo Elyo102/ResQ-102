@@ -1188,7 +1188,7 @@ service cloud.firestore {
         allow create: if member(sid)
                       && request.resource.data.get('vehicle_id', '') != ''
                       && request.resource.data.get('side', '') in
-                         ['front', 'right', 'rear', 'left']
+                         ['front', 'right', 'rear', 'left', 'roof']
                       && request.resource.data.get('by_uid', '') == request.auth.uid
                       && request.resource.data.get('photo', '') is string
                       && request.resource.data.get('photo', '').size() > 0

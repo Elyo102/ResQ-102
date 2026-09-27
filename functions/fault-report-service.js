@@ -70,7 +70,7 @@ function inputOf(data) {
   let point = null;
   if (data.point !== undefined && data.point !== null) {
     const p = data.point;
-    if (!p || typeof p !== 'object' || !['right','left','front','rear'].includes(p.side) ||
+    if (!p || typeof p !== 'object' || !['right','left','front','rear','roof'].includes(p.side) ||
         !Number.isFinite(p.x) || p.x < 0 || p.x > 1 ||
         !Number.isFinite(p.y) || p.y < 0 || p.y > 1 ||
         !VEHICLE_KINDS.has(kind)) throw new Error('invalid-input');

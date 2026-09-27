@@ -82,3 +82,11 @@ assert.equal((source.match(/end: bt\.end, end_day:bt\.end_day/g) || []).length, 
 assert.match(source, /start: bt\.start, end: bt\.end, end_day:bt\.end_day/,
   'suggested rows display the same calculated roster interval');
 console.log('Attendance configured day offsets: regular, commander, custom and fail-closed cases PASS.');
+assert.match(source, /aria-label="שלבי דיווח השעות"/);
+for (const title of ['1 · הכנת טיוטה','2 · בדיקה ותיקון','3 · אישור ושליחה']) assert.ok(source.includes(title));
+for (const id of ['btnFill','btnView','btnSubmit','btnSync','btnRecalc','btnUnsubmit','btnApprove','btnReopen']) {
+  assert.equal((source.match(new RegExp('id="'+id+'"','g'))||[]).length,1,'existing control remains unique: '+id);
+}
+assert.ok(source.includes('סידור מתוכנן אינו אישור שעבדת'));
+assert.ok(source.includes('href="#attendanceDays"') && source.includes('id="attendanceDays"'));
+console.log('Attendance three-step labels retain unique actions and planned-versus-actual warning PASS.');

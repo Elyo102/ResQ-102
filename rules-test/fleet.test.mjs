@@ -111,6 +111,15 @@ try {
   });
 
   /* ---------- 1. אוסף רכבי הצי ---------- */
+  const roof = {vehicle_id:'future_vehicle', side:'roof', by_uid:'ff', photo:'data:image/jpeg;base64,test'};
+  const roofPath = `stations/${SID}/vehicle_views/future_vehicle__roof`;
+  await allowed('member uploads a roof for a future vehicle', setDoc(doc(firefighter, roofPath), roof));
+  await allowed('member reads roof photo', getDoc(doc(firefighter, roofPath)));
+  await blocked('foreign station cannot read roof', getDoc(doc(outsider, roofPath)));
+  await blocked('member cannot replace roof photo', updateDoc(doc(firefighter, roofPath), {photo:'replacement'}));
+  await allowed('existing staff authority replaces roof', updateDoc(doc(commander, roofPath), {photo:'replacement'}));
+  await blocked('unknown photo side rejected', setDoc(doc(firefighter, `stations/${SID}/vehicle_views/future_vehicle__invalid`), {...roof,side:'invalid'}));
+  await blocked('foreign station cannot create roof', setDoc(doc(outsider, `stations/${SID}/vehicle_views/foreign__roof`), {...roof,by_uid:'out'}));
 
   await allowed('כבאי קורא את הצי — מידע מבצעי לכל חבר תחנה',
     getDoc(doc(firefighter, `stations/${SID}/vehicles/an1`)));

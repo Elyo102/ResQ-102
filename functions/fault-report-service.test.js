@@ -105,6 +105,8 @@ async function main() {
   assert.equal(missing.docs.get(`stations/${SID}/faults/ZYXWVUTSRQPONMLKJIHG`).vehicle_name, 'רכב לוגיסטי');
   assert.throws(() => inputOf({ ...missing.data, vehicleId:'../other' }), /invalid-input/);
   assert.equal(inputOf({ ...missing.data, point:{ side:'rear', x:0.5, y:0.5 } }).point.side, 'rear');
+  assert.equal(inputOf({ ...missing.data, point:{ side:'roof', x:0.5, y:0.5 } }).point.side, 'roof');
+  assert.throws(() => inputOf({ ...missing.data, point:{ side:'roof', x:1.1, y:0.5 } }), /invalid-input/);
   assert.throws(() => inputOf({ ...missing.data, point:{ side:'back', x:0.5, y:0.5 } }), /invalid-input/);
   await assert.rejects(missing.service.create(missing.req({ ...missing.data,
     vehicleId:'ZZZZZZZZZZZZZZZZZZZZ' })), /vehicle_invalid/);
