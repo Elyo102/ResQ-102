@@ -303,7 +303,9 @@ ok('5.5 CI מריץ את שער השחרור הקנוני ולא רשימה חל
 const doc = read('README-פריסה.md');
 const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
-if (releaseVersion === '42H.42') {
+// Explicitly retain the retired-route protections for 43. Unknown future
+// releases must not inherit approval of either frozen target manifest.
+if (['42H.42', '42H.43'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -347,6 +349,36 @@ if (releaseVersion === '42H.42') {
   ok('6.0ו נוהל 42H.42 מצהיר במפורש על עצירת ייצור',
     doc.includes('עצירת שחרור 42H.42') && doc.includes('אין לפרוס') &&
     doc.includes('אישור כללי לפריסה אינם מסירים עצירה זו'));
+  if (releaseVersion === '42H.43') {
+    const manifest43 = JSON.parse(read('docs/release-targets-42h43.json'));
+    const exact43 = ['issueHrInvitation','revokeHrInvitation','ownerSetupMail',
+      'approveRegistration','deliverMail','reportIncident','recordMetrics',
+      'getMaintenanceDashboard','setMaintenanceMode','runMaintenanceAnalysis',
+      'prepareMaintenanceHandoff','activateScheduleMonthAuthority',
+      'previewScheduleCutover','promoteScheduleToNew','systemHeartbeat'].sort();
+    const schedule43 = ['activateScheduleMonthAuthority','previewScheduleCutover','promoteScheduleToNew'];
+    const valid43 = value => value.project === 'station-102' && value.version === '42H.43' &&
+      JSON.stringify(value.services) === JSON.stringify(['functions','hosting','github-pages']) &&
+      Array.isArray(value.targets) && new Set(value.targets).size === exact43.length &&
+      JSON.stringify([...value.targets].sort()) === JSON.stringify(exact43) &&
+      Array.isArray(value.batches) && value.batches.length === 6 &&
+      value.batches.every(batch => Array.isArray(batch) && batch.length > 0 && batch.length <= 4) &&
+      JSON.stringify(value.batches.flat()) === JSON.stringify(value.targets) &&
+      value.batches.some(batch => schedule43.every(id => batch.includes(id)));
+    ok('6.43 exact scoped targets and shared schedule group', valid43(manifest43));
+    const bad43 = mutate => { const value = structuredClone(manifest43); mutate(value); return !valid43(value); };
+    for (const [name, mutate] of [
+      ['omission', x => { x.targets.pop(); x.batches.pop(); }],
+      ['extra target', x => { x.targets.push('sendCallout'); x.batches.at(-1).push('sendCallout'); }],
+      ['duplicate', x => { x.targets.push(x.targets[0]); x.batches.at(-1).push(x.targets[0]); }],
+      ['project', x => { x.project = 'other'; }],
+      ['version', x => { x.version = '42H.44'; }],
+      ['Rules service', x => { x.services.push('firestore'); }],
+      ['Storage service', x => { x.services.push('storage'); }],
+      ['split schedule', x => { const id = x.batches[4].pop(); x.batches[5].unshift(id); }]
+    ]) ok(`6.43 mutation rejects ${name}`, bad43(mutate));
+    ok('6.43 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h43.json') !== null);
+  }
 } else {
 
 function between(src, start, end) {
@@ -672,6 +704,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
-if (releaseVersion === '42H.42') console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
+if (['42H.42', '42H.43'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');

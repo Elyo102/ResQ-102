@@ -1,0 +1,14 @@
+{
+  "project": "station-102",
+  "version": "42H.43",
+  "services": ["functions", "hosting", "github-pages"],
+  "targets": ["deliverMail", "approveRegistration", "issueHrInvitation", "revokeHrInvitation", "ownerSetupMail", "reportIncident", "recordMetrics", "getMaintenanceDashboard", "setMaintenanceMode", "runMaintenanceAnalysis", "prepareMaintenanceHandoff", "activateScheduleMonthAuthority", "previewScheduleCutover", "promoteScheduleToNew", "systemHeartbeat"],
+  "batches": [
+    ["deliverMail", "approveRegistration"],
+    ["issueHrInvitation", "revokeHrInvitation", "ownerSetupMail"],
+    ["reportIncident", "recordMetrics"],
+    ["getMaintenanceDashboard", "setMaintenanceMode", "runMaintenanceAnalysis", "prepareMaintenanceHandoff"],
+    ["activateScheduleMonthAuthority", "previewScheduleCutover", "promoteScheduleToNew"],
+    ["systemHeartbeat"]
+  ]
+}
