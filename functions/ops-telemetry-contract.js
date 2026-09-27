@@ -27,6 +27,7 @@ const CODES = Object.freeze([
 const CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
+  'issueHrInvitation', 'revokeHrInvitation', 'ownerSetupMail',
   'redeemInvitation', 'resumeOnboarding', 'registrationTermsConsent',
   'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
   'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',

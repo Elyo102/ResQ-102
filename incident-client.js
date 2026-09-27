@@ -28,6 +28,7 @@ export const TELEMETRY_CODES = Object.freeze([
 export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
+  'issueHrInvitation', 'revokeHrInvitation', 'ownerSetupMail',
   'redeemInvitation', 'resumeOnboarding', 'registrationTermsConsent',
   'createJoinCampaign', 'setJoinCampaignStatus', 'listJoinCampaigns', 'getJoinCampaignRegistrants',
   'reviewJoinRegistrant', 'inspectJoinCampaign', 'redeemJoinCampaign', 'getMyJoinStatus',
