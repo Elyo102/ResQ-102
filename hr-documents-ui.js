@@ -1,6 +1,6 @@
-import { MEMBER_ROLES } from './roles.js?v=42h43';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h43';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h43';
+import { MEMBER_ROLES } from './roles.js?v=42h44';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h44';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h44';
 
 const KEY = /^[a-f0-9]{64}$/;
 const uid = v => typeof v === 'string' && /^[^\u0000-\u001f\u007f/]{1,128}$/.test(v);

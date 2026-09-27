@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h43">
+<link rel="stylesheet" href="./theme.css?v=42h44">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -77,6 +77,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
           font-weight:700; border-radius:20px; padding:3px 12px;
           border:1px solid var(--line); color:var(--muted); margin-inline-start:auto }
   .state.submitted{ border-color:var(--warn); color:var(--warn) }
+  .hours-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+  .hours-steps>div{border:1px solid var(--line,#d7dee7);border-radius:12px;padding:12px;min-width:0}
+  .hours-steps h3{margin:0 0 8px}.hours-steps .btn{margin:4px 0;white-space:normal}
+  .hours-steps a.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;max-width:100%;box-sizing:border-box}
+  @media(max-width:700px){.hours-steps{grid-template-columns:1fr}}
   .state.approved{ border-color:var(--good-bd); color:var(--good) }
 
   table{ width:100%; border-collapse:collapse; font-size:13.5px; margin-top:10px }
@@ -338,10 +343,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <div><div class="v soft" id="tSug">0</div><div class="k">ימים לפי הסידור שטרם נשמרו</div></div>
       </div>
 
+      <section aria-label="שלבי דיווח השעות" class="hours-steps">
+        <div><h3>1 · הכנת טיוטה</h3><p class="hint">שמירת ימים חסרים לפי הסידור כטיוטה בלבד. דיווחים קיימים לא יוחלפו; יש לבדוק מה עבדת בפועל.</p>
+          <button type="button" class="btn go hide" id="btnFill">הכן ושמור טיוטה מהסידור</button></div>
+        <div><h3>2 · בדיקה ותיקון</h3><p class="hint">בדוק את ימי החודש, השעות וההיעדרויות. סידור מתוכנן אינו אישור שעבדת.</p>
+          <a class="btn" href="#attendanceDays">בדיקת ימי החודש</a>
+          <button type="button" class="btn" id="btnView">הצג סיכום חודשי</button></div>
+        <div><h3>3 · אישור ושליחה</h3><p class="hint">לאחר הבדיקה, פתח את הסיכום ואשר במפורש. משאבי אנוש יכולה לעיין גם בטיוטה שנשמרה.</p>
+          <button type="button" class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button></div>
+      </section>
+      <p class="hint">פעולות נוספות בהתאם להרשאה ולמצב הדוח</p>
       <div class="row">
-        <button type="button" class="btn go hide" id="btnFill">שמור את כל הימים לפי הסידור</button>
-        <button type="button" class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button>
-        <button type="button" class="btn" id="btnView">הצג סיכום חודשי</button>
         <button type="button" class="btn hide" id="btnSync">תקן לפי הסידור</button>
         <button type="button" class="btn hide" id="btnRecalc">חשב מחדש</button>
         <button type="button" class="btn hide" id="btnUnsubmit">בטל שליחה</button>
@@ -375,7 +387,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
     </div>
 
     <div class="card">
-      <h2>ימי החודש</h2>
+      <h2 id="attendanceDays" tabindex="-1">ימי החודש</h2>
       <div class="note">
         ימים שהמשמרת שלך עובדת בהם מופיעים מראש לפי הסידור, כולל חריגות.
         לחיצה על שורה פותחת עריכה.
@@ -413,24 +425,24 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h43';
-import { subStationAvailable } from './stations.js?v=42h43';
-import { renderNav, renderStuckNav } from './nav.js?v=42h43';
-import { MEMBER_ROLES } from './roles.js?v=42h43';
-import { initPWA } from './pwa.js?v=42h43';
-import { watchCallouts } from './callout.js?v=42h43';
-import { errorText, logError } from './error-text.js?v=42h43';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h44';
+import { subStationAvailable } from './stations.js?v=42h44';
+import { renderNav, renderStuckNav } from './nav.js?v=42h44';
+import { MEMBER_ROLES } from './roles.js?v=42h44';
+import { initPWA } from './pwa.js?v=42h44';
+import { watchCallouts } from './callout.js?v=42h44';
+import { errorText, logError } from './error-text.js?v=42h44';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h43';
+  from './rotation.js?v=42h44';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h43';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h44';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, configuredDayOffset, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe,
          reportedAtMs, retroDays, retroLabel }
-  from './hours.js?v=42h43';
+  from './hours.js?v=42h44';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -438,11 +450,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDo
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h43';
+  from './monitored-functions.js?v=42h44';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h43';
+import { initAppCheck } from './appcheck.js?v=42h44';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

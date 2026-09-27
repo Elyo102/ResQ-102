@@ -13,7 +13,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h43">
+<link rel="stylesheet" href="./theme.css?v=42h44">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -63,16 +63,17 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 
   /* ---------- התמונה והנקודות ---------- */
   .stage{ position:relative; border:1px solid var(--line); border-radius:12px;
-          overflow:hidden; background:var(--panel); touch-action:manipulation }
+          overflow:hidden; background:var(--panel); touch-action:pan-y pinch-zoom }
   .stage img.base{ display:block; width:100%; height:auto }
   .stage.pick{ cursor:crosshair }
 
   .pin{ position:absolute; transform:translate(-50%,-50%);
-        width:30px; height:30px; border-radius:50%; cursor:pointer;
+        width:44px; height:44px; border-radius:50%; cursor:pointer;
         display:flex; align-items:center; justify-content:center;
-        font-size:13px; font-weight:800; color:#fff;
-        border:2px solid rgba(255,255,255,.92);
-        box-shadow:0 2px 10px rgba(0,0,0,.5) }
+        font-size:0; color:#fff; background:transparent; border:0; padding:0 }
+  .pin::after{ content:''; width:14px; height:14px; border-radius:50%;
+        background:var(--pin-color); border:2px solid #fff;
+        box-shadow:0 1px 5px rgba(0,0,0,.6) }
   .pin:focus-visible{ outline:3px solid var(--accent); outline-offset:2px }
   .pin.done{ opacity:.5 }
 
@@ -168,6 +169,11 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       <div class="chips" id="sideChips"></div>
 
       <div id="stageWrap"></div>
+      <div class="row" id="viewNav" aria-label="מעבר בין תמונות הרכב" hidden>
+        <button type="button" class="btn" id="viewPrev">→ הצד הקודם</button>
+        <button type="button" class="btn" id="viewNext">הצד הבא ←</button>
+        <span class="note" id="viewHint" aria-live="polite">גררו לצדדים או בחרו צד. זו תצוגת תמונות, לא תלת־ממד.</span>
+      </div>
 
       <div class="legend" id="legend"></div>
       <div class="row" id="photoActs"></div>
@@ -195,18 +201,18 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <div id="lb"><span class="x" id="lbX">×</span><img id="lbImg" alt="צילום"></div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h43';
-import { renderNav, renderStuckNav } from './nav.js?v=42h43';
-import { MEMBER_ROLES } from './roles.js?v=42h43';
-import { initPWA } from './pwa.js?v=42h43';
-import { watchCallouts } from './callout.js?v=42h43';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h44';
+import { renderNav, renderStuckNav } from './nav.js?v=42h44';
+import { MEMBER_ROLES } from './roles.js?v=42h44';
+import { initPWA } from './pwa.js?v=42h44';
+import { watchCallouts } from './callout.js?v=42h44';
 import { SIDES, sideHe, viewId, pointAt, pointsOn, countBySide,
-         viewsOf, missingHe, coverage, nextToShoot, hasPoint }
-  from './vmap.js?v=42h43';
+         viewsOf, missingHe, coverage, nextToShoot, hasPoint, adjacentPhotoSide }
+  from './vmap.js?v=42h44';
 import { FAULT_KINDS, kindHe, SEVERITIES, sevHe, sevColor, sevBgColor, UNSET,
          needsGrading, isOpen, isDamage, DAMAGE_DELETE_WHY, mergeFleet,
          vehicleState, sortFaults, dmy, reportedLine, shrinkImage, createPhotoQueue }
-  from './faults.js?v=42h43';
+  from './faults.js?v=42h44';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -225,7 +231,7 @@ const STAFF = ['deputy','commander','station_commander','hr_coordinator'];
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h43';
+import { initAppCheck } from './appcheck.js?v=42h44';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -459,7 +465,7 @@ function renderVehicles(){
 // **import דינמי ולא רגיל.** הקובץ שוקל יותר ממגה, והוא נחוץ
 // פעם אחת בחיי המערכת. ייבוא רגיל היה מוסיף את המשקל הזה לכל
 // פתיחה של המסך, לכולם, לנצח.
-const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h43' };
+const BUNDLE = { label: 'רכב 41 · פיקוד ושליטה', src: './v41.js?v=42h44' };
 
 function renderImport(){
   const box = $('importRow');
@@ -469,7 +475,7 @@ function renderImport(){
 
   // מוצג רק כשלרכב הנבחר אין אף תמונה. אחרי הייבוא הכפתור
   // נעלם מעצמו, ואי אפשר לדרוס בטעות סט קיים.
-  if (coverage(views, vid).done > 0) return;
+  if (Object.keys(viewsOf(views, vid)).length > 0) return;
 
   const v = fleet.filter(x => x.id === vid)[0];
   const b = document.createElement('button');
@@ -485,7 +491,8 @@ function renderImport(){
       requireVehicleTarget(target);
       const mod = await import(BUNDLE.src);
       let n = 0;
-      for (const sd of SIDES) {
+      const bundledSides = SIDES.filter(sd => mod.SET[sd.id]);
+      for (const sd of bundledSides) {
         const data = mod.SET[sd.id];
         if (!data) continue;
         requireVehicleTarget(target);
@@ -495,7 +502,7 @@ function renderImport(){
           created_key: new Date().toISOString(), created_at: serverTimestamp()
         });
         n++;
-        msg(n + ' מתוך ' + SIDES.length + ' הועלו…', 'info', 'impMsg');
+        msg(n + ' מתוך ' + bundledSides.length + ' הועלו…', 'info', 'impMsg');
       }
       msg(n + ' תמונות נשמרו.', 'ok', 'impMsg');
       await loadAll();
@@ -514,6 +521,8 @@ function renderSides(){
   SIDES.forEach(function (s) {
     const b = document.createElement('button');
     b.type = 'button';
+    b.setAttribute('aria-pressed', String(s.id === side));
+    b.dataset.side = s.id;
     if (s.id === side) b.className = 'on';
     b.innerHTML = esc(s.he) +
       (n[s.id] ? ' <span class="n" style="color:' +
@@ -529,6 +538,7 @@ function renderStage(){
   $('photoActs').innerHTML = '';
   $('legend').innerHTML = '';
   $('baseMsg').className = 'msg';
+  $('viewNav').hidden = true;
 
   const vehicle = fleet.find(v => v.id === vid);
   if (!vehicle) {
@@ -539,6 +549,10 @@ function renderStage(){
   }
 
   const have = viewsOf(views, vid)[side];
+  $('viewNav').hidden = false;
+  $('viewPrev').disabled = adjacentPhotoSide(views, vid, side, -1) === side;
+  $('viewNext').disabled = adjacentPhotoSide(views, vid, side, 1) === side;
+  $('viewHint').textContent = sideHe(side) + ' · גרירה מחליפה תמונות צד. הגג נבחר בנפרד.';
 
   if (!have && vehicle.active === false) {
     wrap.innerHTML = '<div class="stage"><div class="empty">הרכב הוצא מהצי. אין תמונה היסטורית לצד הזה.</div></div>';
@@ -579,7 +593,7 @@ function renderStage(){
     p.style.insetInlineStart = '';
     p.style.left = (f.x * 100) + '%';
     p.style.top  = (f.y * 100) + '%';
-    p.style.background = isOpen(f) ? sevBgColor(f.severity) : 'var(--good)';
+    p.style.setProperty('--pin-color', isOpen(f) ? sevBgColor(f.severity) : 'var(--good)');
     p.textContent = String(i + 1);
     p.title = f.title || '';
     p.setAttribute('aria-label', (i + 1) + '. ' + (f.title || ''));
@@ -587,9 +601,31 @@ function renderStage(){
     st.appendChild(p);
   });
 
-  // לחיצה על התמונה עצמה פותחת דיווח חדש באותה נקודה.
+  // Gesture state belongs to this exact image/identity, never to a new render.
+  let gesture = null, suppressClick = false;
+  const targetGeneration = AUTH_GEN, targetVehicle = vid, targetSide = side;
+  const currentImage = () => targetGeneration === AUTH_GEN && targetVehicle === vid &&
+    targetSide === side && st.isConnected;
+  st.addEventListener('pointerdown', e => {
+    if (e.target !== img || !e.isPrimary || e.button !== 0) return;
+    gesture = { x:e.clientX, y:e.clientY, id:e.pointerId };
+    suppressClick = false;
+  });
+  st.addEventListener('pointerup', e => {
+    if (!gesture || gesture.id !== e.pointerId) return;
+    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
+    gesture = null;
+    suppressClick = Math.abs(dx) > 12 || Math.abs(dy) > 12;
+    if (currentImage() && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) {
+      e.preventDefault(); navigatePhoto(dx > 0 ? -1 : 1);
+    }
+  });
+  st.addEventListener('pointercancel', () => { gesture = null; suppressClick = true; });
+  st.addEventListener('pointerleave', () => { if (gesture) { gesture = null; suppressClick = true; } });
+  // A drag must never create a new fault through the synthesized click.
   st.onclick = function (e) {
-    if (e.target !== img || !canAddToVehicle()) return;
+    if (suppressClick) { suppressClick = false; return; }
+    if (!currentImage() || e.target !== img || !canAddToVehicle() || !img.complete || !img.naturalWidth) return;
     const pt = pointAt(img.getBoundingClientRect(), e.clientX, e.clientY);
     newAt(pt);
   };
@@ -607,6 +643,13 @@ function renderStage(){
 
   if (CAN_MANAGE && canAddToVehicle()) addPhotoBtns(sideHe(side), true);
 }
+
+function navigatePhoto(direction) {
+  const next = adjacentPhotoSide(views, vid, side, direction);
+  if (next !== side) { side = next; render(); }
+}
+$('viewPrev').onclick = () => navigatePhoto(-1);
+$('viewNext').onclick = () => navigatePhoto(1);
 
 function addPhotoBtns(subject, warn){
   const choices = [

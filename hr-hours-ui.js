@@ -1,4 +1,4 @@
-import { registerPwaUpdateGuard } from './pwa.js?v=42h43';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h44';
 
 // DOM-only controller. The injected adapter owns authenticated transport;
 // no personal data is persisted or embedded into URLs.
@@ -79,6 +79,9 @@ export function createHrHoursUI(root, adapter=disconnected) {
   const q = key => root.querySelector('[data-hr="'+key+'"]');
   let owner=null, generation=0, detailGeneration=0, items=[], cursor=null, selected=-1, loading=false, disposed=false, suspended=false, anomaliesOnly=false;
   let loadedDetail=null, loadedFreshness=null, pending=null, busy=false, confirmation=null;
+  let liveBusy=false, lastLiveAt=0;
+  const liveMessage=el('p','הדוח הפתוח נבדק כל 30 שניות כשהאזור מוצג ואין עריכה, שימוש בבקרי הדוח או פעולה בהמתנה. רשימת העובדים מתרעננת בכפתור רענון.','hr-meta');
+  liveMessage.dataset.hr='live-message';liveMessage.setAttribute('role','status');q('detail').before(liveMessage);
   let reviewPending=null, reviewBusy=false, reviewRefresh=null, reviewId=null, reviewUncertain=false;
   let history=[], historyCursor=null, historyLoading=false, historyGeneration=0;
   let action=null, actionId=null, children=[], childCursor=null, statusLoading=false, statusGeneration=0;
@@ -95,7 +98,7 @@ export function createHrHoursUI(root, adapter=disconnected) {
   // Locale format order is not a date-key contract.
   q('month').value=previousHrMonth();
   const message = value => { q('message').textContent=value; };
-  function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;loadedFreshness=null;q('detail').replaceChildren(el('p',value)); }
+  function clearDetail(value='בחרו עובד לצפייה בדוח.') { loadedDetail=null;loadedFreshness=null;q('detail').replaceChildren(el('p',value));liveMessage.textContent='רענון אוטומטי חל רק על דוח פתוח, כשהאזור מוצג ואין שימוש בבקרי הדוח או פעולה בהמתנה.'; }
   function controls() {
     const visible=visibleIndices(),position=visible.indexOf(selected);
     q('previous').disabled=!owner || locked() || position<=0;
@@ -337,9 +340,11 @@ export function createHrHoursUI(root, adapter=disconnected) {
     detail.append(el('p',(freshness.source==='memory'?'תמונת מצב מזיכרון הדף בלבד':'נקרא מהשרת')+' · זמן קריאה: '+stamp(freshness.fetched_at_ms)+'. ייתכן שהנתונים השתנו מאז.','hr-meta'));
     if(freshness.source==='memory'){
       detail.append(el('p','לפני בקשת תזכורת אישית או שמירת עיון יש לבדוק את הדוח מחדש מול השרת. הבדיקה אינה שולחת תזכורת ואינה שומרת עיון.','hr-notice'));
+    }
+    {
       const fresh=el('button','בדיקת דוח עדכני מהשרת');fresh.type='button';fresh.dataset.hr='detail-fresh';
       const g=generation,key=owner,d=detailGeneration,index=selected;
-      fresh.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration&&mayAct())void select(index,true);});detail.append(fresh);
+      fresh.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration&&mayAct())void refreshSelected(true);});detail.append(fresh);
     }
     detail.append(inspectionBlock(p,true));
     if(typeof adapter.reviewEmployeeMonth==='function'&&freshness.source==='server'&&['draft','submitted','approved'].includes(p.state)
@@ -404,6 +409,46 @@ export function createHrHoursUI(root, adapter=disconnected) {
       renderDetail(value,freshness);controls();
     }catch(e){if(alive(g,key)&&d===detailGeneration)clearDetail('לא ניתן לטעון את הדוח כרגע. רעננו או עברו לדוח הבא.');}
   }
+  function liveAllowed(manual=false) {
+    if(!owner||!alive(generation,owner)||locked()||confirmation||loading||!loadedDetail||!items[selected])return false;
+    if(document.visibilityState!=='visible'||navigator.onLine===false)return false;
+    const section=root.querySelector('#hours');
+    if(section){const box=section.getBoundingClientRect();if(!box.width||!box.height||box.bottom<=0||box.top>=window.innerHeight)return false;}
+    const active=document.activeElement;
+    if(q('detail').contains(active)&&!(manual&&active?.dataset?.hr==='detail-fresh'))return false;
+    if(q('detail').querySelector('input,textarea,select,[contenteditable="true"]'))return false;
+    return true;
+  }
+  async function refreshSelected(manual=false) {
+    if(liveBusy||!liveAllowed(manual)||(!manual&&Date.now()-lastLiveAt<30000))return;
+    const g=generation,key=owner,d=detailGeneration,index=selected,month=q('month').value,uid=items[index].uid;
+    liveBusy=true;lastLiveAt=Date.now();
+    try {
+      const result=await adapter.getEmployeeMonth({month,uid},{forceFresh:true});
+      if(!alive(g,key)||d!==detailGeneration||index!==selected||q('month').value!==month||!liveAllowed(manual))return;
+      const value=result?.report,freshness=result?.freshness;
+      if(!value||value.uid!==uid||value.month!==month||!Array.isArray(value.rows)||value.rows.length>31
+        ||freshness?.source!=='server'||!time(freshness.fetched_at_ms)||!time(freshness.expires_at_ms)||freshness.expires_at_ms<=freshness.fetched_at_ms)throw new Error('invalid live report');
+      const changed=JSON.stringify(value)!==JSON.stringify(loadedDetail)||loadedFreshness?.source!=='server';
+      if(changed){
+        const sx=window.scrollX,sy=window.scrollY,table=q('detail').querySelector('.hr-table-wrap'),tx=table?.scrollLeft||0;
+        items=items.map(p=>p.uid===uid?{...p,...value}:p);
+        const focusedUid=document.activeElement?.dataset?.uid;
+        renderPeople();renderDetail(value,freshness);
+        if(focusedUid)Array.from(q('people').querySelectorAll('[data-uid]')).find(b=>b.dataset.uid===focusedUid)?.focus({preventScroll:true});
+        const next=q('detail').querySelector('.hr-table-wrap');if(next)next.scrollLeft=tx;
+        if(manual)q('detail').querySelector('[data-hr="detail-fresh"]')?.focus({preventScroll:true});
+        window.scrollTo(sx,sy);
+      }else loadedFreshness=freshness;
+      liveMessage.textContent='הדוח הפתוח נבדק מול השרת: '+stamp(freshness.fetched_at_ms)+'. טיוטה אינה דוח מאושר. רשימת העובדים אינה מתעדכנת אוטומטית.';
+      controls();
+    }catch(error){
+      if(alive(g,key)&&d===detailGeneration){
+        if(error?.message==='invalid live report')clearDetail('לא ניתן לטעון את הדוח כרגע. רעננו או עברו לדוח הבא.');
+        liveMessage.textContent='הרענון לא הצליח. נתונים מהטעינה הקודמת, אם מוצגים, אינם בהכרח עדכניים. יש לבדוק שוב מול השרת.';
+      }
+    }finally{liveBusy=false;}
+  }
   async function loadPage(append=false, selectNew=false) {
     const g=generation,key=owner;if(!alive(g,key)||locked()||loading)return;
     const month=q('month').value,offset=items.length;loading=true;controls();message('טוען דוחות…');
@@ -449,8 +494,9 @@ export function createHrHoursUI(root, adapter=disconnected) {
   const pageshow=()=>{if(!disposed&&suspended){suspended=false;resetIdentity();}};
   reviewRetry.addEventListener('click',submitReview);window.addEventListener('pagehide',pagehide);window.addEventListener('pageshow',pageshow);
   const unsubscribe=adapter.subscribeIdentity(resetIdentity);resetIdentity();
+  const liveTimer=window.setInterval(()=>void refreshSelected(),30000);
   return { refresh, destroy(){disposed=true;owner=null;++generation;++detailGeneration;unsubscribe();adapter.clearReportCache?.();resetActions();controls();q('people').replaceChildren();clearDetail('המסך נסגר.');root.removeEventListener('keydown',keydown);
-    unregisterUpdateGuard();for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
+    window.clearInterval(liveTimer);liveMessage.remove();unregisterUpdateGuard();for(const [name,fn] of bindings)q(name).removeEventListener('click',fn);window.removeEventListener('beforeunload',beforeUnload);
     reviewRetry.removeEventListener('click',submitReview);reviewFeedback.remove();window.removeEventListener('pagehide',pagehide);window.removeEventListener('pageshow',pageshow);
     q('month').removeEventListener('change',refresh);q('refresh').removeEventListener('click',refresh);q('next').removeEventListener('click',next);q('previous').removeEventListener('click',previous);q('more').removeEventListener('click',more);} };
 }

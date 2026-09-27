@@ -1,4 +1,4 @@
-import { personalInvitationLink } from './invitation-link.js?v=42h43';
+import { personalInvitationLink } from './invitation-link.js?v=42h44';
 
 export function mountHrInvitation(root, { issue, revoke, stationOptions, getActor, requestId }) {
   let disposed=false, busy=false, intent=null, inviteId='';
