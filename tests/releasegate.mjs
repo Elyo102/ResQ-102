@@ -305,7 +305,7 @@ const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
 // Explicitly retain the retired-route protections for 43. Unknown future
 // releases must not inherit approval of either frozen target manifest.
-if (['42H.42', '42H.43'].includes(releaseVersion)) {
+if (['42H.42', '42H.43', '42H.44'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -378,6 +378,37 @@ if (['42H.42', '42H.43'].includes(releaseVersion)) {
       ['split schedule', x => { const id = x.batches[4].pop(); x.batches[5].unshift(id); }]
     ]) ok(`6.43 mutation rejects ${name}`, bad43(mutate));
     ok('6.43 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h43.json') !== null);
+  }
+  if (releaseVersion === '42H.44') {
+    const manifest44 = JSON.parse(read('docs/release-targets-42h44.json'));
+    const exact44 = ['createFaultReport', 'appendFaultPhotos', 'reportIncident', 'recordMetrics',
+      'getMaintenanceDashboard', 'setMaintenanceMode', 'runMaintenanceAnalysis', 'prepareMaintenanceHandoff',
+      'activateScheduleMonthAuthority', 'previewScheduleCutover', 'promoteScheduleToNew', 'systemHeartbeat'].sort();
+    const schedule44 = ['activateScheduleMonthAuthority', 'previewScheduleCutover', 'promoteScheduleToNew'];
+    const valid44 = value => value.project === 'station-102' && value.version === '42H.44' &&
+      JSON.stringify(Object.keys(value).sort()) === JSON.stringify(['batches','project','services','targets','version']) &&
+      JSON.stringify(value.services) === JSON.stringify(['functions','firestore:rules','hosting','github-pages']) &&
+      Array.isArray(value.targets) && new Set(value.targets).size === exact44.length &&
+      JSON.stringify([...value.targets].sort()) === JSON.stringify(exact44) &&
+      Array.isArray(value.batches) && value.batches.length === 6 &&
+      value.batches.every(batch => Array.isArray(batch) && batch.length > 0 && batch.length <= 3) &&
+      JSON.stringify(value.batches.flat()) === JSON.stringify(value.targets) &&
+      value.batches.some(batch => schedule44.every(id => batch.includes(id)));
+    ok('6.44 exact scoped targets and shared schedule group', valid44(manifest44));
+    const bad44 = mutate => { const value = structuredClone(manifest44); mutate(value); return !valid44(value); };
+    for (const [name, mutate] of [
+      ['omission', x => { x.targets.pop(); x.batches.pop(); }],
+      ['extra target', x => { x.targets.push('sendCallout'); x.batches.at(-1).push('sendCallout'); }],
+      ['duplicate', x => { x.targets.push(x.targets[0]); x.batches.at(-1).push(x.targets[0]); }],
+      ['project', x => { x.project = 'other'; }],
+      ['future version', x => { x.version = '42H.45'; }],
+      ['Storage', x => { x.services.push('storage'); }],
+      ['indexes', x => { x.services.push('firestore:indexes'); }],
+      ['broad Firestore', x => { x.services[1] = 'firestore'; }],
+      ['oversized batch', x => { x.batches[0].push(...x.batches[1]); x.batches[1] = []; }],
+      ['split schedule', x => { const id = x.batches[4].pop(); x.batches[5].unshift(id); }]
+    ]) ok(`6.44 mutation rejects ${name}`, bad44(mutate));
+    ok('6.44 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h44.json') !== null);
   }
 } else {
 
@@ -704,6 +735,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
-if (['42H.42', '42H.43'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
+if (['42H.42', '42H.43', '42H.44'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');
