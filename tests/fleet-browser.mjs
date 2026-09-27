@@ -333,6 +333,14 @@ try {
 
   /* ---------- B2 · תשובת claims ישנה שחוזרת אחרי החלפה ---------- */
   const stale = await browser.newContext({ viewport:{ width:1280, height:960 }, locale:'he-IL' });
+  // Force lazy reminder startup after #work becomes visible. Its initial claims
+  // request is not the 60-second fleet poll being tested below.
+  let releaseReminder;
+  const reminderReady = new Promise(resolve => { releaseReminder = resolve; });
+  await stale.route('**/notification-reminder-entry.js*', async route => {
+    await reminderReady;
+    await route.continue();
+  });
   await stale.route('**/firebasejs/**', (route) => {
     const name = route.request().url().split('/').pop().split('?')[0];
     const file = path.join(stub, name);
@@ -345,6 +353,10 @@ try {
   stalePage.on('dialog', (dialog) => dialog.accept());
   await stalePage.goto(base, { waitUntil:'load' });
   await stalePage.locator('#work:not(.hide)').waitFor();
+  releaseReminder();
+  await stalePage.waitForFunction(() => (window.__CALLABLE_CALLS || []).some(
+    call => call.name === 'registrationTermsConsent' && call.payload?.action === 'status'
+  ));
 
   await test('seq485 §B2: תשובת claims של א׳ שחוזרת אחרי שב׳ נכנס — נזרקת, ואין רענון', async () => {
     let reloaded = 0;
