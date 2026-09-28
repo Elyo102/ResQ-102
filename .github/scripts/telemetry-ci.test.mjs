@@ -108,3 +108,13 @@ test('workflow isolates secrets behind protected receipt job and exact reviewed 
   assert.match(agents,/test "\$APPROVED" = "\$GITHUB_SHA"/);assert.match(agents,/ref: \$\{\{ github.sha \}\}/);
   assert.ok(!yaml.slice(0,yaml.indexOf('  receipt:')).includes('secrets.'));
 });
+test('download caches never enter protected jobs or replace required test execution',()=>{
+ const yaml=readFileSync(new URL('../workflows/telemetry.yml',import.meta.url),'utf8');
+ const tests=yaml.slice(0,yaml.indexOf('  receipt:')),protectedJobs=yaml.slice(yaml.indexOf('  receipt:'));
+ assert.match(tests,/cache: npm/);for(const p of ['tests/package-lock.json','rules-test/package-lock.json','functions/package-lock.json','.github/ci-toolchain.json'])assert.ok(tests.includes(p));
+ assert.ok(!protectedJobs.includes('cache:'));assert.match(tests,/npm run test:all/);assert.ok(!yaml.includes('cache-hit'));
+ assert.match(yaml,/cancel-in-progress: false/);
+ const review=readFileSync(new URL('../workflows/multi-agent-review.yml',import.meta.url),'utf8');
+ assert.ok(review.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
+ assert.ok(!review.slice(review.indexOf('\n  review:')).includes('cache:'));
+});

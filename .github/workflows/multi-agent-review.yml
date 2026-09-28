@@ -11,7 +11,8 @@ on:
 permissions: {}
 concurrency:
   group: agent-review-${{ github.event_name }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  # Cancel superseded read-only PR tests, never a privileged review operation.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   local-tests:
@@ -27,6 +28,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            tests/package-lock.json
+            rules-test/package-lock.json
+            functions/package-lock.json
+            .github/ci-toolchain.json
       - run: node --test .github/scripts/multi-agent-review.test.mjs
       - run: npm --prefix tests ci --no-audit --no-fund
       - run: npm --prefix rules-test ci --no-audit --no-fund

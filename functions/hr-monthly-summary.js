@@ -550,7 +550,8 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
     let cursor = null;
     for (;;) {
       let query = generationRef(sid, month, value.active_generation)
-        .collection('hr_monthly_rows').orderBy('__name__').limit(USER_PAGE);
+        .collection('hr_monthly_rows').where('over_hour_limit', '==', true)
+        .orderBy('__name__').limit(USER_PAGE);
       if (cursor) query = query.startAfter(cursor);
       const page = await query.get();
       if (page.empty) break;
