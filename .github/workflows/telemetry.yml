@@ -7,6 +7,9 @@ on:
     paths:
       - '.github/workflows/telemetry.yml'
       - '.github/scripts/telemetry-ci*'
+      - 'control-plane/atomic-budget*'
+      - 'control-plane/ci-cloud*'
+      - 'control-plane/agent-cycle*'
 
 permissions: {}
 concurrency:
@@ -28,6 +31,7 @@ jobs:
         with:
           node-version: '22'
       - run: node --test .github/scripts/telemetry-ci.test.mjs
+      - run: node --test control-plane/atomic-budget.test.mjs control-plane/ci-cloud.test.mjs control-plane/agent-cycle.test.mjs
       - run: npm --prefix tests ci --no-audit --no-fund
       - run: npm --prefix rules-test ci --no-audit --no-fund
       - run: npm --prefix functions ci --no-audit --no-fund
@@ -71,3 +75,37 @@ jobs:
           TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
           TEST_RESULT: ${{ needs.tests.result }}
         run: node .github/scripts/telemetry-ci.mjs
+
+  agents:
+    needs: tests
+    if: needs.tests.result == 'success' && github.repository == 'Elyo102/ResQ-102' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: resq-telemetry
+    permissions:
+      contents: read
+    steps:
+      - name: Require exact reviewed commit
+        env:
+          APPROVED: ${{ vars.TELEMETRY_APPROVED_SHA }}
+        run: test "$APPROVED" = "$GITHUB_SHA"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Budget-gated provider connectivity and design review
+        env:
+          TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
+          TEST_RESULT: ${{ needs.tests.result }}
+          FIREBASE_TELEMETRY_REFRESH_TOKEN: ${{ secrets.FIREBASE_TELEMETRY_REFRESH_TOKEN }}
+          FIREBASE_BUDGET_REFRESH_TOKEN: ${{ secrets.FIREBASE_BUDGET_REFRESH_TOKEN }}
+          FIREBASE_CLAUDE_REFRESH_TOKEN: ${{ secrets.FIREBASE_CLAUDE_REFRESH_TOKEN }}
+          FIREBASE_GROK_REFRESH_TOKEN: ${{ secrets.FIREBASE_GROK_REFRESH_TOKEN }}
+          FIREBASE_GEMINI_REFRESH_TOKEN: ${{ secrets.FIREBASE_GEMINI_REFRESH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node control-plane/agent-cycle.mjs

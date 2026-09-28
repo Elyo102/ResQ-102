@@ -95,6 +95,12 @@ test('workflow isolates secrets behind protected receipt job and exact reviewed 
   assert.match(yaml,/workflow_dispatch:/); assert.match(yaml,/branches: \[dev\]/);
   assert.match(yaml,/environment: resq-telemetry/); assert.match(yaml,/TELEMETRY_APPROVED_SHA/);
   assert.match(yaml,/needs: tests/); assert.match(yaml,/needs.tests.result/);
-  assert.ok(!/ANTHROPIC_API_KEY|XAI_API_KEY|GEMINI_API_KEY|pull_request_target|id-token: write/.test(yaml));
+  assert.ok(!/pull_request_target|id-token: write/.test(yaml));
+  const split=yaml.indexOf('  agents:');assert.ok(split>0);
+  assert.ok(!/ANTHROPIC_API_KEY|XAI_API_KEY|GEMINI_API_KEY/.test(yaml.slice(0,split)));
+  const agents=yaml.slice(split);
+  for(const key of ['ANTHROPIC_API_KEY','XAI_API_KEY','GEMINI_API_KEY','FIREBASE_BUDGET_REFRESH_TOKEN'])assert.ok(agents.includes(`secrets.${key}`));
+  assert.match(agents,/environment: resq-telemetry/);assert.match(agents,/needs.tests.result == 'success'/);
+  assert.match(agents,/test "\$APPROVED" = "\$GITHUB_SHA"/);assert.match(agents,/ref: \$\{\{ github.sha \}\}/);
   assert.ok(!yaml.slice(0,yaml.indexOf('  receipt:')).includes('secrets.'));
 });
