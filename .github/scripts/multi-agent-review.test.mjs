@@ -25,7 +25,13 @@ function harness({ stale = false, failGemini = false, files = [file], reviews = 
     } else throw new Error('Unexpected destination');
     return new Response(JSON.stringify(value));
   };
-  return { calls, fetcher };
+  // Synthetic admission only; never used by the executable CLI.
+  const reservations = [];
+  const sharedBudget = { async reserveRequest(request) {
+    reservations.push(request);
+    return {dispatch:true,id:request.id,requestDigest:request.requestDigest};
+  }};
+  return { calls, fetcher, sharedBudget, reservations };
 }
 test('bounded source selection excludes fixtures; detects truncated diff, credentials and budgets', () => {
   assert.equal(selectDiff([file], 1).selected.length, 1);
@@ -90,4 +96,32 @@ test('workflow keeps PR code away from privileged job', () => {
   assert(privileged.includes('persist-credentials: false'));
   assert(yaml.includes('permissions: {}'));
   assert(!yaml.includes('contents: write'));
+});
+
+test('missing shared budget makes zero network calls despite configured provider secrets', async () => {
+  const h=harness(); await assert.rejects(runReview({event,env,...h,sharedBudget:undefined}),/SHARED_BUDGET_REQUIRED/);
+  assert.equal(h.calls.length,0);
+});
+
+test('all three providers reserve full bounded request before paid fetch', async () => {
+  const h=harness();
+  const fetcher=async(url,options)=>{
+    if(!url.includes('api.github.com')) assert.equal(h.reservations.at(-1)?.requestBody,options.body);
+    return h.fetcher(url,options);
+  };
+  await runReview({event,env,...h,fetcher});
+  assert.deepEqual(h.reservations.map(r=>r.provider),['Grok','Claude','Gemini']);
+  assert.deepEqual(h.reservations.map(r=>r.maxOutputTokens),[2200,2200,700]);
+});
+
+test('denied, replayed or mismatched permits never execute paid calls', async () => {
+  for(const mode of ['denied','replayed','mismatched']){
+    const h=harness();
+    const sharedBudget={async reserveRequest(r){
+      if(mode==='denied')throw Error('MONTHLY_CAP_REACHED');
+      return {dispatch:mode==='mismatched',id:r.id,requestDigest:'wrong'};
+    }};
+    await assert.rejects(runReview({event,env,...h,sharedBudget}),/PARTIAL_REVIEW/);
+    assert.equal(h.calls.filter(c=>!c.url.includes('api.github.com')).length,0);
+  }
 });

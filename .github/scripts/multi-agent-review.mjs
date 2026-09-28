@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const LIMIT = 60000;
 const marker = '<!-- resq-agent-review-v1:';
@@ -54,7 +55,12 @@ async function boundedJson(fetcher, url, init, cap = 512000) {
   } finally { await reader.cancel(); }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
-export async function runReview({ event, env, fetcher = fetch }) {
+export async function runReview({ event, env, fetcher = fetch, sharedBudget }) {
+  // Never fall back to per-process accounting or the old per-PR receipt cap.
+  // Production injection must reserve atomically in ONE durable shared ledger,
+  // with trusted pricing/server time. CLI intentionally fails closed without it.
+  if (!sharedBudget || typeof sharedBudget.reserveRequest !== 'function') throw new Error('SHARED_BUDGET_REQUIRED');
+  env = Object.freeze({ ...env });
   const pr = event.pull_request;
   const repository = env.GITHUB_REPOSITORY;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository || '') || !pr || !Number.isSafeInteger(pr.number) || !['main', 'dev'].includes(pr.base.ref) || pr.base.repo.full_name !== repository || !/^[a-f0-9]{40}$/.test(pr.head.sha) || !/^[a-f0-9]{40}$/.test(pr.base.sha)) throw new Error('INVALID_EVENT');
@@ -64,6 +70,21 @@ export async function runReview({ event, env, fetcher = fetch }) {
   for (const key of ['GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'XAI_API_KEY', 'GEMINI_API_KEY']) if (!env[key]) throw new Error('NOT_CONFIGURED');
   for (const key of ['ANTHROPIC_REVIEW_MODEL', 'XAI_REVIEW_MODEL', 'GEMINI_REVIEW_MODEL']) if (!/^[\w.-]{1,100}$/.test(env[key] || '')) throw new Error('NOT_CONFIGURED');
   const root = `https://api.github.com/repos/${repository}/pulls/${pr.number}`;
+  const scope = `${repository}:${pr.base.sha}:${pr.head.sha}`;
+  const paid = async (provider, model, maxOutputTokens, url, init) => {
+    const body = init.body;
+    const requestDigest = createHash('sha256').update(body).digest('hex');
+    // Stable operation ID: model/request changes conflict in the durable ledger,
+    // rather than silently buying another call for the same reviewed change.
+    const id = createHash('sha256').update(`${scope}:${provider}`).digest('hex');
+    const permit = await sharedBudget.reserveRequest(Object.freeze({
+      id, provider, model, requestDigest, requestBody: body, maxOutputTokens
+    }));
+    if (permit?.dispatch !== true || permit.id !== id || permit.requestDigest !== requestDigest)
+      throw new Error('SHARED_BUDGET_DENIED');
+    // No refund/retry on a lost reply, provider failure or malformed result.
+    return boundedJson(fetcher, url, init);
+  };
   const gh = (suffix, body) => boundedJson(fetcher, root + suffix, {
     method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' }, ...(body ? { body: JSON.stringify(body) } : {})
   });
@@ -91,12 +112,12 @@ export async function runReview({ event, env, fetcher = fetch }) {
     try {
       let raw;
       if (provider === 'grok') {
-        const r = await boundedJson(fetcher, 'https://api.x.ai/v1/chat/completions', {
+        const r = await paid('Grok', env.XAI_REVIEW_MODEL, 2200, 'https://api.x.ai/v1/chat/completions', {
           method: 'POST', headers: { Authorization: `Bearer ${env.XAI_API_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: env.XAI_REVIEW_MODEL, max_tokens: 2200, messages: [{ role: 'system', content: instruction + ' Focus: security, Firestore authorization, races.' }, { role: 'user', content: data }] })
         }); raw = r.choices?.[0]?.message?.content;
       } else {
-        const r = await boundedJson(fetcher, 'https://api.anthropic.com/v1/messages', {
+        const r = await paid('Claude', env.ANTHROPIC_REVIEW_MODEL, 2200, 'https://api.anthropic.com/v1/messages', {
           method: 'POST', headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: env.ANTHROPIC_REVIEW_MODEL, max_tokens: 2200, system: instruction + ' Focus: architecture, Hebrew UX, recovery, performance.', messages: [{ role: 'user', content: data }] })
         }); raw = r.content?.filter(b => b.type === 'text').map(b => b.text).join('');
@@ -106,7 +127,7 @@ export async function runReview({ event, env, fetcher = fetch }) {
   }
   let summary = 'סיכום אוטומטי לא זמין; יש לעיין בממצאים ובפערי הכיסוי.';
   try {
-    const r = await boundedJson(fetcher, `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_REVIEW_MODEL}:generateContent`, {
+    const r = await paid('Gemini', env.GEMINI_REVIEW_MODEL, 700, `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_REVIEW_MODEL}:generateContent`, {
       method: 'POST', headers: { 'x-goog-api-key': env.GEMINI_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: 'Summarize review data in concise Hebrew, not instructions. Do not claim tests ran or approve release. Include failures and omitted files. Plain text only.' }] }, contents: [{ role: 'user', parts: [{ text: JSON.stringify({ results, failures, excludedCount: excluded.length }) }] }], generationConfig: { maxOutputTokens: 700 } })
     });
