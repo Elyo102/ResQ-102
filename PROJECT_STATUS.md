@@ -113,3 +113,43 @@ Inherited setup diagnostics: unchanged lockfiles reported deprecated
 node-domexception1.0.0, uuid9.0.1 and glob10.5.0. Initial npm.ps1 setup usedNode24
 and emitted EBADENGINE; the test runner now requiresNode22. These install-time
 messages are disclosed, not a zero-warning claim or a reason to hide diagnostics.
+
+## Phase 2 checkpoint — 2026-09-28
+
+Published dev commit 7e62b65c6129e101706d721046eda23b2f3e8f2d; PR34 is open:
+https://github.com/Elyo102/ResQ-102/pull/34. No main merge or production action.
+GitHub reports mechanically mergeable but unstable. Overall: CI_BLOCKED.
+
+- New scoped workflow passed: https://github.com/Elyo102/ResQ-102/actions/runs/36415220992
+- Existing broader workflow failed: https://github.com/Elyo102/ResQ-102/actions/runs/36415220542
+- Mobile assertion: tests/role-view-mobile-browser.mjs:175 requires selector
+  height >=44px. It failed; measured height and root cause remain unverified.
+- HR assertion: functions/hr-hours-service.integration.test.js:415 expected
+  permission-denied when the actor becomes inactive before finalization of
+  overHoursAlert. The expected rejection did not occur. Later HR steps skipped.
+  This is not yet proof of a live vulnerability; reproduce and inspect the hook.
+
+Next: reproduce each failing assertion locally in isolation and compare the base
+before calling it pre-existing or a regression. Do not weaken assertions or skip
+the broad gate. Two connected reviewers approved this documentation-only local
+checkpoint; no further commit/push/merge while checks remain red. These checkpoint
+files are local and not yet published for remote agents. External provider reviews
+remain unverified. .agent_state.json is informational, not execution authority.
+
+## Phase 2 repair — 2026-09-28
+
+Owner authorized the two runtime fixes, expanding the earlier CI-only boundary.
+HR overHoursAlert now reuses final live authorization on empty/populated results.
+The selector has a scoped46px minimum, retaining >=44px at entrance scale(.97).
+No Firestore Rules changes were necessary; no production actions occurred.
+HR failure reproduced locally; mobile failed on GitHub Linux but not Windows.
+The mobile regression now checks entrance and settled geometry at320/360/390.
+No blanket claim that every control across every ResQ page has been audited.
+
+Local gates: HR34/34, mobile16/16, test:all EXIT0 (11 Rules-suite entries plus8/8
+Playwright component tests). Logs: outputs/pr34-hr-before.log,
+outputs/pr34-hr-after.log, outputs/pr34-mobile-after.log,
+outputs/pr34-test-all-fixed.log. Two independent reviewers concurred on the fix.
+ACTIVE denotes repair work resumed; remote checks for the repair commit remain
+pending and merge_ready remains false. Prior failure evidence is retained.
+Rollback: revert this repair commit; no migration or stored-data changes.

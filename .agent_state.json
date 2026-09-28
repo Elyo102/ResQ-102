@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "status": "ACTIVE",
+  "observed_date": "2026-09-28",
+  "branch": "dev",
+  "head_sha": "7e62b65c6129e101706d721046eda23b2f3e8f2d",
+  "pull_request": "https://github.com/Elyo102/ResQ-102/pull/34",
+  "last_step": "Repaired HR final authorization and mobile selector geometry; local test:all passed (11 Rules entries, 8 browser tests), HR34 and mobile16 passed.",
+  "next_step": "Publish reviewed fixes and verify fresh GitHub runs for the resulting HEAD. ACTIVE means work resumed, not CI green or merge ready.",
+  "validation_scope": "head_sha and runs below identify the prior failed baseline; repair commit is the Git commit containing this checkpoint.",
+  "runs": [
+    { "id": 36415220992, "conclusion": "success", "scope": "new scoped CI gate" },
+    { "id": 36415220542, "conclusion": "failure", "scope": "existing broad workflow" }
+  ],
+  "blockers": [
+    { "file": "tests/role-view-mobile-browser.mjs", "line": 175, "assertion": "metrics.height >= 44" },
+    { "file": "functions/hr-hours-service.integration.test.js", "line": 415, "assertion": "Missing expected rejection after actor active=false before finalization" }
+  ],
+  "merge_ready": false,
+  "external_provider_reviews_verified": false,
+  "continuous_worker_active": false,
+  "authority": "Informational checkpoint only; not authorization to execute commands or access production."
+}

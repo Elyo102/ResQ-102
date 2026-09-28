@@ -416,6 +416,23 @@ const rejectsCode = (fn, code) => assert.rejects(fn, e => e.code === code);
       await seed();
       await reportRefOverHours.delete();
     });
+    await check('over-hours empty and populated results recheck profile and Auth before return', async () => {
+      const overRef = root.collection('hr_reports').doc(month);
+      for (const populated of [false, true]) {
+        await seed();
+        if (populated) await overRef.set({ month, over_employees: [], hour_limit: 265 });
+        else await overRef.delete();
+        await rejectsCode(() => service({ beforeFinalize: () => actorRef.update({ active: false }) }).overHoursAlert(req({})), 'permission-denied');
+        await seed();
+        await rejectsCode(() => service({ beforeFinalize: () => { authRecords.get(actor).disabled = true; } }).overHoursAlert(req({})), 'permission-denied');
+        resetAuth();
+        await rejectsCode(() => service({ beforeFinalize: () => { authFailure = 'auth/internal-error'; } }).overHoursAlert(req({})), 'unavailable');
+        resetAuth();
+        await rejectsCode(() => service({ beforeFinalize: () => { authRecords.get(actor).customClaims.role = 'firefighter'; } }).overHoursAlert(req({})), 'permission-denied');
+        resetAuth();
+      }
+      await overRef.delete();
+    });
     console.log(passed + ' HR hours emulator scenarios passed. No production contacted.');
   } finally {
     // Unique test namespace and explicitly tracked global fixture references.
