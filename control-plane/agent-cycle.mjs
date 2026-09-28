@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {connectCloud,boundedJson} from './ci-cloud.mjs';
 import {createAtomicBudget} from './atomic-budget.mjs';
-export const MODELS=Object.freeze({Claude:'claude-haiku-4-5-20251001',Grok:'grok-4.7',Gemini:'gemini-2.5-flash'});
+export const MODELS=Object.freeze({Claude:'claude-haiku-4-5-20251001',Grok:'grok-4.7',Gemini:'gemini-3.5-flash-lite'});
 const fail=code=>{throw Error(code);};
 const hash=value=>createHash('sha256').update(value).digest('hex');
 // Provider bodies stay in memory. Only finite diagnostic categories leave this boundary.
@@ -46,7 +46,7 @@ export function providerRequest(agent,env){
   if(!env.GEMINI_API_KEY)fail('PROVIDER_NOT_CONFIGURED');
   headers['x-goog-api-key']=env.GEMINI_API_KEY;
   url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:2200,thinkingConfig:{thinkingBudget:0}}};
+  body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:2200,thinkingConfig:{thinkingLevel:'minimal'}}};
   extract=r=>r.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('');
  }else fail('UNKNOWN_PROVIDER');
  return {model,url,headers,body:JSON.stringify(body),extract};
@@ -57,8 +57,8 @@ export async function runCycle({env,connect=connectCloud,budgetFactory=createAto
   ||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||env.TELEMETRY_APPROVED_SHA!==env.GITHUB_SHA
   ||!['push','workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)||env.TEST_RESULT!=='success')fail('UNAPPROVED_AGENT_CYCLE');
  // Check all required configuration before connecting or reserving any money.
- if(env.AGENT_SCOPE!==undefined&&env.AGENT_SCOPE!=='failed-provider-diagnostic')fail('INVALID_AGENT_SCOPE');
- const selected=env.AGENT_SCOPE==='failed-provider-diagnostic'?['Claude','Gemini']:['Claude','Grok','Gemini'];
+ if(env.AGENT_SCOPE!==undefined&&!['failed-provider-diagnostic','gemini-model-migration'].includes(env.AGENT_SCOPE))fail('INVALID_AGENT_SCOPE');
+ const selected=env.AGENT_SCOPE==='gemini-model-migration'?['Gemini']:env.AGENT_SCOPE==='failed-provider-diagnostic'?['Claude','Gemini']:['Claude','Grok','Gemini'];
  const requests=Object.fromEntries(selected.map(agent=>[agent,providerRequest(agent,env)]));
  const budgetTransport=await connect({refreshToken:env.FIREBASE_BUDGET_REFRESH_TOKEN,uid:'resq-ci-budget-20260928',budget:true,fetcher});
  const budget=budgetFactory({transport:budgetTransport});
@@ -72,7 +72,7 @@ export async function runCycle({env,connect=connectCloud,budgetFactory=createAto
  for(const agent of selected){
   let stage='telemetry';
   try{
-   const r=requests[agent],id=hash(`${env.AGENT_SCOPE?'failed-provider-diagnostic-v1':'activation-v1'}:${env.GITHUB_SHA}:${agent}`),requestDigest=hash(r.body);
+   const r=requests[agent],id=hash(`${env.AGENT_SCOPE?env.AGENT_SCOPE+'-v1':'activation-v1'}:${env.GITHUB_SHA}:${agent}`),requestDigest=hash(r.body);
    // Worker is genuinely running; no assertion that its provider has replied yet.
    await agents[agent].emit('heartbeat','running');await agents[agent].emit('task_started','started');
    stage='budget';const permit=await budget.reserveRequest({id,provider:agent,model:r.model,requestDigest,requestBody:r.body,maxOutputTokens:2200});

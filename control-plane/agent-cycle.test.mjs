@@ -37,7 +37,15 @@ test('wrong target, missing key and failed tests stop before credentials or requ
 test('provider requests are bounded text-only and Grok uses total-output Responses cap',()=>{
  for(const agent of ['Claude','Grok','Gemini']){const r=providerRequest(agent,env),body=JSON.parse(r.body);assert.ok(Buffer.byteLength(r.body)<4000);assert.equal(body.tools,undefined);}
  const g=providerRequest('Grok',env);assert.equal(g.url,'https://api.x.ai/v1/responses');assert.equal(JSON.parse(g.body).max_output_tokens,2200);assert.equal(JSON.parse(g.body).store,false);
- assert.equal(JSON.parse(providerRequest('Gemini',env).body).generationConfig.thinkingConfig.thinkingBudget,0);
+ assert.deepEqual(JSON.parse(providerRequest('Gemini',env).body).generationConfig,{maxOutputTokens:2200,thinkingConfig:{thinkingLevel:'minimal'}});
+ assert.equal(providerRequest('Gemini',env).model,'gemini-3.5-flash-lite');
+});
+test('model migration invokes only Gemini with a fresh purpose and no other provider keys',async()=>{
+ const x=fixture();x.args.env={...env,AGENT_SCOPE:'gemini-model-migration',ANTHROPIC_API_KEY:'',XAI_API_KEY:''};
+ assert.equal((await runCycle(x.args)).status,'completed');assert.equal(x.calls.length,1);assert.equal(x.reservations.length,1);
+ assert.equal(x.reservations[0].provider,'Gemini');assert.ok(x.events.every(e=>['Codex','Gemini'].includes(e.agent)));
+ const y=fixture();y.args.env={...env,AGENT_SCOPE:'failed-provider-diagnostic'};await runCycle(y.args);
+ assert.ok(!y.reservations.some(r=>r.id===x.reservations[0].id));
 });
 test('focused diagnostic reserves and dispatches at most two new operations, never Grok',async()=>{
  const x=fixture();x.args.env={...env,AGENT_SCOPE:'failed-provider-diagnostic',XAI_API_KEY:''};

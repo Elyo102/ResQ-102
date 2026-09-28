@@ -53,6 +53,14 @@ test('replay cannot dispatch or charge, conflicting body fails',async()=>{
   const changed={...r,requestBody:'different',requestDigest:sha('different')};
   await assert.rejects(f.api.reserveRequest(changed),/RESERVATION_CONFLICT/); assert.equal(f.commits,1);
 });
+test('model policy migration preserves old charges and denies old model',async()=>{
+ const f=fixture();await f.api.reserveRequest(request());const prior=structuredClone(f.docs.get(`${POLICY_PATH}/operations/${request().id}`));
+ const policy=f.docs.get(POLICY_PATH);policy.fields.version=s('v2');policy.fields.models.mapValue.fields.Gemini=s('gemini-3.5-flash-lite');
+ await assert.rejects(f.api.reserveRequest({...request(2),provider:'Gemini',model:'flash'}));assert.equal(f.commits,1);
+ const r={...request(3),provider:'Gemini',model:'gemini-3.5-flash-lite'};const permit=await f.api.reserveRequest(r);f.api.assertDispatch(permit);
+ assert.equal((await f.api.reserveRequest(r)).dispatch,false);assert.deepEqual(f.docs.get(`${POLICY_PATH}/operations/${request().id}`),prior);
+ assert.equal(f.docs.get('resq_budget_state/month_2026-09').fields.chargedMicroUsd.integerValue,'500000');
+});
 test('concurrent CAS contenders never retry or overcharge',async()=>{
   const f=fixture(); const results=await Promise.allSettled([f.api.reserveRequest(request(1)),f.api.reserveRequest(request(2))]);
   assert.equal(results.filter(x=>x.status==='fulfilled').length,1);

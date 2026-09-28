@@ -34,8 +34,13 @@ Checked 2026-09-29 against official documentation:
   Uses **Responses** `max_output_tokens`, which includes reasoning tokens.
   Chat Completions' visible-output-only cap is deliberately not used.
   https://docs.x.ai/developers/rest-api-reference/inference/responses.md
-- Gemini `gemini-2.5-flash`: USD 0.30 text input / 2.50 output per million tokens;
-  thinking budget 0. https://ai.google.dev/gemini-api/docs/pricing
+- Gemini `gemini-3.5-flash-lite`: USD 0.30 text input / 2.50 output per million tokens;
+  minimal thinking (not disabled), total output cap 2200.
+  https://ai.google.dev/gemini-api/docs/pricing
+  https://ai.google.dev/gemini-api/docs/generate-content/thinking
+  Google restricts2.5 access for new users; the migration preserves all previous
+  reservations and updates only the model policy/version.
+  https://ai.google.dev/gemini-api/docs/deprecations
 
 Any model, pricing or request-shape change requires revalidation. USD 0.25 is a
 reservation, not a measured per-call invoice. No attempt is made to infer exact
