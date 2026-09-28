@@ -99,7 +99,9 @@ test('workflow isolates secrets behind protected receipt job and exact reviewed 
   const split=yaml.indexOf('  agents:');assert.ok(split>0);
   assert.ok(!/ANTHROPIC_API_KEY|XAI_API_KEY|GEMINI_API_KEY/.test(yaml.slice(0,split)));
   const agents=yaml.slice(split);
-  for(const key of ['ANTHROPIC_API_KEY','XAI_API_KEY','GEMINI_API_KEY','FIREBASE_BUDGET_REFRESH_TOKEN'])assert.ok(agents.includes(`secrets.${key}`));
+  for(const key of ['ANTHROPIC_API_KEY','GEMINI_API_KEY'])assert.ok(agents.includes(`secrets.${key}`));
+  assert.ok(!/secrets\.(?:FIREBASE_|XAI_API_KEY)/.test(agents));
+  assert.ok(agents.includes('node control-plane/provider-diagnostics.mjs'));assert.ok(!agents.includes('node control-plane/agent-cycle.mjs'));
   assert.match(agents,/environment: resq-telemetry/);assert.match(agents,/needs.tests.result == 'success'/);
   assert.match(agents,/test "\$APPROVED" = "\$GITHUB_SHA"/);assert.match(agents,/ref: \$\{\{ github.sha \}\}/);
   assert.ok(!yaml.slice(0,yaml.indexOf('  receipt:')).includes('secrets.'));

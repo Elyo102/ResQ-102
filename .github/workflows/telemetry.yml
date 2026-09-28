@@ -10,6 +10,7 @@ on:
       - 'control-plane/atomic-budget*'
       - 'control-plane/ci-cloud*'
       - 'control-plane/agent-cycle*'
+      - 'control-plane/provider-diagnostics*'
 
 permissions: {}
 concurrency:
@@ -31,7 +32,7 @@ jobs:
         with:
           node-version: '22'
       - run: node --test .github/scripts/telemetry-ci.test.mjs
-      - run: node --test control-plane/atomic-budget.test.mjs control-plane/ci-cloud.test.mjs control-plane/agent-cycle.test.mjs
+      - run: node --test control-plane/atomic-budget.test.mjs control-plane/ci-cloud.test.mjs control-plane/agent-cycle.test.mjs control-plane/provider-diagnostics.test.mjs
       - run: npm --prefix tests ci --no-audit --no-fund
       - run: npm --prefix rules-test ci --no-audit --no-fund
       - run: npm --prefix functions ci --no-audit --no-fund
@@ -96,16 +97,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Budget-gated provider connectivity and design review
+      - name: Read-only model diagnostics (no paid requests)
         env:
           TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
           TEST_RESULT: ${{ needs.tests.result }}
-          FIREBASE_TELEMETRY_REFRESH_TOKEN: ${{ secrets.FIREBASE_TELEMETRY_REFRESH_TOKEN }}
-          FIREBASE_BUDGET_REFRESH_TOKEN: ${{ secrets.FIREBASE_BUDGET_REFRESH_TOKEN }}
-          FIREBASE_CLAUDE_REFRESH_TOKEN: ${{ secrets.FIREBASE_CLAUDE_REFRESH_TOKEN }}
-          FIREBASE_GROK_REFRESH_TOKEN: ${{ secrets.FIREBASE_GROK_REFRESH_TOKEN }}
-          FIREBASE_GEMINI_REFRESH_TOKEN: ${{ secrets.FIREBASE_GEMINI_REFRESH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: node control-plane/agent-cycle.mjs
+        run: node control-plane/provider-diagnostics.mjs
