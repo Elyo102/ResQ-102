@@ -7,7 +7,14 @@ export async function createFirebaseAdapter({sdk, config}) {
       || typeof config.apiKey !== 'string' || !config.apiKey) throw Error('INVALID_PRIVATE_CONFIG');
   const app=sdk.initializeApp(config,'resq-private-control');
   const auth=sdk.getAuth(app);
-  await sdk.setPersistence(auth,sdk.browserSessionPersistence);
+  try {
+    await sdk.setPersistence(auth,sdk.browserSessionPersistence);
+  } catch (error) {
+    // Storage-blocked browsers may authenticate for this tab only. Configuration,
+    // network and unknown failures must not silently change authentication mode.
+    if (error?.code !== 'auth/web-storage-unsupported') throw error;
+    await sdk.setPersistence(auth,sdk.inMemoryPersistence);
+  }
   const db=sdk.initializeFirestore(app,{localCache:sdk.memoryLocalCache()});
   const google=new sdk.GoogleAuthProvider();
   google.setCustomParameters({prompt:'select_account'});
