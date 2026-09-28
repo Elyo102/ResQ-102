@@ -2,6 +2,11 @@
 
 These rules apply to every Codex task in this repository.
 
+Read PROJECT_STATUS.md for the owner's 2026-09-28 autonomy/UI-approval protocol,
+local-only safety boundaries and exact outstanding validation. It does not waive
+the review requirements below or grant production/merge authority. The owner
+explicitly authorized the isolated dev branch for the CI-only package.
+
 ## Default workflow
 
 - Treat `main` and the Firebase project `station-102` as production.

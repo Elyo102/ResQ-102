@@ -96,3 +96,5 @@ apps/mobile/**/GoogleService-Info.plist
 apps/mobile/android/app/build/
 apps/mobile/ios/App/Pods/
 apps/mobile/**/node_modules/
+tests/test-results/
+tests/playwright-report/

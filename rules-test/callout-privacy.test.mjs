@@ -7,7 +7,7 @@ const endpoint = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 if (!/^(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('loopback emulator only');
 const [host, portText] = endpoint.split(':');
 const env = await initializeTestEnvironment({
-  projectId:'resq-callout-privacy',
+  projectId:'demo-resq',
   firestore:{ rules:readFileSync('../firestore.rules', 'utf8'), host, port:Number(portText) }
 });
 // This dedicated loopback-only test project must start empty: replacing a
