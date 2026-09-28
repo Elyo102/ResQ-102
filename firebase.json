@@ -47,6 +47,7 @@
       "**/.*",
       "**/node_modules/**",
       "functions/**",
+      "control-plane/**",
       "apps/**",
       "tests/**",
       "rules-test/**",
@@ -108,7 +109,8 @@
       "*.py",
       "**/*.py",
       "*.mjs",
-      "*.md"
+      "*.md",
+      "**/*.md"
     ],
     "_הערה_headers": "הסדר כאן אינו סגנון. Firebase Hosting מחיל את הכלל התואם האחרון, ולכן כלל ספציפי שיושב לפני כלל כללי יותר מפסיד לו. '**/*.@(html|js|css)' תופס גם את firebase-messaging-sw.js, ולכן העובד חייב לשבת אחריו — אחרת Production מחזיר no-cache במקום no-store, וזה בדיוק מה שנמדד. tests/headercheck.mjs מחשב את הכלל האחרון התואם בפועל ונופל אם מישהו יחזיר את הסדר.",
     "headers": [

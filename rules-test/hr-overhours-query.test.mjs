@@ -3,11 +3,9 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { assertHrQueryTarget } from './hr-query-target.mjs';
 
-assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):8191$/,
-  'explicit loopback Firestore emulator on 8191 required');
-assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq', 'explicit demo-resq project required');
-assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
+assertHrQueryTarget(process.env);
 // The SDK otherwise probes Google metadata even with an emulator endpoint.
 process.env.METADATA_SERVER_DETECTION = 'none';
 
