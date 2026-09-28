@@ -97,10 +97,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Read-only model diagnostics (no paid requests)
+      - name: One budgeted diagnostic attempt per failed provider
         env:
+          AGENT_SCOPE: failed-provider-diagnostic
           TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
           TEST_RESULT: ${{ needs.tests.result }}
+          FIREBASE_BUDGET_REFRESH_TOKEN: ${{ secrets.FIREBASE_BUDGET_REFRESH_TOKEN }}
+          FIREBASE_TELEMETRY_REFRESH_TOKEN: ${{ secrets.FIREBASE_TELEMETRY_REFRESH_TOKEN }}
+          FIREBASE_CLAUDE_REFRESH_TOKEN: ${{ secrets.FIREBASE_CLAUDE_REFRESH_TOKEN }}
+          FIREBASE_GEMINI_REFRESH_TOKEN: ${{ secrets.FIREBASE_GEMINI_REFRESH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: node control-plane/provider-diagnostics.mjs
+        run: node control-plane/agent-cycle.mjs

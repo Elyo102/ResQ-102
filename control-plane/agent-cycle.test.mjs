@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runCycle,providerRequest} from './agent-cycle.mjs';
+import {runCycle,providerRequest,requestProvider} from './agent-cycle.mjs';
 const env={GITHUB_REPOSITORY:'Elyo102/ResQ-102',GITHUB_REF:'refs/heads/dev',GITHUB_SHA:'a'.repeat(40),TELEMETRY_APPROVED_SHA:'a'.repeat(40),GITHUB_EVENT_NAME:'push',TEST_RESULT:'success',ANTHROPIC_API_KEY:'synthetic',XAI_API_KEY:'synthetic',GEMINI_API_KEY:'synthetic'};
 function fixture(){
  const events=[],calls=[],reservations=[],dispatches=[];
@@ -38,4 +38,25 @@ test('provider requests are bounded text-only and Grok uses total-output Respons
  for(const agent of ['Claude','Grok','Gemini']){const r=providerRequest(agent,env),body=JSON.parse(r.body);assert.ok(Buffer.byteLength(r.body)<4000);assert.equal(body.tools,undefined);}
  const g=providerRequest('Grok',env);assert.equal(g.url,'https://api.x.ai/v1/responses');assert.equal(JSON.parse(g.body).max_output_tokens,2200);assert.equal(JSON.parse(g.body).store,false);
  assert.equal(JSON.parse(providerRequest('Gemini',env).body).generationConfig.thinkingConfig.thinkingBudget,0);
+});
+test('focused diagnostic reserves and dispatches at most two new operations, never Grok',async()=>{
+ const x=fixture();x.args.env={...env,AGENT_SCOPE:'failed-provider-diagnostic',XAI_API_KEY:''};
+ assert.equal((await runCycle(x.args)).status,'completed');assert.equal(x.calls.length,2);
+ assert.deepEqual(x.reservations.map(r=>r.provider),['Claude','Gemini']);assert.ok(!x.events.some(e=>e.agent==='Grok'));
+ const all=fixture();await runCycle(all.args);assert.ok(x.reservations.every(r=>!all.reservations.some(a=>a.id===r.id)));
+});
+test('provider classifications never expose bodies or secrets and never retry',async()=>{
+ for(const [status,message,expected] of [[401,'secret','auth'],[403,'secret','permission'],[404,'secret','model'],[429,'slow','rate_limit'],[400,'Your credit balance is too low secret','credit_or_quota_hint'],[429,'quota secret','credit_or_quota_hint'],[500,'secret','provider_failure'],[400,'bad secret','invalid_request']]){
+  let calls=0;await assert.rejects(requestProvider(async()=>{calls++;return new Response(JSON.stringify({error:{message}}),{status});},providerRequest('Claude',env)),e=>{assert.equal(e.category,expected);assert.equal(e.http,status);assert.ok(!JSON.stringify(e).includes('secret'));return true;});assert.equal(calls,1);
+ }
+ for(const body of ['not json secret','x'.repeat(32769),'{"error":null}'])await assert.rejects(requestProvider(async()=>new Response(body,{status:400}),providerRequest('Claude',env)),e=>e.category==='unknown');
+});
+test('focused diagnostic preserves unknown reservations and preflight failure boundaries',async()=>{
+ for(const mode of ['budget','transport','empty','stream']){
+  const x=fixture();x.args.env={...env,AGENT_SCOPE:'failed-provider-diagnostic'};let calls=0;
+  if(mode==='budget')x.args.budgetFactory=()=>({reserveRequest:async()=>{throw Error('secret');}});
+  x.args.fetcher=async()=>{calls++;if(mode==='transport')throw Error('secret');if(mode==='stream')return new Response(new ReadableStream({start(c){c.error(Error('secret'));}}));return new Response('{}');};
+  const r=await runCycle(x.args);assert.equal(r.status,'partial');assert.equal(calls,mode==='budget'?0:2);assert.ok(!JSON.stringify(r).includes('secret'));assert.ok(r.results.every(v=>v.stage===(mode==='budget'?'budget':'provider')));
+ }
+ const x=fixture();x.args.env={...env,AGENT_SCOPE:'failed-provider-diagnostic',GEMINI_API_KEY:''};await assert.rejects(runCycle(x.args));assert.equal(x.calls.length,0);
 });
