@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
-import {connectCloud,boundedJson} from './ci-cloud.mjs';
-import {createAtomicBudget} from './atomic-budget.mjs';
+import {boundedJson} from './ci-cloud.mjs';
+import {ACTIVATION_STATE,CYCLE_LIMITS,isBuiltTask,parseTaskResult} from './task-contracts.mjs';
 export const MODELS=Object.freeze({Claude:'claude-haiku-4-5-20251001',Grok:'grok-4.7',Gemini:'gemini-3.5-flash-lite'});
 const fail=code=>{throw Error(code);};
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -25,41 +25,53 @@ export async function requestProvider(fetcher,r){
  finally{try{await reader?.cancel();}catch{}}
  throw Object.assign(Error('PROVIDER_FAILURE'),{category,http});
 }
-// Fixed, public technical material only. No repository secrets, user records,
-// untrusted PR code or arbitrary prompts enter this activation check.
-const prompt='Review this ResQ agent budget contract. Atomic reservations charge a shared monthly USD20 ledger before each paid API call. Reservations are immutable, scoped by request digest, never refunded after uncertain delivery, and have a short single-use dispatch deadline. Separate Firebase identities publish structured status events. Identify one important remaining reliability risk and one mitigation, in at most 100 words. This is a connectivity/design review, not evidence that you ran tests or approved deployment.';
-export function providerRequest(agent,env){
+export function providerRequest(agent,env,task){
+ if(!isBuiltTask(task)||task.agent!==agent)fail('INVALID_TASK_CONTRACT');
+ const prompt=task.prompt,maxTokens=task.maxOutputTokens;
  const model=MODELS[agent],headers={'Content-Type':'application/json'};let url,body,extract;
  if(agent==='Claude'){
   if(!env.ANTHROPIC_API_KEY)fail('PROVIDER_NOT_CONFIGURED');
   headers['x-api-key']=env.ANTHROPIC_API_KEY;headers['anthropic-version']='2023-06-01';
   url='https://api.anthropic.com/v1/messages';
-  body={model,max_tokens:2200,messages:[{role:'user',content:prompt}]};
+  body={model,max_tokens:maxTokens,messages:[{role:'user',content:prompt}]};
   extract=r=>r.content?.filter(p=>p.type==='text').map(p=>p.text).join('');
  }else if(agent==='Grok'){
   if(!env.XAI_API_KEY)fail('PROVIDER_NOT_CONFIGURED');
   headers.Authorization='Bearer '+env.XAI_API_KEY;url='https://api.x.ai/v1/responses';
   // Responses max_output_tokens includes reasoning. Chat Completions does not.
-  body={model,input:prompt,max_output_tokens:2200,reasoning:{effort:'low'},store:false};
+  body={model,input:prompt,max_output_tokens:maxTokens,reasoning:{effort:'low'},store:false};
   extract=r=>r.output?.filter(p=>p.type==='message').flatMap(p=>p.content||[]).filter(p=>p.type==='output_text').map(p=>p.text).join('');
  }else if(agent==='Gemini'){
   if(!env.GEMINI_API_KEY)fail('PROVIDER_NOT_CONFIGURED');
   headers['x-goog-api-key']=env.GEMINI_API_KEY;
   url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:2200,thinkingConfig:{thinkingLevel:'minimal'}}};
+  body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:maxTokens,thinkingConfig:{thinkingLevel:'minimal'}}};
   extract=r=>r.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('');
  }else fail('UNKNOWN_PROVIDER');
- return {model,url,headers,body:JSON.stringify(body),extract};
+ const serialized=JSON.stringify(body);
+ if(Buffer.byteLength(serialized)>12000)fail('TASK_REQUEST_LIMIT');
+ return {model,url,headers,body:serialized,extract};
 }
-export async function runCycle({env,connect=connectCloud,budgetFactory=createAtomicBudget,fetcher=fetch}){
+// Do not enable this entry point by environment flags or mock capability objects.
+// Tracked durable grant bounds + Rules/client task allowlists must be reviewed
+// and integrated first. No cloud credential exchange, telemetry or paid fetch.
+export async function runCycle(){fail(ACTIVATION_STATE);}
+
+// Dependency-injected local contract harness. No live defaults, no CLI binding.
+// Its capabilities are simulated evidence, never an activation authorization.
+export async function runLocalCycle({env,tasks,connect,budgetFactory,fetcher,capabilities}){
+ if(capabilities?.atomicGrant!==true||capabilities?.maxCycleMicroUsd!==750000
+  ||capabilities?.maxReservations!==3||capabilities?.providerMicroUsd!==250000
+  ||capabilities?.taskAllowlist!==true||[connect,budgetFactory,fetcher].some(f=>typeof f!=='function'))fail(ACTIVATION_STATE);
  env=Object.freeze({...env});
  if(env.GITHUB_REPOSITORY!=='Elyo102/ResQ-102'||env.GITHUB_REF!=='refs/heads/dev'
   ||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||env.TELEMETRY_APPROVED_SHA!==env.GITHUB_SHA
   ||!['push','workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)||env.TEST_RESULT!=='success')fail('UNAPPROVED_AGENT_CYCLE');
  // Check all required configuration before connecting or reserving any money.
- if(env.AGENT_SCOPE!==undefined&&!['failed-provider-diagnostic','gemini-model-migration'].includes(env.AGENT_SCOPE))fail('INVALID_AGENT_SCOPE');
- const selected=env.AGENT_SCOPE==='gemini-model-migration'?['Gemini']:env.AGENT_SCOPE==='failed-provider-diagnostic'?['Claude','Gemini']:['Claude','Grok','Gemini'];
- const requests=Object.fromEntries(selected.map(agent=>[agent,providerRequest(agent,env)]));
+ if(env.AGENT_SCOPE!==undefined)fail('INVALID_AGENT_SCOPE');
+ const selected=['Claude','Grok','Gemini'];
+ if(!tasks||Object.keys(tasks).length!==3||selected.some(a=>!isBuiltTask(tasks[a])||tasks[a].sha!==env.GITHUB_SHA))fail('INVALID_TASK_CONTRACT');
+ const requests=Object.fromEntries(selected.map(agent=>[agent,providerRequest(agent,env,tasks[agent])]));
  const budgetTransport=await connect({refreshToken:env.FIREBASE_BUDGET_REFRESH_TOKEN,uid:'resq-ci-budget-20260928',budget:true,fetcher});
  const budget=budgetFactory({transport:budgetTransport});
  const agents={};
@@ -67,28 +79,41 @@ export async function runCycle({env,connect=connectCloud,budgetFactory=createAto
   const refreshToken=agent==='Codex'?env.FIREBASE_TELEMETRY_REFRESH_TOKEN:env[`FIREBASE_${agent.toUpperCase()}_REFRESH_TOKEN`];
   agents[agent]=await connect({refreshToken,uid:`resq-ci-${agent.toLowerCase()}-20260928`,agent,fetcher});
  }
- await agents.Codex.emit('heartbeat','running');await agents.Codex.emit('task_started','started');
+ await agents.Codex.emit('heartbeat','running','agent_review_cycle');await agents.Codex.emit('task_started','started','agent_review_cycle');
  const results=[];
+ let reservedMicroUsd=0,reservations=0;
  for(const agent of selected){
   let stage='telemetry';
   try{
-   const r=requests[agent],id=hash(`${env.AGENT_SCOPE?env.AGENT_SCOPE+'-v1':'activation-v1'}:${env.GITHUB_SHA}:${agent}`),requestDigest=hash(r.body);
-   // Worker is genuinely running; no assertion that its provider has replied yet.
-   await agents[agent].emit('heartbeat','running');await agents[agent].emit('task_started','started');
-   stage='budget';const permit=await budget.reserveRequest({id,provider:agent,model:r.model,requestDigest,requestBody:r.body,maxOutputTokens:2200});
-   budget.assertDispatch(permit); // Single use, immediately before network dispatch.
-   stage='provider';const response=await requestProvider(fetcher,r);
-   const answer=r.extract(response);
-   if(typeof answer!=='string'||!answer.trim()||Buffer.byteLength(answer)>24000)fail('INVALID_PROVIDER_RESULT');
-   stage='telemetry';await agents[agent].emit('task_completed','completed');results.push({agent,status:'completed'});
+   const task=tasks[agent],r=requests[agent],id=hash(`bounded-review-v1:${env.GITHUB_SHA}:${agent}`),requestDigest=hash(r.body);
+   stage='budget';
+   if(reservations>=CYCLE_LIMITS.reservations||reservedMicroUsd+CYCLE_LIMITS.providerMicroUsd>CYCLE_LIMITS.totalMicroUsd)fail('CYCLE_CAP');
+   reservations++;reservedMicroUsd+=CYCLE_LIMITS.providerMicroUsd; // Unknown reservation is never refunded/retried.
+   const permit=await budget.reserveRequest({id,provider:agent,model:r.model,requestDigest,requestBody:r.body,maxOutputTokens:task.maxOutputTokens});
+   if(permit?.dispatch!==true||permit.id!==id||permit.requestDigest!==requestDigest)fail('BUDGET_DENIED');
+   const consumed=budget.assertDispatch(permit);
+   if(consumed!==true){
+    if(consumed&&typeof consumed.then==='function')void Promise.resolve(consumed).catch(()=>{});
+    fail('BUDGET_DENIED');
+   }
+   // No await between permit consumption and provider fetch. Immediately handle
+   // both telemetry promises; their failure cannot become unhandled or completed.
+   const signal=(kind,step)=>{try{return Promise.resolve(agents[agent].emit(kind,step,task.label)).then(()=>true,()=>false);}catch{return Promise.resolve(false);}};
+   const started=[signal('heartbeat','running'),signal('task_started','started')];
+   stage='provider';
+   const response=await requestProvider(fetcher,r);
+   const review=parseTaskResult(r.extract(response),task);
+   if((await Promise.all(started)).some(ok=>!ok))fail('TELEMETRY_DELIVERY_UNKNOWN');
+   stage='telemetry';await agents[agent].emit('task_completed','completed',task.label);
+   results.push({agent,task:task.label,status:'completed',review,inputDigest:task.inputDigest,responseDigest:hash(JSON.stringify(review))});
   }catch(error){
-   try{await agents[agent].emit('task_failed','failed');}catch{/* failure remains failure even if telemetry is unavailable */}
+   try{await agents[agent].emit('task_failed','failed',tasks[agent].label);}catch{/* failure remains failure even if telemetry is unavailable */}
    const category=['auth','permission','model','rate_limit','provider_failure','invalid_request','credit_or_quota_hint'].includes(error.category)?error.category:'unknown';
-   results.push({agent,status:'failed',stage,category,http:Number.isInteger(error.http)&&error.http>=400&&error.http<=599?error.http:null});
+   results.push({agent,task:tasks[agent].label,status:'failed',stage,category,http:Number.isInteger(error.http)&&error.http>=400&&error.http<=599?error.http:null});
   }
  }
  const success=results.every(r=>r.status==='completed');
- await agents.Codex.emit(success?'task_completed':'task_failed',success?'completed':'failed');
+ await agents.Codex.emit(success?'task_completed':'task_failed',success?'completed':'failed','agent_review_cycle');
  return {status:success?'completed':'partial',results};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
