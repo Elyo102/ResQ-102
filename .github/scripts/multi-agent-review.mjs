@@ -59,7 +59,8 @@ export async function runReview({ event, env, fetcher = fetch, sharedBudget }) {
   // Never fall back to per-process accounting or the old per-PR receipt cap.
   // Production injection must reserve atomically in ONE durable shared ledger,
   // with trusted pricing/server time. CLI intentionally fails closed without it.
-  if (!sharedBudget || typeof sharedBudget.reserveRequest !== 'function') throw new Error('SHARED_BUDGET_REQUIRED');
+  if (!sharedBudget || typeof sharedBudget.reserveRequest !== 'function'
+      || typeof sharedBudget.assertDispatch !== 'function') throw new Error('SHARED_BUDGET_REQUIRED');
   env = Object.freeze({ ...env });
   const pr = event.pull_request;
   const repository = env.GITHUB_REPOSITORY;
@@ -83,6 +84,8 @@ export async function runReview({ event, env, fetcher = fetch, sharedBudget }) {
     if (permit?.dispatch !== true || permit.id !== id || permit.requestDigest !== requestDigest)
       throw new Error('SHARED_BUDGET_DENIED');
     // No refund/retry on a lost reply, provider failure or malformed result.
+    // Consume the adapter's short-lived, single-use permit with no await gap.
+    if (sharedBudget.assertDispatch(permit) !== true) throw new Error('SHARED_BUDGET_DENIED');
     return boundedJson(fetcher, url, init);
   };
   const gh = (suffix, body) => boundedJson(fetcher, root + suffix, {

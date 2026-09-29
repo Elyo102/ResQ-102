@@ -11,6 +11,7 @@ function harness({ stale = false, failGemini = false, files = [file], reviews = 
   const calls = []; let fresh = 0;
   const fetcher = async (url, options) => {
     calls.push({ url, options });
+    if (!url.includes('api.github.com')) sequence.push('fetch');
     assert.equal(options.redirect, 'error');
     let value;
     if (url.endsWith('/pulls/3')) value = { ...event.pull_request, labels: [event.label], state: 'open', changed_files: files.length, head: { sha: stale && ++fresh >= 3 ? 'c'.repeat(40) : sha } };
@@ -26,12 +27,21 @@ function harness({ stale = false, failGemini = false, files = [file], reviews = 
     return new Response(JSON.stringify(value));
   };
   // Synthetic admission only; never used by the executable CLI.
-  const reservations = [];
+  const reservations = [], consumed = [], sequence = [], issued = new WeakMap();
+  let at = 0;
   const sharedBudget = { async reserveRequest(request) {
     reservations.push(request);
-    return {dispatch:true,id:request.id,requestDigest:request.requestDigest};
+    sequence.push('reserve');
+    const permit = Object.freeze({dispatch:true,id:request.id,requestDigest:request.requestDigest});
+    issued.set(permit, at + 20000);
+    return permit;
+  }, assertDispatch(permit) {
+    const expires = issued.get(permit);
+    issued.delete(permit);
+    if (expires === undefined || at >= expires) throw Error('INVALID_DISPATCH_PERMIT');
+    consumed.push(permit); sequence.push('consume'); return true;
   }};
-  return { calls, fetcher, sharedBudget, reservations };
+  return { calls, fetcher, sharedBudget, reservations, consumed, sequence, advanceTime: ms => { at += ms; } };
 }
 test('bounded source selection excludes fixtures; detects truncated diff, credentials and budgets', () => {
   assert.equal(selectDiff([file], 1).selected.length, 1);
@@ -120,8 +130,43 @@ test('denied, replayed or mismatched permits never execute paid calls', async ()
     const sharedBudget={async reserveRequest(r){
       if(mode==='denied')throw Error('MONTHLY_CAP_REACHED');
       return {dispatch:mode==='mismatched',id:r.id,requestDigest:'wrong'};
-    }};
+    },assertDispatch(){return true;}};
     await assert.rejects(runReview({event,env,...h,sharedBudget}),/PARTIAL_REVIEW/);
     assert.equal(h.calls.filter(c=>!c.url.includes('api.github.com')).length,0);
   }
+});
+
+test('a shared budget without synchronous dispatch authority makes zero HTTP calls', async () => {
+  const h=harness();
+  await assert.rejects(runReview({event,env,...h,sharedBudget:{reserveRequest:h.sharedBudget.reserveRequest}}),/SHARED_BUDGET_REQUIRED/);
+  assert.equal(h.calls.length,0);
+});
+
+test('all three providers consume their permit immediately before paid HTTP', async () => {
+  const h=harness();
+  await runReview({event,env,...h});
+  assert.deepEqual(h.sequence,Array.from({length:3},()=>['reserve','consume','fetch']).flat());
+  assert.equal(h.consumed.length,3);
+  assert.deepEqual(h.consumed.map(p=>p.id),h.reservations.map(r=>r.id));
+});
+
+for(const mode of ['expired','forged','reused'])test(`${mode} exact-shape permits cannot reach paid HTTP`,async()=>{
+  const h=harness();
+  const sharedBudget={assertDispatch:h.sharedBudget.assertDispatch,async reserveRequest(r){
+    const permit=await h.sharedBudget.reserveRequest(r);
+    if(mode==='expired')h.advanceTime(20001);
+    if(mode==='reused')h.sharedBudget.assertDispatch(permit);
+    return mode==='forged'?{...permit}:permit;
+  }};
+  await assert.rejects(runReview({event,env,...h,sharedBudget}),/PARTIAL_REVIEW/);
+  assert.equal(h.calls.filter(c=>!c.url.includes('api.github.com')).length,0);
+});
+
+for(const mode of ['false','undefined','promise'])test(`${mode} dispatch confirmation fails closed`,async()=>{
+  const h=harness();
+  const sharedBudget={reserveRequest:h.sharedBudget.reserveRequest,assertDispatch(){
+    return mode==='promise'?Promise.resolve(true):mode==='false'?false:undefined;
+  }};
+  await assert.rejects(runReview({event,env,...h,sharedBudget}),/PARTIAL_REVIEW/);
+  assert.equal(h.calls.filter(c=>!c.url.includes('api.github.com')).length,0);
 });
