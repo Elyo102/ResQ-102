@@ -1,0 +1,12 @@
+{
+  "version": "42H.45",
+  "server_version": "42H.44",
+  "telemetry_version": "42H.44",
+  "project": "station-102",
+  "services": ["functions", "firestore:rules", "hosting", "github-pages"],
+  "targets": ["mutateMyAttendanceDay", "mutateMyAttendanceMonth", "correctAttendanceDay", "correctAttendanceMonth"],
+  "batches": [["mutateMyAttendanceDay", "mutateMyAttendanceMonth"], ["correctAttendanceDay", "correctAttendanceMonth"]],
+  "bridge_source_sha": "a80d76bbb09da7ad14627b4c88e99091963f5aa5",
+  "rules_git_blob": "1198fd994b9d55650c9a77564e35c73120dcb5f8",
+  "creation_enabled": true
+}

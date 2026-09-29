@@ -1,6 +1,9 @@
 {
-  "version": "42H.44",
-  "date": "27.9.2026",
-  "asset_query": "42h44",
-  "sw_cache_key": "resq-v42h44-release1"
+  "version": "42H.45",
+  "date": "30.9.2026",
+  "asset_query": "42h45",
+  "sw_cache_key": "resq-v42h45-release1",
+  "scope": "hosting",
+  "server_version": "42H.44",
+  "telemetry_version": "42H.44"
 }

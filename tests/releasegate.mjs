@@ -37,6 +37,8 @@
  * ==================================================================== */
 
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { checkPolicy } from '../reserve-shift-policy-build.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
@@ -305,7 +307,7 @@ const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
 // Explicitly retain the retired-route protections for 43. Unknown future
 // releases must not inherit approval of either frozen target manifest.
-if (['42H.42', '42H.43', '42H.44'].includes(releaseVersion)) {
+if (['42H.42', '42H.43', '42H.44', '42H.45'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -409,6 +411,65 @@ if (['42H.42', '42H.43', '42H.44'].includes(releaseVersion)) {
       ['split schedule', x => { const id = x.batches[4].pop(); x.batches[5].unshift(id); }]
     ]) ok(`6.44 mutation rejects ${name}`, bad44(mutate));
     ok('6.44 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h44.json') !== null);
+  }
+  if (releaseVersion === '42H.45') {
+    const manifest45 = JSON.parse(read('docs/release-targets-42h45.json'));
+    const actualStamp = JSON.parse(read('release-manifest.json'));
+    const actualPolicy = JSON.parse(read('functions/reserve-shift-policy.json'));
+    const ruleBytes = Buffer.from(read('firestore.rules'), 'utf8');
+    const actualRulesBlob = createHash('sha1').update('blob ' + ruleBytes.length + '\0').update(ruleBytes).digest('hex');
+    const exact45 = ['mutateMyAttendanceDay', 'mutateMyAttendanceMonth', 'correctAttendanceDay', 'correctAttendanceMonth'];
+    const batches45 = [exact45.slice(0, 2), exact45.slice(2)];
+    const keys45 = ['version', 'server_version', 'telemetry_version', 'project', 'services', 'targets',
+      'batches', 'bridge_source_sha', 'rules_git_blob', 'creation_enabled'].sort();
+    const valid45 = (value, stamp = actualStamp, policy = actualPolicy, rulesBlob = actualRulesBlob) => !!value &&
+      JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys45) &&
+      value.project === 'station-102' && value.version === '42H.45' &&
+      value.server_version === '42H.44' && value.telemetry_version === '42H.44' &&
+      JSON.stringify(value.services) === JSON.stringify(['functions', 'firestore:rules', 'hosting', 'github-pages']) &&
+      JSON.stringify(value.targets) === JSON.stringify(exact45) &&
+      JSON.stringify(value.batches) === JSON.stringify(batches45) &&
+      value.bridge_source_sha === 'a80d76bbb09da7ad14627b4c88e99091963f5aa5' &&
+      value.rules_git_blob === '1198fd994b9d55650c9a77564e35c73120dcb5f8' && value.rules_git_blob === rulesBlob &&
+      value.creation_enabled === true && policy?.creationEnabled === true && Object.keys(policy).length === 1 &&
+      stamp?.scope === 'hosting' && stamp.version === value.version &&
+      stamp.server_version === value.server_version && stamp.telemetry_version === value.telemetry_version &&
+      stamp.asset_query === '42h45' && stamp.sw_cache_key === 'resq-v42h45-release1';
+    ok('6.45 exact four mutators, Rules bridge and Hosting/server identity separation', valid45(manifest45));
+    for (const [name, mutate] of [
+      ['omitted target', x => x.targets.pop()],
+      ['extra target', x => x.targets.push('sendCallout')],
+      ['duplicate target', x => x.targets[1] = x.targets[0]],
+      ['broad Functions target', x => x.targets = ['functions']],
+      ['oversized batch', x => x.batches = [x.targets]],
+      ['reordered batch', x => x.batches.reverse()],
+      ['project', x => x.project = 'other'],
+      ['unknown future version', x => x.version = '42H.46'],
+      ['false server identity', x => x.server_version = '42H.45'],
+      ['false telemetry identity', x => x.telemetry_version = '42H.45'],
+      ['broad Firestore', x => x.services[1] = 'firestore'],
+      ['Storage', x => x.services.push('storage')],
+      ['indexes', x => x.services.push('firestore:indexes')],
+      ['missing Rules', x => x.services.splice(1, 1)],
+      ['duplicate service', x => x.services.push('functions')],
+      ['wrong bridge', x => x.bridge_source_sha = '0'.repeat(40)],
+      ['wrong Rules', x => x.rules_git_blob = '0'.repeat(40)],
+      ['disabled policy', x => x.creation_enabled = false],
+      ['extra property', x => x.extra = true],
+      ['missing property', x => delete x.project]
+    ]) { const value = structuredClone(manifest45); mutate(value); ok(`6.45 mutation rejects ${name}`, !valid45(value)); }
+    for (const [name, change] of [
+      ['scope', { scope: undefined }], ['visible version', { version: '42H.44' }],
+      ['server version', { server_version: '42H.45' }], ['telemetry version', { telemetry_version: '42H.45' }],
+      ['old query', { asset_query: '42h44' }], ['old cache', { sw_cache_key: 'resq-v42h44-release1' }]
+    ]) ok(`6.45 actual stamp mutation rejects ${name}`, !valid45(manifest45, { ...actualStamp, ...change }));
+    for (const policy of [null, {}, { creationEnabled: false }, { creationEnabled: 'true' }, { creationEnabled: true, extra: true }]) {
+      ok('6.45 actual missing/malformed/disabled policy rejected', !valid45(manifest45, actualStamp, policy));
+    }
+    ok('6.45 actual Rules byte drift rejected', !valid45(manifest45, actualStamp, actualPolicy, '0'.repeat(40)));
+    checkPolicy();
+    ok('6.45 browser projection matches the single canonical policy', true);
+    ok('6.45 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h45.json') !== null);
   }
 } else {
 
@@ -735,6 +796,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
-if (['42H.42', '42H.43', '42H.44'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
+if (['42H.42', '42H.43', '42H.44', '42H.45'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');
