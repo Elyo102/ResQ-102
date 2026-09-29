@@ -1,0 +1,2 @@
+# This captured/assembled security artifact must retain exact provenance bytes.
+control-plane/firestore.rules -text

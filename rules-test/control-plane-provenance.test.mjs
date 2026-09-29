@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {assembleRules,CAPTURE_SHA256} from '../control-plane/assemble-rules.mjs';
+const hash=b=>createHash('sha256').update(b).digest('hex');
+const rules=readFileSync(new URL('../control-plane/firestore.rules',import.meta.url));
+const fragment=readFileSync(new URL('../control-plane/firestore-budget.rules.fragment',import.meta.url),'utf8');
+const meta=JSON.parse(readFileSync(new URL('../control-plane/firestore-rules-provenance.json',import.meta.url),'utf8'));
+const text=rules.toString('utf8');
+const oldList="['local_tests','git_change','pull_request_review','deployment_check']";
+const newList="['local_tests','git_change','pull_request_review','deployment_check','agent_review_cycle','planner_draft_recovery','swap_race_review','clean_checkout_gates']";
+const split=text.indexOf('// Budget-only fragment:'),suffixStart=text.indexOf('    match /{document=**}');
+assert.ok(split>0&&suffixStart>split);
+assert.equal(meta.sourceSha256,CAPTURE_SHA256);assert.equal(meta.assembledSha256,hash(rules));
+assert.equal(meta.fragmentSha256,hash(fragment.replace(/\r\n/g,'\n')));
+assert.equal(meta.project,'resq-agent-control-20260928');assert.equal(meta.service,'cloud.firestore');
+assert.equal(hash(text.slice(0,split).replace(newList,oldList)),meta.originalPrefixSha256);
+assert.equal(hash(text.slice(suffixStart)),meta.originalSuffixSha256);
+assert.equal(text.indexOf(newList),text.lastIndexOf(newList));assert.ok(text.includes(newList));
+assert.equal((text.match(/match \/resq_budget_state\/\{id\}/g)||[]).length,1);
+assert.equal((text.match(/match \/resq_budget_authorizations\/\{id\}/g)||[]).length,1);
+assert.doesNotMatch(text,/function budgetPublisher|function budgetMonthUpdate|match \/resq_budget_state\/policy\/operations/);
+assert.equal((text.match(/allow update: if budgetIdentity\(\) && budgetWindow\(\)/g)||[]).length,2);
+assert.throws(()=>assembleRules(Buffer.from('tampered capture'),fragment),/CAPTURE_HASH_MISMATCH/);
+console.log('PASS full Rules provenance, byte-preserved boundaries, closed replacement and tamper rejection');
+if(process.argv[2]){
+ const capture=readFileSync(process.argv[2]);
+ const a=assembleRules(capture,fragment),b=assembleRules(capture,fragment);
+ assert.deepEqual(a.result,b.result);assert.deepEqual(a.result,rules);assert.deepEqual(a.provenance,b.provenance);
+ const source=capture.toString('utf8');
+ assert.equal(text.slice(0,split).replace(newList,oldList),source.slice(0,source.indexOf('    // Budget credentials')));
+ assert.equal(text.slice(suffixStart),source.slice(source.indexOf('    match /{document=**}')));
+ const corrupted=Buffer.from(capture);corrupted[0]^=1;assert.throws(()=>assembleRules(corrupted,fragment),/CAPTURE_HASH_MISMATCH/);
+ console.log('PASS private capture direct-byte comparison and deterministic repeat assembly (no source output)');
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "project": "resq-agent-control-20260928",
+  "service": "cloud.firestore",
+  "releaseName": "projects/resq-agent-control-20260928/releases/cloud.firestore",
+  "rulesetName": "projects/resq-agent-control-20260928/rulesets/427c5744-bdfc-4da7-baaa-8f7277c64322",
+  "releaseUpdateTime": "2026-09-28T21:16:51.349144Z",
+  "captureTime": "2026-09-29T16:24:26.044Z",
+  "sourceSha256": "8c0eb6571dd04f2100c4e9988a32457a039b31bb23e77275298a435b3ce51454",
+  "fragmentSha256": "3a40a2db6dcf82bbd7ca4f65e37c70722c1003945eccced91018e1543d7f7680",
+  "fragmentHashEncoding": "utf8-lf",
+  "assembledSha256": "4fd4948354ba8b5583be6c38c6fc18ecc5b2f11c56cdb6635cb649dc2b69fd8b",
+  "originalPrefixSha256": "7cb157efcedca85c7dec5b0e5152acf11f4b5356957a9e2befa90ed62df782b4",
+  "originalSuffixSha256": "c698a22e97fe847213fbd44d1b164e39ace704ee12b8b1186b876a550e1e711d",
+  "changes": [
+    "Replace entire legacy budget block; no overlapping legacy allow remains",
+    "Retain currentPrincipal revocation and server month blackout",
+    "Add exactly four approved event task labels"
+  ],
+  "newEventTasks": [
+    "agent_review_cycle",
+    "planner_draft_recovery",
+    "swap_race_review",
+    "clean_checkout_gates"
+  ],
+  "status": "LOCAL_CANDIDATE_NOT_DEPLOYED"
+}

@@ -1,3 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function currentPrincipal(config) {
+      return request.auth != null && config.enabled == true
+        && config.revokedAfter is int && config.revokedAfter >= 0
+        && request.auth.token.auth_time is int
+        && request.auth.token.auth_time >= config.revokedAfter
+        && request.auth.token.auth_time <= request.time.toMillis() / 1000;
+    }
+    function owner() {
+      let config = get(/databases/$(database)/documents/private_access/owner).data;
+      return currentPrincipal(config) && config.uid is string
+        && request.auth.uid == config.uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'eldad50@gmail.com';
+    }
+    function publisher() {
+      let config = get(/databases/$(database)/documents/private_publishers/$(request.auth.uid)).data;
+      let ownerConfig = get(/databases/$(database)/documents/private_access/owner).data;
+      return currentPrincipal(config) && request.auth.uid != ownerConfig.uid
+        && config.agent in ['Codex','Claude','Grok','Gemini']
+        && request.auth.token.control_plane_agent == config.agent
+        && request.resource.data.agent == config.agent;
+    }
+    function validEvent(id) {
+      let e = request.resource.data;
+      return id.matches('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+        && e.keys().hasAll(['agent','kind','task','step','createdAt'])
+        && e.keys().hasOnly(['agent','kind','task','step','createdAt'])
+        && e.kind in ['heartbeat','task_started','test_passed','test_failed','commit_created','task_completed','task_failed']
+        && e.task in ['local_tests','git_change','pull_request_review','deployment_check','agent_review_cycle','planner_draft_recovery','swap_race_review','clean_checkout_gates']
+        && e.step in ['started','running','passed','failed','completed']
+        && e.createdAt == request.time;
+    }
+    match /events/{id} {
+      allow get: if owner();
+      allow list: if owner() && request.query.limit != null && request.query.limit > 0 && request.query.limit <= 50;
+      allow create: if request.auth != null && publisher() && validEvent(id);
+      allow update, delete: if false;
+    }
 // Budget-only fragment: requires captured currentPrincipal(). Never deploy standalone.
   function budgetIdentity() {
    let config = get(/databases/$(database)/documents/private_budget_publishers/$(request.auth.uid)).data;
@@ -99,3 +140,6 @@
    allow update: if budgetIdentity() && budgetWindow() && id == get(grantPath(aid())).data.monthId
     && linkedMonth(resource.data,request.resource.data,id);
   }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

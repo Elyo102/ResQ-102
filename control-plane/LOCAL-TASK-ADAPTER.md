@@ -35,14 +35,24 @@ Heartbeat and task_started mean dispatch attempted, not a provider response or
 continuous worker. Task consumers share closed local allowlists; no visual UI
 changes were made. Unknown budget outcomes cannot emit provider running/completion.
 
-The budget Rules file is a test-only fragment, wrapped only by the isolated
-emulator harness. It is NOT a complete/deployable control-plane ruleset. Capture
-the actual isolated project's full Rules read-only, or obtain an approved committed
-source; merge the fragment with owner/events authorization and review/test that
-whole ruleset before any deployment. No owner/events permissions were invented.
+The budget fragment is not deployable by itself. The full local candidate is
+control-plane/firestore.rules, deterministically assembled from the read-only
+capture identified in firestore-rules-provenance.json. assemble-rules.mjs requires
+the exact capture SHA256 and performs no network requests. Owner/events and final
+deny-all bytes are preserved except the explicitly approved four additional task
+labels. The legacy budget block is replaced completely, never overlapped. The
+dynamic publisher revocation check and server-side 120-second month-end blackout
+are preserved. Full Rules emulator coverage exercises these together, not just
+the isolated fragment. The boundary test substitutes only budgetWindow's clock;
+it does not claim the emulator's global request.time is controllable.
 
-Activation remains a separate OPEN gate: full Rules reconciliation, fresh
+Activation remains a separate OPEN gate: fresh deployed-Rules drift check, fresh
 operator-approved grants/pricing, scoped identities and emitter compatibility,
 full candidate validation and two reviews. This local package neither provisions
 nor migrates existing live ledgers. Legacy missing-grant/pricing schemas fail
 closed. No product, production, secrets, IAM or cloud state was changed.
+
+Rollback is not a blind re-deployment of old Rules: first disable paid execution
+and the budget publisher, preserve every monthly charge/grant/history document,
+then verify schema compatibility. Never reset counters, delete history or refund
+uncertain reservations. No rollback/cloud command is included in this package.
