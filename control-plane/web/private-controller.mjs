@@ -2,7 +2,8 @@
 // This UI identity check does NOT replace deployed Firestore authorization.
 const names = ['Codex','Grok','Claude','Gemini'];
 const kinds = ['heartbeat','task_started','test_passed','test_failed','commit_created','task_completed','task_failed'];
-const tasks = ['local_tests','git_change','pull_request_review','deployment_check'];
+export const TELEMETRY_TASKS = Object.freeze(['local_tests','git_change','pull_request_review','deployment_check','agent_review_cycle','planner_draft_recovery','swap_race_review','clean_checkout_gates']);
+const tasks = TELEMETRY_TASKS;
 const steps = ['started','running','passed','failed','completed'];
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 

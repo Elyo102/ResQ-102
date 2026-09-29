@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runLocalCycle as runCycle,runCycle as liveCycle,providerRequest as buildRequest,requestProvider} from './agent-cycle.mjs';
 import {ACTIVATION_STATE,TASKS,buildTask,parseTaskResult} from './task-contracts.mjs';
-const env={GITHUB_REPOSITORY:'Elyo102/ResQ-102',GITHUB_REF:'refs/heads/dev',GITHUB_SHA:'a'.repeat(40),TELEMETRY_APPROVED_SHA:'a'.repeat(40),GITHUB_EVENT_NAME:'push',TEST_RESULT:'success',ANTHROPIC_API_KEY:'synthetic',XAI_API_KEY:'synthetic',GEMINI_API_KEY:'synthetic'};
+const env={GITHUB_REPOSITORY:'Elyo102/ResQ-102',GITHUB_REF:'refs/heads/dev',GITHUB_SHA:'a'.repeat(40),TELEMETRY_APPROVED_SHA:'a'.repeat(40),TELEMETRY_AUTHORIZATION_ID:'synthetic-grant-001',TELEMETRY_BUDGET_PRINCIPAL:'resq-ci-budget-20260928',GITHUB_EVENT_NAME:'push',TEST_RESULT:'success',ANTHROPIC_API_KEY:'synthetic',XAI_API_KEY:'synthetic',GEMINI_API_KEY:'synthetic'};
 const tasks=Object.fromEntries(Object.entries(TASKS).map(([agent,t])=>[agent,buildTask(agent,{sha:env.GITHUB_SHA,excerpts:[{file:t.files[0][0],line_start:t.files[0][1],line_end:t.files[0][1],text:'// synthetic excerpt'}]})]));
 const providerRequest=(agent,e)=>buildRequest(agent,e,tasks[agent]);
 const answer=agent=>JSON.stringify({verdict:'approve',summary:'Static review only',findings:[],unverified:['No execution performed'],...(agent==='Gemini'?{executive_summary_he:'בדיקת קוד בלבד; לא הורצו בדיקות.'}:{})});
@@ -59,6 +59,18 @@ test('three simulated provider calls require consumed permits and truthful lifec
  const x=fixture(),result=await runCycle(x.args);assert.equal(result.status,'completed');assert.equal(x.calls.length,3);assert.equal(x.reservations.length,3);
  for(const agent of ['Codex','Claude','Grok','Gemini'])assert.equal(x.events.filter(e=>e.agent===agent&&e.kind==='task_completed').length,1);
  assert.equal(new Set(x.reservations.map(r=>r.id)).size,3);
+ for(const r of x.reservations){assert.equal(r.id,`${env.TELEMETRY_AUTHORIZATION_ID}_${r.provider}`);assert.equal(r.task,TASKS[r.provider].label);}
+});
+
+test('authorization is threaded intact into transport and budget before reservation',async()=>{
+ const x=fixture(),factory=x.args.budgetFactory,connect=x.args.connect;let transportArgs,budgetArgs;
+ x.args.connect=async args=>{if(args.budget)transportArgs=args;return connect(args);};
+ x.args.budgetFactory=args=>{budgetArgs=args;return factory(args);};
+ await runCycle(x.args);
+ for(const a of [transportArgs,budgetArgs]){assert.equal(a.authorizationId,env.TELEMETRY_AUTHORIZATION_ID);assert.equal(a.principal,env.TELEMETRY_BUDGET_PRINCIPAL);assert.equal(a.approvedSha,env.GITHUB_SHA);}
+ for(const patch of [{TELEMETRY_AUTHORIZATION_ID:''},{TELEMETRY_BUDGET_PRINCIPAL:'owner'}]){
+  const f=fixture();f.args.env={...env,...patch};await assert.rejects(runCycle(f.args),/INVALID_BUDGET_AUTHORIZATION/);assert.equal(f.calls.length,0);
+ }
 });
 
 test('12KB limit includes instruction text and provider JSON envelope before connection',async()=>{

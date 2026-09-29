@@ -22,7 +22,8 @@ const digest=value=>createHash('sha256').update(value).digest('hex');
 const builtTasks=new WeakSet();
 export const isBuiltTask=task=>builtTasks.has(task);
 function exact(value,names){
- if(!value||Object.getPrototypeOf(value)!==Object.prototype||Object.keys(value).length!==names.length||names.some(n=>!Object.hasOwn(value,n)))fail();
+ if(!value||Object.getPrototypeOf(value)!==Object.prototype||Reflect.ownKeys(value).length!==names.length||names.some(n=>!Object.hasOwn(value,n))
+  ||Object.values(Object.getOwnPropertyDescriptors(value)).some(d=>!Object.hasOwn(d,'value')))fail();
 }
 const sensitive=/-----BEGIN .*PRIVATE KEY|(?:sk-ant-|xai-|AIza)[A-Za-z0-9_-]{12,}|(?:password|api[_-]?key|secret|refresh[_-]?token|access[_-]?token)\s*[=:]\s*["'][^"']{8,}["']|\bBearer\s+\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 function safe(value,max,{source=false}={}){

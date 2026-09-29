@@ -1,6 +1,8 @@
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {boundedJson} from './ci-cloud.mjs';
+import {operationId} from './atomic-budget.mjs';
+import {isProvenancedTask} from './git-provenance.mjs';
 import {ACTIVATION_STATE,CYCLE_LIMITS,isBuiltTask,parseTaskResult} from './task-contracts.mjs';
 export const MODELS=Object.freeze({Claude:'claude-haiku-4-5-20251001',Grok:'grok-4.7',Gemini:'gemini-3.5-flash-lite'});
 const fail=code=>{throw Error(code);};
@@ -57,6 +59,12 @@ export function providerRequest(agent,env,task){
 // and integrated first. No cloud credential exchange, telemetry or paid fetch.
 export async function runCycle(){fail(ACTIVATION_STATE);}
 
+// Validated local integration entry; remains dependency-injected, never CLI-bound.
+export async function runVerifiedLocalCycle(args){
+ if(!args?.tasks||Object.keys(args.tasks).length!==3||['Claude','Grok','Gemini'].some(a=>!isProvenancedTask(args.tasks[a])))fail('SOURCE_PROVENANCE_REJECTED');
+ return runLocalCycle(args);
+}
+
 // Dependency-injected local contract harness. No live defaults, no CLI binding.
 // Its capabilities are simulated evidence, never an activation authorization.
 export async function runLocalCycle({env,tasks,connect,budgetFactory,fetcher,capabilities}){
@@ -69,11 +77,13 @@ export async function runLocalCycle({env,tasks,connect,budgetFactory,fetcher,cap
   ||!['push','workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)||env.TEST_RESULT!=='success')fail('UNAPPROVED_AGENT_CYCLE');
  // Check all required configuration before connecting or reserving any money.
  if(env.AGENT_SCOPE!==undefined)fail('INVALID_AGENT_SCOPE');
+ const authorizationId=env.TELEMETRY_AUTHORIZATION_ID,approvedSha=env.TELEMETRY_APPROVED_SHA,principal=env.TELEMETRY_BUDGET_PRINCIPAL;
+ if(!/^[A-Za-z0-9-]{8,64}$/.test(authorizationId||'')||principal!=='resq-ci-budget-20260928')fail('INVALID_BUDGET_AUTHORIZATION');
  const selected=['Claude','Grok','Gemini'];
  if(!tasks||Object.keys(tasks).length!==3||selected.some(a=>!isBuiltTask(tasks[a])||tasks[a].sha!==env.GITHUB_SHA))fail('INVALID_TASK_CONTRACT');
  const requests=Object.fromEntries(selected.map(agent=>[agent,providerRequest(agent,env,tasks[agent])]));
- const budgetTransport=await connect({refreshToken:env.FIREBASE_BUDGET_REFRESH_TOKEN,uid:'resq-ci-budget-20260928',budget:true,fetcher});
- const budget=budgetFactory({transport:budgetTransport});
+ const budgetTransport=await connect({refreshToken:env.FIREBASE_BUDGET_REFRESH_TOKEN,uid:principal,principal,authorizationId,approvedSha,budget:true,fetcher});
+ const budget=budgetFactory({transport:budgetTransport,authorizationId,approvedSha,principal});
  const agents={};
  for(const agent of ['Codex',...selected]){
   const refreshToken=agent==='Codex'?env.FIREBASE_TELEMETRY_REFRESH_TOKEN:env[`FIREBASE_${agent.toUpperCase()}_REFRESH_TOKEN`];
@@ -85,11 +95,11 @@ export async function runLocalCycle({env,tasks,connect,budgetFactory,fetcher,cap
  for(const agent of selected){
   let stage='telemetry';
   try{
-   const task=tasks[agent],r=requests[agent],id=hash(`bounded-review-v1:${env.GITHUB_SHA}:${agent}`),requestDigest=hash(r.body);
+   const task=tasks[agent],r=requests[agent],id=operationId(authorizationId,agent),requestDigest=hash(r.body);
    stage='budget';
    if(reservations>=CYCLE_LIMITS.reservations||reservedMicroUsd+CYCLE_LIMITS.providerMicroUsd>CYCLE_LIMITS.totalMicroUsd)fail('CYCLE_CAP');
    reservations++;reservedMicroUsd+=CYCLE_LIMITS.providerMicroUsd; // Unknown reservation is never refunded/retried.
-   const permit=await budget.reserveRequest({id,provider:agent,model:r.model,requestDigest,requestBody:r.body,maxOutputTokens:task.maxOutputTokens});
+   const permit=await budget.reserveRequest({id,provider:agent,task:task.label,model:r.model,requestDigest,requestBody:r.body,maxOutputTokens:task.maxOutputTokens});
    if(permit?.dispatch!==true||permit.id!==id||permit.requestDigest!==requestDigest)fail('BUDGET_DENIED');
    const consumed=budget.assertDispatch(permit);
    if(consumed!==true){

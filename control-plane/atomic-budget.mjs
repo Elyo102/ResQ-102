@@ -10,6 +10,10 @@ export const CAP_MICRO_USD = 20_000_000;
 const CHARGE = 250_000, MAX_BYTES = 60_000, MAX_OUTPUT = 2200;
 const TTL_MS = 20_000, BLACKOUT_MS = 120_000;
 const providers = ['Claude', 'Grok', 'Gemini'];
+export const TASK_BINDINGS=Object.freeze({Claude:'planner_draft_recovery',Grok:'swap_race_review',Gemini:'clean_checkout_gates'});
+export const PRINCIPAL='resq-ci-budget-20260928';
+const authorizationPattern=/^[A-Za-z0-9-]{8,64}$/;
+export function operationId(authorizationId,provider){if(!authorizationPattern.test(authorizationId||'')||!providers.includes(provider))throw Error('BUDGET_INVALID_REQUEST');return `${authorizationId}_${provider}`;}
 const hash = /^[a-f0-9]{64}$/;
 const plain = v => v && typeof v === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const fail = code => { throw new Error(code); };
@@ -44,7 +48,7 @@ function document(doc, path) {
 }
 function policy(doc) {
   const f = document(doc, POLICY_PATH);
-  keys(f, ['enabled', 'version', 'chargeMicroUsd', 'maxBytes', 'maxOutputTokens', 'models']);
+  keys(f, ['enabled', 'version', 'chargeMicroUsd', 'maxBytes', 'maxOutputTokens', 'models', 'pricing']);
   const enabled = value(f.enabled, 'booleanValue');
   if (typeof enabled !== 'boolean') fail('BUDGET_INVALID_DATA');
   if (!enabled) fail('BUDGET_DISABLED');
@@ -56,14 +60,22 @@ function policy(doc) {
     const model = string(map.fields[p]); if (!/^[A-Za-z0-9_.:-]{1,100}$/.test(model)) fail('BUDGET_INVALID_POLICY');
     return [p, model];
   }));
-  return { version, models };
+  const prices=value(f.pricing,'mapValue');keys(prices,['fields']);keys(prices.fields,providers);
+  const pricing=Object.fromEntries(providers.map(provider=>{
+    const entry=value(prices.fields[provider],'mapValue');keys(entry,['fields']);
+    const q=entry.fields;keys(q,['inputMicroUsdPerMillionTokens','outputMicroUsdPerMillionTokens','overheadTokens','fixedMicroUsd','expiresAt']);
+    const input=integer(q.inputMicroUsdPerMillionTokens),output=integer(q.outputMicroUsdPerMillionTokens),overhead=integer(q.overheadTokens),fixed=integer(q.fixedMicroUsd);
+    if(input>1e9||output>1e9||overhead!==1024||fixed>CHARGE)fail('BUDGET_INVALID_PRICING');
+    return [provider,{input,output,overhead,fixed,expiresAt:timestamp(value(q.expiresAt,'timestampValue'))}];
+  }));
+  return { version, models, pricing };
 }
 function pinRequest(input) {
-  keys(input, ['id', 'provider', 'model', 'requestDigest', 'requestBody', 'maxOutputTokens']);
+  keys(input, ['id', 'provider', 'model', 'requestDigest', 'requestBody', 'maxOutputTokens','task']);
   const d = Object.getOwnPropertyDescriptors(input);
   if (Object.values(d).some(x => !Object.hasOwn(x, 'value'))) fail('BUDGET_INVALID_REQUEST');
   const r = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.value]));
-  if (typeof r.id !== 'string' || typeof r.requestDigest !== 'string' || !hash.test(r.id) || !hash.test(r.requestDigest) || !providers.includes(r.provider)
+  if (typeof r.id !== 'string' || typeof r.requestDigest !== 'string' || !hash.test(r.requestDigest) || !providers.includes(r.provider)||r.task!==TASK_BINDINGS[r.provider]
       || typeof r.model !== 'string' || typeof r.requestBody !== 'string'
       || !Number.isSafeInteger(r.maxOutputTokens) || r.maxOutputTokens < 1 || r.maxOutputTokens > MAX_OUTPUT) fail('BUDGET_INVALID_REQUEST');
   const inputBytes = Buffer.byteLength(r.requestBody, 'utf8');
@@ -73,8 +85,29 @@ function pinRequest(input) {
 }
 const s = stringValue => ({ stringValue });
 const i = n => ({ integerValue: String(n) });
+const ts=n=>({timestampValue:new Date(n).toISOString()});
+const map=fields=>({mapValue:{fields}});
+function unpackMap(field){const v=value(field,'mapValue');if(plain(v)&&Reflect.ownKeys(v).length===0)return {};keys(v,['fields']);if(!plain(v.fields))fail('BUDGET_INVALID_DATA');return v.fields;}
+function grant(doc,path,{authorizationId,approvedSha,principal}){
+ const f=document(doc,path);keys(f,['authorizationId','principal','approvedSha','enabled','expiresAt','monthId','allowedTasks','capMicroUsd','maxReservations','chargedMicroUsd','reservationCount','reservedProviders','lastOperationId','operations']);
+ if(string(f.authorizationId)!==authorizationId||string(f.principal)!==principal||string(f.approvedSha)!==approvedSha||value(f.enabled,'booleanValue')!==true||integer(f.capMicroUsd)!==750000||integer(f.maxReservations)!==3)fail('BUDGET_GRANT_DENIED');
+ const tasks=unpackMap(f.allowedTasks);keys(tasks,providers);for(const p of providers)if(string(tasks[p])!==TASK_BINDINGS[p])fail('BUDGET_GRANT_DENIED');
+ const ops=unpackMap(f.operations),count=integer(f.reservationCount),charged=integer(f.chargedMicroUsd),a=value(f.reservedProviders,'arrayValue');
+ const empty=plain(a)&&Reflect.ownKeys(a).length===0;if(!empty)keys(a,['values']);
+ if(!empty&&!Array.isArray(a.values))fail('BUDGET_INVALID_DATA');const reserved=(empty?[]:a.values).map(string);
+ if(count>3||charged!==count*CHARGE||reserved.length!==count||new Set(reserved).size!==count||Object.keys(ops).length!==count||reserved.some(p=>!providers.includes(p)||!Object.hasOwn(ops,p)))fail('BUDGET_INVALID_GRANT');
+ for(const p of reserved){
+  const op=unpackMap(ops[p]);keys(op,['id','provider','model','policyVersion','requestDigest','task','chargedMicroUsd','inputBytes','maxOutputTokens','createdAt','expiresAt']);
+  if(string(op.id)!==`${authorizationId}_${p}`||string(op.provider)!==p||string(op.task)!==TASK_BINDINGS[p]||integer(op.chargedMicroUsd)!==CHARGE||!hash.test(string(op.requestDigest))||integer(op.inputBytes)<1||integer(op.inputBytes)>MAX_BYTES||integer(op.maxOutputTokens)<1||integer(op.maxOutputTokens)>MAX_OUTPUT||!string(op.model)||!string(op.policyVersion))fail('BUDGET_INVALID_GRANT');
+  const created=timestamp(value(op.createdAt,'timestampValue')),end=timestamp(value(op.expiresAt,'timestampValue'));
+  if(end<=created||end-created>TTL_MS)fail('BUDGET_INVALID_GRANT');
+ }
+ if(string(f.lastOperationId)!==(count?`${authorizationId}_${reserved.at(-1)}`:''))fail('BUDGET_INVALID_GRANT');
+ return {fields:f,ops,reserved,count,charged,monthId:string(f.monthId),expiresAt:timestamp(value(f.expiresAt,'timestampValue'))};
+}
 
-export function createAtomicBudget({ transport, monotonic = () => performance.now() } = {}) {
+export function createAtomicBudget({ transport, authorizationId,approvedSha,principal=PRINCIPAL,monotonic = () => performance.now() } = {}) {
+  if(!authorizationPattern.test(authorizationId||'')||!/^[a-f0-9]{40}$/.test(approvedSha||'')||principal!==PRINCIPAL)fail('BUDGET_AUTHORIZATION_REQUIRED');
   if (!transport || ['get', 'commit', 'serverNow'].some(k => typeof transport[k] !== 'function')
       || typeof monotonic !== 'function') fail('BUDGET_TRANSPORT_REQUIRED');
   const permits = new WeakMap();
@@ -96,20 +129,16 @@ export function createAtomicBudget({ transport, monotonic = () => performance.no
   return Object.freeze({
     async reserveRequest(input) {
       const r = pinRequest(input);
-      let pDoc, opDoc;
-      const opPath = `${POLICY_PATH}/operations/${r.id}`;
-      [pDoc, opDoc] = await Promise.all([get(POLICY_PATH), get(opPath)]);
+      if(r.id!==`${authorizationId}_${r.provider}`)fail('BUDGET_INVALID_REQUEST');
+      const grantPath=`resq_budget_authorizations/${authorizationId}`;
+      const [pDoc,gDoc]=await Promise.all([get(POLICY_PATH),get(grantPath)]);
       if (!pDoc) fail('BUDGET_POLICY_MISSING');
       const p = policy(pDoc);
       if (p.models[r.provider] !== r.model) fail('BUDGET_MODEL_DENIED');
-      if (opDoc !== null && opDoc !== undefined) {
-        const f = document(opDoc, opPath);
-        keys(f, ['provider', 'model', 'policyVersion', 'requestDigest', 'chargedMicroUsd', 'year', 'month', 'monthId', 'createdAt', 'expiresAt', 'inputBytes', 'maxOutputTokens']);
-        const yr = integer(f.year), mo = integer(f.month);
-        if (mo < 1 || mo > 12 || yr < 1970 || yr > 9999
-            || string(f.monthId) !== `month_${yr}-${String(mo).padStart(2, '0')}`
-            || integer(f.chargedMicroUsd) !== CHARGE
-            || timestamp(value(f.expiresAt, 'timestampValue')) <= timestamp(value(f.createdAt, 'timestampValue'))) fail('BUDGET_INVALID_DATA');
+      if(!gDoc)fail('BUDGET_GRANT_MISSING');
+      const g=grant(gDoc,grantPath,{authorizationId,approvedSha,principal});
+      if(Object.hasOwn(g.ops,r.provider)){
+        const f=unpackMap(g.ops[r.provider]);
         if (string(f.provider) !== r.provider || string(f.model) !== r.model || string(f.policyVersion) !== p.version
             || string(f.requestDigest) !== r.requestDigest || integer(f.inputBytes) !== r.inputBytes
             || integer(f.maxOutputTokens) !== r.maxOutputTokens) fail('BUDGET_RESERVATION_CONFLICT');
@@ -119,26 +148,30 @@ export function createAtomicBudget({ transport, monotonic = () => performance.no
       let server; try { server = instant(await transport.serverNow()); } catch { fail('BUDGET_SERVER_TIME_UNAVAILABLE'); }
       const sample = { started, server };
       const scope = monthAt(estimated(sample));
-      const expiresAt = server + TTL_MS;
+      const price=p.pricing[r.provider];
+      if(price.expiresAt<=estimated(sample)||price.fixed+Math.ceil(((r.inputBytes+price.overhead)*price.input+r.maxOutputTokens*price.output)/1e6)>CHARGE)fail('BUDGET_PRICE_DENIED');
+      if(g.monthId!==scope.monthId||g.expiresAt<=estimated(sample))fail('BUDGET_GRANT_EXPIRED');
+      if(g.count>=3||g.charged>750000-CHARGE)fail('BUDGET_GRANT_CAP');
+      const expiresAt = Math.min(server + TTL_MS,g.expiresAt,price.expiresAt);
       const monthPath = `resq_budget_state/${scope.monthId}`;
       const monthDoc = await get(monthPath);
       if (!monthDoc) fail('BUDGET_MONTH_MISSING');
       const f = document(monthDoc, monthPath);
-      keys(f, ['year', 'month', 'chargedMicroUsd', 'lastOperationId']);
+      keys(f, ['year', 'month', 'chargedMicroUsd', 'lastOperationId','lastAuthorizationId']);
       const charged = integer(f.chargedMicroUsd), last = string(f.lastOperationId);
       if (integer(f.year) !== scope.year || integer(f.month) !== scope.month
           || charged > CAP_MICRO_USD || charged % CHARGE !== 0
-          || (charged === 0 ? last !== '' : !hash.test(last))) fail('BUDGET_INVALID_DATA');
+          || (charged === 0 ? last !== ''||string(f.lastAuthorizationId)!=='' : !authorizationPattern.test(string(f.lastAuthorizationId))||!providers.some(p=>last===`${string(f.lastAuthorizationId)}_${p}`))) fail('BUDGET_INVALID_DATA');
       if (charged > CAP_MICRO_USD - CHARGE) fail('BUDGET_CAP_REACHED');
       live(sample, expiresAt, scope.monthId);
-      const fields = { provider: s(r.provider), model: s(r.model), policyVersion: s(p.version), requestDigest: s(r.requestDigest),
-        chargedMicroUsd: i(CHARGE), year: i(scope.year), month: i(scope.month), monthId: s(scope.monthId),
-        expiresAt: { timestampValue: new Date(expiresAt).toISOString() }, inputBytes: i(r.inputBytes), maxOutputTokens: i(r.maxOutputTokens) };
+      const fields = { id:s(r.id),provider: s(r.provider), model: s(r.model), policyVersion: s(p.version), requestDigest: s(r.requestDigest),task:s(r.task),
+        chargedMicroUsd: i(CHARGE), expiresAt:ts(expiresAt), inputBytes: i(r.inputBytes), maxOutputTokens: i(r.maxOutputTokens) };
       const writes = [
-        { update: { name: BUDGET_ROOT + monthPath, fields: { chargedMicroUsd: i(charged + CHARGE), lastOperationId: s(r.id) } },
-          updateMask: { fieldPaths: ['chargedMicroUsd', 'lastOperationId'] }, currentDocument: { updateTime: monthDoc.updateTime } },
-        { update: { name: BUDGET_ROOT + opPath, fields }, currentDocument: { exists: false },
-          updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }] }
+        { update: { name: BUDGET_ROOT + monthPath, fields: { chargedMicroUsd: i(charged + CHARGE), lastOperationId: s(r.id),lastAuthorizationId:s(authorizationId) } },
+          updateMask: { fieldPaths: ['chargedMicroUsd', 'lastOperationId','lastAuthorizationId'] }, currentDocument: { updateTime: monthDoc.updateTime } },
+        { update: { name: BUDGET_ROOT + grantPath, fields:{chargedMicroUsd:i(g.charged+CHARGE),reservationCount:i(g.count+1),reservedProviders:{arrayValue:{values:[...g.reserved,r.provider].map(s)}},lastOperationId:s(r.id),operations:map({[r.provider]:map(fields)})} },
+          updateMask:{fieldPaths:['chargedMicroUsd','reservationCount','reservedProviders','lastOperationId',`operations.${r.provider}`]},currentDocument:{updateTime:gDoc.updateTime},
+          updateTransforms: [{ fieldPath: `operations.${r.provider}.createdAt`, setToServerValue: 'REQUEST_TIME' }] }
       ];
       let committed;
       try { committed = await transport.commit(writes); } catch { fail('BUDGET_COMMIT_UNKNOWN'); }
