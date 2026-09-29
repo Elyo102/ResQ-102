@@ -1,0 +1,119 @@
+name: Isolated telemetry verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/telemetry.yml'
+      - '.github/scripts/telemetry-ci*'
+      - 'control-plane/atomic-budget*'
+      - 'control-plane/ci-cloud*'
+      - 'control-plane/agent-cycle*'
+      - 'control-plane/provider-diagnostics*'
+      - 'control-plane/night-planner*'
+      - 'control-plane/test-evidence*'
+      - '.github/ci-toolchain.json'
+
+permissions: {}
+concurrency:
+  group: isolated-telemetry-dev
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    if: github.repository == 'Elyo102/ResQ-102' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            tests/package-lock.json
+            rules-test/package-lock.json
+            functions/package-lock.json
+            .github/ci-toolchain.json
+      - run: node --test .github/scripts/telemetry-ci.test.mjs
+      - run: node --test control-plane/atomic-budget.test.mjs control-plane/ci-cloud.test.mjs control-plane/agent-cycle.test.mjs control-plane/provider-diagnostics.test.mjs
+      - run: node --test control-plane/night-planner.test.mjs control-plane/test-evidence.test.mjs
+      - run: npm --prefix tests ci --no-audit --no-fund
+      - run: npm --prefix rules-test ci --no-audit --no-fund
+      - run: npm --prefix functions ci --no-audit --no-fund
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install -g firebase-tools@15.28.1 --no-audit --no-fund
+      - working-directory: tests
+        run: npx playwright install --with-deps chromium
+      - working-directory: tests
+        env:
+          GCLOUD_PROJECT: demo-resq
+        run: firebase emulators:exec --config ../firebase.attendance-test.json --only firestore --project demo-resq "npm run test:all"
+
+  receipt:
+    needs: tests
+    if: always() && github.repository == 'Elyo102/ResQ-102' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # MUST be provisioned with required reviewer + dev-only deployment policy
+    # before adding a dedicated CI publisher credential. No repository secret.
+    environment: resq-telemetry
+    permissions:
+      contents: read
+    steps:
+      - name: Require exact reviewed commit
+        env:
+          APPROVED: ${{ vars.TELEMETRY_APPROVED_SHA }}
+        run: test "$APPROVED" = "$GITHUB_SHA"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Publish actual CI test outcome only
+        env:
+          FIREBASE_TELEMETRY_REFRESH_TOKEN: ${{ secrets.FIREBASE_TELEMETRY_REFRESH_TOKEN }}
+          FIREBASE_TELEMETRY_UID: ${{ vars.FIREBASE_TELEMETRY_UID }}
+          TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: node .github/scripts/telemetry-ci.mjs
+
+  agents:
+    needs: tests
+    if: needs.tests.result == 'success' && github.repository == 'Elyo102/ResQ-102' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: resq-telemetry
+    permissions:
+      contents: read
+    steps:
+      - name: Require exact reviewed commit
+        env:
+          APPROVED: ${{ vars.TELEMETRY_APPROVED_SHA }}
+        run: test "$APPROVED" = "$GITHUB_SHA"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: One budgeted Gemini model migration verification
+        env:
+          AGENT_SCOPE: gemini-model-migration
+          TELEMETRY_APPROVED_SHA: ${{ vars.TELEMETRY_APPROVED_SHA }}
+          TEST_RESULT: ${{ needs.tests.result }}
+          FIREBASE_BUDGET_REFRESH_TOKEN: ${{ secrets.FIREBASE_BUDGET_REFRESH_TOKEN }}
+          FIREBASE_TELEMETRY_REFRESH_TOKEN: ${{ secrets.FIREBASE_TELEMETRY_REFRESH_TOKEN }}
+          FIREBASE_GEMINI_REFRESH_TOKEN: ${{ secrets.FIREBASE_GEMINI_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node control-plane/agent-cycle.mjs

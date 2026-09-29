@@ -172,7 +172,7 @@ ok('scans.ran_at נכתב באמת',     /ran_at: FV\.serverTimestamp\(\)/.test(
 // שנשאר עם ME ייראה תקין ב-100% מהמקרים כשאתה מסתכל על עצמך,
 // ויכתוב לרשומה של האדם הלא נכון בפעם הראשונה שרכזת פותחת
 // מישהו אחר. אין שגיאה, אין הודעה — פשוט שעות אצל מי שלא עבד.
-const att = fs.readFileSync(__j(__APP, 'attendance.html'), 'utf8');
+const att = fs.readFileSync(__j(__APP, 'attendance.html'), 'utf8').replace(/\r\n/g, '\n');
 
 console.log('מסך תיקון השעות');
 

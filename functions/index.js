@@ -4067,6 +4067,9 @@ exports.runReportNow = onCall(
 // שליחת הדוח במייל. הדוח החדש נשמר ומוצג במערכת בלבד,
 // כי אין במסלול הזה ספק דואר מאומת.
 const hrMonthly = hrMonthlyModule.createHrMonthlySummary({ db, HttpsError });
+const hrMonthlyScheduled = hrMonthlyModule.createHrMonthlySummary({ db, HttpsError, trustedScheduler: true });
+const hrMonthlyReads = require('./hr-monthly-read-access').createHrMonthlyReadAccess({
+  db, auth: admin.auth(), HttpsError });
 const hrMonthlyIdentity = opsMemberIdentityModule.createOpsMemberIdentity({ db, HttpsError });
 const HR_MONTHLY_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
   timeoutSeconds: 120, memory: '256MiB', maxInstances: 3, concurrency: 1 });
@@ -4099,26 +4102,30 @@ function hrMonthlyFields(req, keys) {
 }
 
 exports.getHrMonthlySummary = onCall(HR_MONTHLY_OPTIONS, async (req) => {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   const data = hrMonthlyFields(req, ['month', 'cursor']);
-  return hrMonthly.read({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
-    ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }) });
+  const month = hrMonthlyMonth(data.month);
+  const cursor = data.cursor === undefined ? undefined : String(data.cursor).slice(0, 200);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.read({ station_id: ctx.sid, month,
+    ...(cursor === undefined ? {} : { cursor }) }));
 });
 
 // שלושת המצבים של חריגת השעות. „אין דוח" אינו „אין חורגים".
 exports.getHrMonthlyOverHours = onCall(HR_MONTHLY_OPTIONS, async (req) => {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   const data = hrMonthlyFields(req, ['month']);
-  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(data.month) });
+  const month = hrMonthlyMonth(data.month);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.overHours({ station_id: ctx.sid, month }));
 });
 
 // Old app builds call this name with no body. Preserve that transport contract,
 // but return the same three-state truth as the current HR screen. In particular,
 // a missing monthly build is `not_built`, never a misleading empty alert.
 async function getHrOverHoursCompatibility(req) {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   hrMonthlyFields(req, []);
-  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(undefined) });
+  const month = hrMonthlyMonth(undefined);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.overHours({ station_id: ctx.sid, month }));
 }
 
 // הרצה ידנית מורשת, לתחנה של הקורא בלבד, לצורכי בדיקה
@@ -4129,8 +4136,14 @@ exports.buildHrMonthlySummaryNow = onCall({ ...HR_MONTHLY_OPTIONS, timeoutSecond
     const ctx = hrMonthlyContext(req);
     const data = hrMonthlyFields(req, ['month', 'intent_id']);
     const intent = data.intent_id === undefined ? undefined : String(data.intent_id).slice(0, 120);
-    return hrMonthly.build({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
+    const month = hrMonthlyMonth(data.month);
+    const session = hrMonthlyReads.capture(req);
+    await session.check();
+    const authorized = hrMonthlyModule.createHrMonthlySummary({ db, HttpsError, authorize: session.inTransaction });
+    const result = await authorized.build({ station_id: ctx.sid, month,
       intent_id: intent, budget_ms: 420000 });
+    await session.check();
+    return result;
   });
 
 /* רשימת התחנות להרצה המתוזמנת. חסומה ב-250, וכוללת את
@@ -4151,7 +4164,7 @@ async function runHrMonthlySummaries(month, budgetMs) {
   for (const stationId of stations) {
     if (Date.now() >= deadline) { summary.skipped += 1; continue; }
     try {
-      const out = await hrMonthly.build({ station_id: stationId, month, intent_id: month,
+      const out = await hrMonthlyScheduled.build({ station_id: stationId, month, intent_id: month,
         budget_ms: Math.max(20000, deadline - Date.now()) });
       if (out.complete) summary.built += 1; else summary.incomplete += 1;
     } catch (error) {
@@ -4201,15 +4214,21 @@ exports.backfillHrRequestMonths = onCall({ ...HR_MONTHLY_OPTIONS, timeoutSeconds
   if (Object.prototype.hasOwnProperty.call(data, 'dry_run') && typeof data.dry_run !== 'boolean') {
     throw new HttpsError('invalid-argument', 'ריצת יובש היא בוליאני.');
   }
-  return hrMonthsBackfill.run({ station_id: ctx.sid, actor_uid: ctx.uid,
+  const input = { station_id: ctx.sid, actor_uid: ctx.uid,
     dry_run: data.dry_run === false ? false : true,
     ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }),
-    ...(data.limit === undefined ? {} : { limit: Number(data.limit) }) });
+    ...(data.limit === undefined ? {} : { limit: Number(data.limit) }) };
+  const session = hrMonthlyReads.capture(req, { superOnly: true });
+  await session.check();
+  const authorized = hrMonthsBackfillModule.createHrMonthsBackfill({ db, HttpsError, authorize: session.inTransaction });
+  const result = await authorized.run(input);
+  await session.check();
+  return result;
 });
 exports.getHrRequestMonthsBackfillStatus = onCall(HR_MONTHLY_OPTIONS, async (req) => {
-  const ctx = hrBackfillSuper(req);
+  hrBackfillSuper(req);
   hrMonthlyFields(req, []);
-  return hrMonthsBackfill.status({ station_id: ctx.sid });
+  return hrMonthlyReads.run(req, ctx => hrMonthsBackfill.status({ station_id: ctx.sid }));
 });
 
 

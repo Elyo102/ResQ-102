@@ -49,7 +49,7 @@ async function rejects(promise, code) {
 function world(sid = SID) {
   const db = fakeDb();
   let clock = Date.parse('2026-10-01T03:00:00Z');
-  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, clock: () => (clock += 1000) });
+  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, trustedScheduler: true, clock: () => (clock += 1000) });
   return { db, summary, sid };
 }
 /** עובד עם רשומת תחנה, ואופציונלית דוח שעות. */
@@ -282,7 +282,7 @@ async function main() {
   await test('an exhausted budget leaves the month unpublished rather than half published', async () => {
     const db = fakeDb();
     let clock = Date.parse('2026-10-01T03:00:00Z');
-    const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, clock: () => (clock += 60000) });
+    const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, trustedScheduler: true, clock: () => (clock += 60000) });
     const w = { db, summary, sid: SID };
     employee(w, 'u1', { hours: 180 });
     const out = await summary.build({ station_id: SID, month: MONTH, budget_ms: 1000 });
@@ -351,7 +351,11 @@ async function main() {
     await w.summary.build({ station_id: SID, month: MONTH, intent_id: 'a' });
     assert.equal((await w.summary.read({ station_id: SID, month: MONTH })).coverage, 'legacy_pending');
     w.db._put('stations/' + SID + '/hr_request_counters/hr-months-backfill-v1',
-      { schema: 'hr-months-backfill-v1', completed_at_ms: 1789000000000, scanned: 12, classified: 3 });
+      { schema: 'hr-months-backfill-v1', station_id: SID, completed_at_ms: 1789000000000,
+        scan_id: '11111111-1111-4111-8111-111111111111', page_token: '22222222-2222-4222-8222-222222222222',
+        scan_revision: 2, scan_phase: 'complete', next_cursor: null,
+        totals: { scanned: 12, classified: 3, already: 9, untouched: 0, deleted: 0,
+          malformed: 0, unclassifiable: 0, conflicting: 0 } });
     await w.summary.build({ station_id: SID, month: MONTH, intent_id: 'b' });
     assert.equal((await w.summary.read({ station_id: SID, month: MONTH })).coverage, 'complete');
   });
@@ -363,14 +367,20 @@ async function main() {
   await test('a finished scan that left leftovers is not complete coverage', async () => {
     const w = world(); employee(w, 'u1', { hours: 180 });
     w.db._put('stations/' + SID + '/hr_request_counters/hr-months-backfill-v1',
-      { schema: 'hr-months-backfill-v1', completed_at_ms: 1789000000000,
-        totals: { scanned: 40, classified: 38, unclassifiable: 2, conflicting: 0 } });
+      { schema: 'hr-months-backfill-v1', station_id: SID, completed_at_ms: 1789000000000,
+        scan_id: '11111111-1111-4111-8111-111111111111', page_token: '22222222-2222-4222-8222-222222222222',
+        scan_revision: 2, scan_phase: 'complete', next_cursor: null,
+        totals: { scanned: 40, classified: 38, unclassifiable: 2, conflicting: 0,
+          already: 0, untouched: 0, deleted: 0, malformed: 0 } });
     await w.summary.build({ station_id: SID, month: MONTH, intent_id: 'leftovers' });
     assert.equal((await w.summary.read({ station_id: SID, month: MONTH })).coverage, 'legacy_pending');
     // וגם סתירה אחת מספיקה.
     w.db._put('stations/' + SID + '/hr_request_counters/hr-months-backfill-v1',
-      { schema: 'hr-months-backfill-v1', completed_at_ms: 1789000000000,
-        totals: { scanned: 40, classified: 39, unclassifiable: 0, conflicting: 1 } });
+      { schema: 'hr-months-backfill-v1', station_id: SID, completed_at_ms: 1789000000000,
+        scan_id: '11111111-1111-4111-8111-111111111111', page_token: '22222222-2222-4222-8222-222222222222',
+        scan_revision: 2, scan_phase: 'complete', next_cursor: null,
+        totals: { scanned: 40, classified: 39, unclassifiable: 0, conflicting: 1,
+          already: 0, untouched: 0, deleted: 0, malformed: 0 } });
     await w.summary.build({ station_id: SID, month: MONTH, intent_id: 'conflicting' });
     assert.equal((await w.summary.read({ station_id: SID, month: MONTH })).coverage, 'legacy_pending');
   });

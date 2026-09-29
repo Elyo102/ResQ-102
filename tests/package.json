@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:rules": "node run-local-rules.mjs",
+    "test:all": "npm run test:rules && npm run test:e2e",
+    "test:e2e": "playwright test --config playwright.config.mjs",
+    "test:e2e:ui": "playwright test --config playwright.config.mjs --ui",
     "onboarding:wiring": "node onboarding-index-source.mjs && npm run onboarding:contracts && npm run onboarding:capabilities && npm run onboarding:ui && npm run mail:guard && npm run provider:wiring",
     "onboarding:contracts": "node ../functions/identity-coordinator-onboarding.test.js && node ../functions/invitation-onboarding-contract.test.js && node ../functions/invitation-onboarding-engine.test.js && node ../functions/invitation-onboarding-service.test.js && node ../functions/onboarding-approval-authority.test.js && node ../functions/onboarding-phase-authority.test.js && node ../functions/onboarding-station-gates.test.js && node ../functions/station-first-admin-invitation-service.test.js && node ../functions/station-provision-contract.test.js && node ../functions/station-provision-service.test.js",
     "provider:wiring": "node ../functions/push-fence-source-probe.test.js && node ../functions/callout-policy-replay-probe.test.js && node ../functions/station-delivery-fence.test.js && node provider-outbox-suppression.test.mjs && node provider-wiring-receipt.mjs",

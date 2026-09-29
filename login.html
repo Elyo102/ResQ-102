@@ -77,6 +77,8 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   .login-credit{margin:18px 0 0;text-align:center;color:var(--muted);font-size:12px;font-weight:400;line-height:1.5}
   .role-view-control{margin:0 0 16px;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}
   .role-view-control label{margin:0 0 7px;color:var(--txt);font-weight:800}
+  /* Keep >=44px even at the card entrance scale(.97), across native select styles. */
+  #roleViewSelect{min-height:46px;min-block-size:46px}
   .role-view-control p{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
   .role-view-banner{margin:0 0 14px;padding:10px 13px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--txt);font-size:13px;font-weight:800}
   .profile{text-align:center;line-height:2}

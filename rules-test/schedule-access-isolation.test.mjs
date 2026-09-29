@@ -36,7 +36,7 @@ const [emulatorHost, emulatorPortText] = emulatorEndpoint.split(':');
 const emulatorPort = Number(emulatorPortText);
 if (!Number.isInteger(emulatorPort) || emulatorPort < 1 || emulatorPort > 65535) throw new Error('invalid emulator port');
 const env = await initializeTestEnvironment({
-  projectId: 'resq-schedule-access-isolation',
+  projectId: 'demo-resq',
   firestore: {
     rules: readFileSync('../firestore.rules', 'utf8'),
     host: emulatorHost,

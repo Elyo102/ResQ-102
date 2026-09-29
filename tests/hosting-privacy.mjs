@@ -93,6 +93,22 @@ function hostingIgnores(relative) {
  * שאיש לא חשב עליה נחשבת פרטית עד שמישהו מאשר אותה במפורש. */
 const PUBLIC_EXTENSION = /\.(?:html|js|css|json|png|jpe?g|ico|svg|webp|mp3)$/i;
 
+check(fs.existsSync(path.join(root, 'control-plane/agent-cycle.mjs')),
+      'the control-plane runner exists so its 404 is meaningful');
+check(fs.existsSync(path.join(root, 'docs/MULTI-AGENT-CI.md')),
+      'the internal CI document exists so its 404 is meaningful');
+for (const name of ['docs/MULTI-AGENT-CI.md', 'docs/nested/future.md', 'README.md']) {
+  check(hostingIgnores(name), 'internal Markdown remains private: ' + name);
+}
+check(!hostingIgnores('docs/public-guide.html'), 'non-Markdown public documentation is preserved');
+for (const name of ['control-plane/agent-cycle.mjs', 'control-plane/future.json',
+                    'control-plane/nested/future.js', 'control-plane/web/index.html']) {
+  check(hostingIgnores(name), 'control-plane remains private: ' + name);
+}
+for (const name of ['status/index.html', 'status/firebase-adapter.js', 'public/status/index.html']) {
+  check(!hostingIgnores(name), 'separate public status assets are not excluded: ' + name);
+}
+
 check(hostingIgnore.includes('*.py'), 'Firebase Hosting excludes root Python sources (*.py)');
 check(hostingIgnore.includes('**/*.py'), 'Firebase Hosting excludes nested Python sources (**/*.py)');
 
@@ -143,7 +159,7 @@ const server = http.createServer((req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   for (const name of ['roster-import.js', 'firebase.attendance-test.json', 'firebase.emulator.42h11.json',
-                      'apply-wiring.py']) {
+                      'apply-wiring.py', 'control-plane/agent-cycle.mjs', 'docs/MULTI-AGENT-CI.md']) {
     const response = await fetch('http://127.0.0.1:' + server.address().port + '/' + name);
     check(response.status === 404, 'a local hosting probe returns 404 for ' + name);
   }

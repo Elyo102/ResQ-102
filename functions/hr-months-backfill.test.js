@@ -44,8 +44,8 @@ async function rejects(promise, code) {
 function world(sid = SID) {
   const db = fakeDb();
   let clock = Date.parse('2026-10-05T06:00:00Z');
-  const tool = createHrMonthsBackfill({ db, HttpsError: FakeHttpsError, clock: () => (clock += 1000) });
-  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, clock: () => (clock += 1000) });
+  const tool = createHrMonthsBackfill({ db, HttpsError: FakeHttpsError, trustedMaintenance: true, clock: () => (clock += 1000) });
+  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, trustedScheduler: true, clock: () => (clock += 1000) });
   return { db, tool, summary, sid };
 }
 /** דיווח כפי שהוא נראה לפני שהשדה קיים: בלי months. */
@@ -295,6 +295,96 @@ async function main() {
     assert.equal(b.db._get('stations/' + SID + '/hr_request_counters/hr-months-backfill-v1'), undefined);
     assert.equal(Object.hasOwn(doc(b, 'b1'), 'months'), false);
     assert.equal((await b.tool.status({ station_id: OTHER })).state, 'never_run');
+  });
+
+  await test('fresh changed range is derived inside row transaction, not skipped', async () => {
+    const w = world(); legacy(w, 'a1'); const original = w.db.runTransaction.bind(w.db); let changed = false;
+    w.db.runTransaction = async fn => {
+      if (!changed && receipt(w)?.scan_phase === 'processing') { changed = true; legacy(w, 'a1', { to_date: '2026-10-02' }); }
+      return original(fn);
+    };
+    const out = await w.tool.run({ station_id: SID, actor_uid: ACTOR, dry_run: false });
+    assert.equal(out.classified, 1); assert.deepEqual(doc(w, 'a1').months, ['2026-08', '2026-09', '2026-10']);
+  });
+  await test('fresh invalid, malformed, general and deleted rows are honestly tallied', async () => {
+    for (const [patch, expected] of [[{ to_date: 'invalid' }, 'unclassifiable'], [{ schema: 'bad' }, 'malformed'], [{ kind: 'unknown' }, 'malformed'], [{ kind: 'general' }, 'untouched'], [null, 'deleted']]) {
+      const w = world(); const path = legacy(w, 'a1'); const original = w.db.runTransaction.bind(w.db); let changed = false;
+      w.db.runTransaction = async fn => {
+        if (!changed && receipt(w)?.scan_phase === 'processing') { changed = true; if (patch) legacy(w, 'a1', patch); else w.db._store.delete(path); }
+        return original(fn);
+      };
+      const out = await w.tool.run({ station_id: SID, actor_uid: ACTOR, dry_run: false });
+      assert.equal(out[expected], 1); assert.equal(out.classified, 0);
+      if (['unclassifiable', 'malformed'].includes(expected)) assert.equal(receipt(w).completed_at_ms, undefined);
+    }
+  });
+  await test('crash invalidates prior completion immediately; explicit restart recovers without lease', async () => {
+    const w = world(); legacy(w, 'a1'); const input = { station_id: SID, actor_uid: ACTOR, dry_run: false };
+    await w.tool.run(input); assert.ok(receipt(w).completed_at_ms);
+    const original = w.db.runTransaction.bind(w.db); let crashed = false;
+    w.db.runTransaction = fn => { if (!crashed && receipt(w)?.scan_phase === 'processing') { crashed = true; throw Error('CRASH'); } return original(fn); };
+    await assert.rejects(w.tool.run(input), /CRASH/); assert.equal(receipt(w).completed_at_ms, undefined); assert.equal(receipt(w).scan_phase, 'processing');
+    w.db.runTransaction = original; await w.tool.run(input); assert.ok(receipt(w).completed_at_ms); assert.equal(receipt(w).totals.already, 1);
+  });
+  await test('continuations require matching completed page and cannot repeat totals', async () => {
+    const w = world(); legacy(w, 'a1'); legacy(w, 'a2'); legacy(w, 'a3');
+    const input = { station_id: SID, actor_uid: ACTOR, dry_run: false, limit: 1 };
+    await rejects(w.tool.run({ ...input, cursor: 'invented' }), 'failed-precondition');
+    const a = await w.tool.run(input); await w.tool.run({ ...input, cursor: a.next_cursor });
+    const before = JSON.stringify(receipt(w)); await rejects(w.tool.run({ ...input, cursor: a.next_cursor }), 'failed-precondition');
+    assert.equal(JSON.stringify(receipt(w)), before); assert.equal(receipt(w).totals.scanned, 2);
+  });
+  await test('simultaneous starts and continuations cannot both finalize the same baseline', async () => {
+    const w = world(); legacy(w, 'a1'); legacy(w, 'a2'); legacy(w, 'a3');
+    const input = { station_id: SID, actor_uid: ACTOR, dry_run: false, limit: 1 };
+    let outcomes = await Promise.allSettled([w.tool.run(input), w.tool.run(input)]);
+    assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
+    const cursor = receipt(w).next_cursor;
+    outcomes = await Promise.allSettled([w.tool.run({ ...input, cursor }), w.tool.run({ ...input, cursor })]);
+    assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1); assert.equal(receipt(w).totals.scanned, 2);
+  });
+  await test('new explicit restart fences old worker before source write or final receipt', async () => {
+    const w = world(); legacy(w, 'a1'); const original = w.db.runTransaction.bind(w.db); let nested = false;
+    const input = { station_id: SID, actor_uid: ACTOR, dry_run: false };
+    w.db.runTransaction = async fn => {
+      if (!nested && receipt(w)?.scan_phase === 'processing') { nested = true; await w.tool.run(input); }
+      return original(fn);
+    };
+    await rejects(w.tool.run(input), 'aborted'); assert.equal(receipt(w).totals.scanned, 1); assert.equal(receipt(w).totals.classified, 1);
+  });
+  await test('dry-run interleaving preserves active scan token, totals and prior completion', async () => {
+    const w = world(); legacy(w, 'a1'); const original = w.db.runTransaction.bind(w.db); let nested = false;
+    const input = { station_id: SID, actor_uid: ACTOR, dry_run: false };
+    w.db.runTransaction = async fn => {
+      if (!nested && receipt(w)?.scan_phase === 'processing') {
+        nested = true; const before = receipt(w); await w.tool.run({ ...input, dry_run: true });
+        assert.equal(receipt(w).page_token, before.page_token); assert.deepEqual(receipt(w).totals, before.totals);
+      }
+      return original(fn);
+    };
+    await w.tool.run(input); const completed = receipt(w).completed_at_ms;
+    await w.tool.run({ ...input, dry_run: true }); assert.equal(receipt(w).completed_at_ms, completed); assert.equal(receipt(w).totals.scanned, 1);
+  });
+  await test('new malformed scan removes old completion rather than preserving stale coverage', async () => {
+    const w = world(); legacy(w, 'a1'); const input = { station_id: SID, actor_uid: ACTOR, dry_run: false };
+    await w.tool.run(input); legacy(w, 'bad', { schema: 'invalid' }); await w.tool.run(input);
+    assert.equal(receipt(w).completed_at_ms, undefined); assert.equal((await w.tool.status({ station_id: SID })).state, 'in_progress');
+  });
+
+  await test('completion predicate rejects legacy stamps and malformed scan evidence', async () => {
+    const w = world(); legacy(w, 'a1');
+    await w.tool.run({ station_id: SID, actor_uid: ACTOR, dry_run: false });
+    const good = receipt(w);
+    const { completedReceipt } = require('./hr-months-backfill');
+    assert.equal(completedReceipt(good, SID), true);
+    for (const patch of [
+      { scan_phase: undefined }, { next_cursor: 'a1' }, { scan_id: 'bad' },
+      { page_token: 'bad' }, { scan_revision: 0 }, { station_id: OTHER },
+      { totals: { ...good.totals, scanned: 2 } },
+      { totals: { ...good.totals, classified: 0, malformed: 1 } },
+      { totals: { ...good.totals, deleted: undefined } }
+    ]) assert.equal(completedReceipt({ ...good, ...patch }, SID), false);
+    assert.equal(completedReceipt({ ...good, totals: { ...good.totals, classified: 0, deleted: 1 } }, SID), true);
   });
 
   console.log('');

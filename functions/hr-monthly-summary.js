@@ -79,6 +79,7 @@
  * ====================================================================== */
 
 const { createHash } = require('node:crypto');
+const { completedReceipt } = require('./hr-months-backfill');
 
 const SCHEMA_MONTH = 'hr-monthly-summary-v1';
 const SCHEMA_GENERATION = 'hr-monthly-generation-v1';
@@ -86,7 +87,7 @@ const SCHEMA_ROW = 'hr-monthly-row-v1';
 const SCHEMA_BACKFILL = 'hr-months-backfill-v1';
 const BACKFILL_DOC = 'hr-months-backfill-v1';
 
-const USER_PAGE = 100;          // עמוד בנייה. לא בתוך עסקה.
+const USER_PAGE = 100;          // שורות וסמן עמוד נכתבים באותה עסקה.
 const READ_PAGE = 25;           // עמוד קריאה ל-callable.
 const ABSENCE_CAP = 5000;       // תקרה קשיחה. חריגה היא שגיאה, לא קיצור.
 const WORKFORCE_CAP = 2000;
@@ -132,11 +133,15 @@ function daysInMonth(from, to, month) {
   return out;
 }
 
-function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }) {
+function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {}, authorize, trustedScheduler = false }) {
   if (!db || typeof db.collection !== 'function' || typeof HttpsError !== 'function') {
     throw new TypeError('db and HttpsError are required');
   }
   const error = (code, message) => new HttpsError(code, message);
+  async function authority(tx, sid) {
+    if (typeof authorize === 'function') return authorize(tx, sid);
+    if (trustedScheduler !== true) throw error('permission-denied', 'Explicit build authority required.');
+  }
   const root = sid => db.collection('stations').doc(sid);
   const monthRef = (sid, month) => root(sid).collection('hr_monthly_summaries').doc(month);
   const generationRef = (sid, month, id) =>
@@ -172,12 +177,7 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
   async function coverageOf(sid) {
     const snap = await backfillRef(sid).get();
     const value = snap.exists ? snap.data() : null;
-    if (!plain(value) || value.schema !== SCHEMA_BACKFILL) return 'legacy_pending';
-    if (!Number.isSafeInteger(value.completed_at_ms) || value.completed_at_ms <= 0) return 'legacy_pending';
-    const totals = plain(value.totals) ? value.totals : {};
-    const left = (Number.isSafeInteger(totals.unclassifiable) ? totals.unclassifiable : 0)
-      + (Number.isSafeInteger(totals.conflicting) ? totals.conflicting : 0);
-    return left === 0 ? 'complete' : 'legacy_pending';
+    return completedReceipt(value, sid) ? 'complete' : 'legacy_pending';
   }
 
   /**
@@ -353,6 +353,7 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
     const id = generationId(sid, month, intent);
     const at = now();
     const created = await db.runTransaction(async tx => {
+      await authority(tx, sid);
       const snap = await tx.get(generationRef(sid, month, id));
       if (snap.exists) {
         const value = snap.data();
@@ -373,39 +374,41 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
   async function runSlice(input, context) {
     const { sid, month } = scope(input && input.station_id, input && input.month);
     const id = String(input.generation_id || '');
-    const snap = await generationRef(sid, month, id).get();
+    return db.runTransaction(async tx => {
+    await authority(tx, sid);
+    const snap = await tx.get(generationRef(sid, month, id));
     const generation = snap.exists ? snap.data() : null;
     if (!plain(generation) || generation.schema !== SCHEMA_GENERATION
       || generation.station_id !== sid || generation.month !== month) throw error('not-found', 'Generation not found.');
-    if (generation.state === 'ready') return { done: true, written: 0, rows: generation.rows };
+    if (generation.state === 'ready' || generation.state === 'complete') return { done: true, written: 0, rows: generation.rows };
     let query = root(sid).collection('users').orderBy('__name__').limit(USER_PAGE);
     if (typeof generation.cursor === 'string' && generation.cursor) query = query.startAfter(generation.cursor);
-    const page = await query.get();
+    const page = await tx.get(query);
     if (page.empty) {
-      await generationRef(sid, month, id).set({ state: 'complete', completed_at_ms: now() }, { merge: true });
+      tx.set(generationRef(sid, month, id), { state: 'complete', completed_at_ms: now() }, { merge: true });
       return { done: true, written: 0, rows: generation.rows };
     }
     const people = page.docs.map(personOf).filter(Boolean);
     const reportRefs = people.map(person => root(sid).collection('monthly_reports')
       .doc(String(person.employee_number) + '_' + month));
     // קריאה מקובצת אחת לכל העמוד, ולא אחת לעובד.
-    const reports = reportRefs.length && typeof db.getAll === 'function'
-      ? await db.getAll(...reportRefs) : [];
+    const reports = reportRefs.length ? await tx.getAll(...reportRefs) : [];
     const batch = [];
     for (let index = 0; index < people.length; index += 1) {
       const reportSnap = reports[index];
       const value = reportSnap && reportSnap.exists ? reportSnap.data() : null;
       batch.push([people[index].uid, buildRow(context, people[index], value)]);
     }
-    for (const [uid, row] of batch) await rowRef(sid, month, id, uid).set(row);
+    for (const [uid, row] of batch) tx.set(rowRef(sid, month, id, uid), row);
     const last = page.docs[page.docs.length - 1].id;
     const done = page.docs.length < USER_PAGE;
-    await generationRef(sid, month, id).set({
-      cursor: done ? last : last,
+    tx.set(generationRef(sid, month, id), {
+      cursor: last,
       rows: (Number.isSafeInteger(generation.rows) ? generation.rows : 0) + batch.length,
       ...(done ? { state: 'complete', completed_at_ms: now() } : {})
     }, { merge: true });
     return { done, written: batch.length, rows: (generation.rows || 0) + batch.length };
+    });
   }
 
   /**
@@ -417,6 +420,7 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
     const id = String(input.generation_id || '');
     const at = now();
     return db.runTransaction(async tx => {
+      await authority(tx, sid);
       const [generationSnap, monthSnap] = await Promise.all([
         tx.get(generationRef(sid, month, id)), tx.get(monthRef(sid, month))]);
       const generation = generationSnap.exists ? generationSnap.data() : null;
@@ -550,7 +554,8 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
     let cursor = null;
     for (;;) {
       let query = generationRef(sid, month, value.active_generation)
-        .collection('hr_monthly_rows').orderBy('__name__').limit(USER_PAGE);
+        .collection('hr_monthly_rows').where('over_hour_limit', '==', true)
+        .orderBy('__name__').limit(USER_PAGE);
       if (cursor) query = query.startAfter(cursor);
       const page = await query.get();
       if (page.empty) break;

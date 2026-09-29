@@ -57,15 +57,19 @@ await check('legacy alert compatibility keeps an empty body and returns current 
   const source = index.match(/async function getHrOverHoursCompatibility\(req\) \{[\s\S]*?^\}/m)?.[0];
   assert.ok(source, 'compatibility function exists');
   const capture = {}, calls = [], request = Object.freeze({ auth: Object.freeze({ uid: 'legacy-client' }) });
+  let gateCalls = 0;
   vm.runInNewContext(source + '\ncapture.fn = getHrOverHoursCompatibility;', {
     capture,
     hrMonthlyContext(req) { assert.equal(req, request); return { sid: 'fixture_station' }; },
     hrMonthlyFields(req, keys) { assert.equal(req, request); assert.deepEqual([...keys], []); return {}; },
     hrMonthlyMonth(value) { assert.equal(value, undefined); return '2026-08'; },
+    hrMonthlyReads: { run(req, read) { assert.equal(req, request); gateCalls++;
+      return read({ sid: 'fixture_station' }); } },
     hrMonthly: { overHours(input) { calls.push(input); return { state: 'not_built', month: input.month,
       hour_limit: null, coverage: null, over_employees: [] }; } }
   });
   const value = await capture.fn(request);
+  assert.equal(gateCalls, 1, 'compatibility route passes through the read authorization gate');
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ station_id: 'fixture_station', month: '2026-08' }]);
   assert.equal(value.state, 'not_built');
   assert.equal(value.month, '2026-08');

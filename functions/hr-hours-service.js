@@ -207,7 +207,7 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
   async function overHoursAlert(req) {
     const requestContext = request(req, []);
     const root = db.collection('stations').doc(requestContext.ctx.sid);
-    return db.runTransaction(async tx => {
+    const result = await db.runTransaction(async tx => {
       await live(tx, requestContext);
       const snap = await tx.get(root.collection('hr_reports').orderBy('month', 'desc').limit(1));
       if (snap.empty) return { month: null, hour_limit: null, over_employees: [] };
@@ -226,6 +226,10 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
         over_employees: employees
       };
     });
+    // Like the other report reads, reject revocation during loading, including
+    // the empty-report branch. This does not promise a lock after the response.
+    await finalize(requestContext, new Map());
+    return result;
   }
 
   // Inert until explicitly wired to a callable with notification/quota gates.

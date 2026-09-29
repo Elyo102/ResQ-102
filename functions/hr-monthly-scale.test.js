@@ -54,7 +54,7 @@ async function test(name, fn) {
 function station() {
   const db = fakeDb();
   let clock = Date.parse('2026-10-01T03:00:00Z');
-  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, clock: () => (clock += 1000) });
+  const summary = createHrMonthlySummary({ db, HttpsError: FakeHttpsError, trustedScheduler: true, clock: () => (clock += 1000) });
   for (let index = 0; index < TOTAL; index += 1) {
     const uid = 'u' + String(index).padStart(5, '0');
     const emp = 'E' + String(index).padStart(5, '0');

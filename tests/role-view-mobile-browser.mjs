@@ -173,11 +173,16 @@ try {
   for (const width of [320, 360, 390]) {
     const mobile = await open('super', width);
     await check('mobile ' + width + ' selector fits and keeps a touch target', async () => {
+      // Pin the actual entrance endpoint, not a timing-dependent CI screenshot.
+      const card = mobile.page.locator('#roleViewSelect').locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," card ")][1]');
+      await card.evaluate(node => { node.style.transition = 'none'; node.style.transform = 'translateY(24px) scale(.97)'; });
       const metrics = await mobile.page.locator('#roleViewSelect').evaluate(node => ({
         height:node.getBoundingClientRect().height,
         fits:document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
       }));
       assert.ok(metrics.height >= 44); assert.equal(metrics.fits, true);
+      await card.evaluate(node => { node.style.transform = 'none'; });
+      assert.ok(await mobile.page.locator('#roleViewSelect').evaluate(node => node.getBoundingClientRect().height >= 44));
     });
     await mobile.context.close();
   }

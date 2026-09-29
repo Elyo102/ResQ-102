@@ -106,7 +106,7 @@ const mutations = [
   {
     name: 'coverage is declared complete regardless of what the backfill left',
     file: 'hr-monthly-summary.js', test: MONTHLY,
-    find: "    return left === 0 ? 'complete' : 'legacy_pending';",
+    find: "    return completedReceipt(value, sid) ? 'complete' : 'legacy_pending';",
     replace: "    return 'complete';"
   },
   {
@@ -130,8 +130,8 @@ const mutations = [
   {
     name: 'the migration starts overwriting a contradicting months value',
     file: 'hr-months-backfill.js', test: BACKFILL,
-    find: "      if (own(value, 'months')) {\n        if (sameMonths(value.months, value.from_date, value.to_date)) counts.already += 1;\n        else counts.conflicting += 1;\n        continue;\n      }",
-    replace: "      if (own(value, 'months') && sameMonths(value.months, value.from_date, value.to_date)) {\n        counts.already += 1;\n        continue;\n      }"
+    find: "    if (own(value, 'months')) return { kind: sameMonths(value.months, value.from_date, value.to_date) ? 'already' : 'conflicting' };",
+    replace: "    if (own(value, 'months') && sameMonths(value.months, value.from_date, value.to_date)) return { kind: 'already' };"
   },
   {
     name: 'the inbox goes back to one read per row instead of one batched read',
@@ -148,8 +148,8 @@ const mutations = [
   {
     name: 'the monthly build goes back to one hours read per employee',
     file: 'hr-monthly-summary.js', test: SCALE,
-    find: "    const reports = reportRefs.length && typeof db.getAll === 'function'\n      ? await db.getAll(...reportRefs) : [];",
-    replace: '    const reports = await Promise.all(reportRefs.map((ref) => ref.get()));'
+    find: '    const reports = reportRefs.length ? await tx.getAll(...reportRefs) : [];',
+    replace: '    const reports = await Promise.all(reportRefs.map((ref) => tx.get(ref)));'
   },
   {
     name: 'the test double goes back to passing every row for every operator but ==',
