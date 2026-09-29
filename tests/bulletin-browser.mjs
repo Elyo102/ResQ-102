@@ -496,6 +496,13 @@ try {
   );
   await commanderReplyForm.waitFor({ state:'visible', timeout:5000 });
   const commanderReplyField = commanderReplyForm.locator('textarea');
+  // The composer focuses on the next animation frame, after it becomes visible.
+  await commanderPage.waitForFunction(() => {
+    const field = document.querySelector(
+      '[data-message-id="br2"] [data-testid="bulletin-reply-form"] textarea'
+    );
+    return Boolean(field) && document.activeElement === field;
+  }, null, { timeout:3000 });
   check(await commanderReplyField.evaluate(field => document.activeElement === field),
         'פתיחת תגובה מעבירה את המיקוד לשדה הכתיבה');
   const replyControls = await commanderPage
