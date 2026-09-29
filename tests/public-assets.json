@@ -90,6 +90,7 @@
   "readiness.js",
   "release-manifest.json",
   "report.js",
+  "reserve-shift-policy.js",
   "resq-180.png",
   "resq-192.png",
   "resq-512.png",

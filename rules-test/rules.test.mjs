@@ -815,6 +815,24 @@ await blocked('🔒 מאשר אינו מחליף מספר עובד בטופס ש
     by_emp: '102'
   }));
 
+const reserveImportRef = doc(superA, `stations/${SID}/attendance/101_2026-08-03`);
+const reserveImportPayload = {
+  emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',
+  date: '2026-08-03', month: '2026-08', day_type: 'reserve_shift',
+  shape: 'regular', start: '07:00', end: '07:00', end_day: 1, sub_station: '',
+  hours: 24, notes: '', status: 'imported', imported_from: 'shift-eilat',
+  imported_key: '2026-09-10T00:00:00.000Z', source: 'import', updated_at: serverTimestamp()
+};
+await blocked('reserve_shift cannot bypass creation/overlap guards through super historical import',
+  setDoc(reserveImportRef, reserveImportPayload));
+if ((await getDoc(reserveImportRef)).exists()) throw new Error('Rejected reserve import created a row');
+await ok('same canonical import path still accepts ordinary work after rejected reserve_shift',
+  setDoc(reserveImportRef, { ...reserveImportPayload, day_type: 'regular', start: '08:00', end: '16:00', end_day: 0, hours: 8 }));
+await ok('old reserve absence historical import remains permitted at 8.5 hours',
+  setDoc(doc(superA, `stations/${SID}/attendance/101_2026-08-04`), {
+    ...reserveImportPayload, date: '2026-08-04', day_type: 'reserve', start: '', end: '', end_day: 0, hours: 8.5
+  }));
+
 await ok('מנהל-על מייבא רק רשומת עבר חדשה ומסומנת imported',
   setDoc(doc(superA, `stations/${SID}/attendance/101_2026-08-01`), {
     emp_number: '101', uid: 'u_ff', full_name: 'כבאי א', crew: 'א',

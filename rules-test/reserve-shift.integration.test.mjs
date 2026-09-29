@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const { createAttendanceSelfService } = require('../functions/attendance-self-service');
 const { createAttendanceCorrections } = require('../functions/attendance-corrections');
 const { calculateAttendanceDerived } = require('../functions/attendance-hours-calculator');
+const { creationEnabled } = require('../functions/reserve-shift-policy');
 const run = randomBytes(4).toString('hex'), sid = 'reserve_it_' + run, otherSid = 'reserve_other_' + run;
 const app = initializeApp({ projectId: 'demo-resq' }, 'reserve-it-' + run);
 const db = getFirestore(app), root = db.doc('stations/' + sid);
@@ -87,6 +88,55 @@ try {
   await db.doc('stations/' + otherSid).set({ name: 'Synthetic other fixture', districtId: 'synthetic', active: true });
   const coordinator = await person('hr_coordinator');
   let owner, saved;
+
+  if (!creationEnabled) {
+    await check('bridge denies crafted self and HR creation or conversion without rows/receipts', async () => {
+      for (const asHr of [false, true]) for (const exists of [false, true]) {
+        const value = await person(), date = '2026-09-10';
+        await root.collection('monthly_reports').doc(value.emp + '_' + month).set({ uid: value.uid, emp_number: value.emp, month, status: 'draft' });
+        if (exists) await seed(value, date, { day_type: 'regular', start: '08:00', end: '16:00', end_day: 0 });
+        const previous = await ref(value, date).get(), expected = exists ? version(previous) : 'absent';
+        const beforeCollections = {};
+        for (const col of await root.listCollections()) beforeCollections[col.id] = (await col.get()).size;
+        const data = asHr ? { target_uid: value.uid, employee_number: value.emp, month,
+          operation: exists ? 'update' : 'create', date, expected_version: expected, patch: patch(),
+          request_id: 'bridge_hr_' + value.emp, reason: 'Synthetic policy rejection verification' }
+          : { ...saveData(date), expected_version: expected };
+        await assert.rejects(() => asHr ? hr.correctOneDay(request(coordinator, data)) : self.mutateDay(request(value, data)),
+          error => error.code === 'failed-precondition' && error.message.includes('יצירת משמרת בזמן מילואים אינה פעילה'));
+        const after = await ref(value, date).get();
+        assert.equal(after.exists, previous.exists);
+        if (exists) assert.deepEqual(after.data(), previous.data());
+        for (const col of await root.listCollections()) assert.equal((await col.get()).size, beforeCollections[col.id] || 0);
+      }
+    });
+    await check('bridge existing row reads, edits and recalculates to 24, including HR correction', async () => {
+      const value = await person(), date = '2026-09-10'; await seed(value, date);
+      await root.collection('monthly_reports').doc(value.emp + '_' + month).set({ uid: value.uid, emp_number: value.emp, month, status: 'draft' });
+      await self.mutateDay(request(value, { ...saveData(date, { notes: 'Edit after rollback' }),
+        expected_version: version(await ref(value, date).get()) }));
+      await hr.correctOneDay(request(coordinator, { target_uid: value.uid, employee_number: value.emp, month,
+        operation: 'update', date, expected_version: version(await ref(value, date).get()),
+        patch: { notes: 'HR edit after rollback' }, request_id: 'bridge_existing_' + run, reason: 'Synthetic bridge existing correction' }));
+      const read = await self.readMonth(request(value, { month }));
+      await self.mutateMonth(request(value, { month, operation: 'recalculate', request_id: 'bridge_recalc_' + run,
+        days: read.days.map(x => ({ date: x.record.date, expected_version: x.expected_version })) }));
+      assert.equal((await ref(value, date).get()).data().hours, 24);
+      assert.equal((await getDoc(doc(environment.authenticatedContext(coordinator.uid, coordinator.claims).firestore(), ref(value, date).path))).data().day_type, 'reserve_shift');
+    });
+    await check('bridge mixed fill fails atomically', async () => {
+      const value = await person();
+      await assert.rejects(() => self.mutateMonth(request(value, { month, operation: 'fill', request_id: 'bridge_fill_' + run,
+        entries: [{ date: '2026-09-10', patch: { day_type: 'reserve' } }, { date: '2026-09-12', patch: patch() }] })),
+        error => error.code === 'failed-precondition' && error.message.includes('יצירת משמרת בזמן מילואים אינה פעילה'));
+      assert.equal((await root.collection('attendance').where('emp_number', '==', value.emp).get()).size, 0);
+    });
+    await check('bridge ordinary reserve absence still creates with 8.5 hours', async () => {
+      const value = await person(), date = '2026-09-10';
+      await self.mutateDay(request(value, { ...saveData(date), patch: { day_type: 'reserve' } }));
+      assert.equal((await ref(value, date).get()).data().hours, 8.5);
+    });
+  } else {
 
   await check('self create derives 24 hours despite fixed site and commits server timestamp', async () => {
     owner = await person();
@@ -202,9 +252,12 @@ try {
       await rejectCode(() => deleteDoc(doc(client, ref(owner, '2026-09-10').path)), 'permission-denied');
     }
   });
+  }
 } finally {
   await cleanup();
   if (environment) await environment.cleanup();
   await deleteApp(app);
 }
-console.log('Reserve shift native integration: ' + passed + '/11 PASS; real Firestore transactions and Rules, synthetic Auth/config only.');
+const expectedChecks = creationEnabled ? 11 : 4;
+assert.equal(passed, expectedChecks);
+console.log('Reserve shift native integration: ' + passed + '/' + expectedChecks + ' PASS; creationEnabled=' + creationEnabled + '; real Firestore transactions and Rules, synthetic Auth/config only.');

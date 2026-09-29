@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { browserPolicy, checkPolicy } from '../reserve-shift-policy-build.mjs';
+checkPolicy();
 const { chromium } = createRequire(import.meta.url)('playwright');
 const source = fs.readFileSync(new URL('../attendance.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 function extract(first, last) {
@@ -18,6 +20,7 @@ const harness = `
 import { DAY_TYPES, REASON_TYPES, SHAPES, shapeOf, needsTimes, calcHours, reasonWhy,
   guessDayOffset, dayTypeHe, isSplit, retroLabel } from '/hours.js';
 import { reportHtml } from '/report.js';
+import { canSelectReserveShift } from '/reserve-shift-policy.js';
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 const key='2026-09-29', mySite='', sites=[{id:'fixed',name:'תחנה קבועה',fixed_hours:25}], SUBJ={uid:'fixture'},
   overrides=[], rotations=[], swaps=[], DOWS=['א','ב','ג','ד','ה','ו','ש'], CREW_HE={}, CREW_SHORT={};
@@ -48,14 +51,15 @@ window.ready=true;
 const browser = await chromium.launch();
 let passed = 0;
 try {
-  for (const width of [360, 1280]) {
+  for (const width of [360, 1280]) for (const creationEnabled of [false, true]) {
     const context = await browser.newContext({viewport:{width,height:900},serviceWorkers:'block'});
     await context.route('**/*', route => {
       const url = new URL(route.request().url());
       if (url.origin !== origin) return route.abort();
       if (url.pathname === '/') return route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><style>${style}</style><div id="dlg"></div><table><tbody id="rows"></tbody></table><div id="report"></div><script type="module" src="/harness.js"></script></html>`});
       if (url.pathname === '/harness.js') return route.fulfill({contentType:'text/javascript',body:harness});
-      if (['/hours.js','/report.js'].includes(url.pathname)) return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(new URL('..'+url.pathname,import.meta.url),'utf8')});
+      if (url.pathname === '/reserve-shift-policy.js') return route.fulfill({contentType:'text/javascript',body:browserPolicy({creationEnabled})});
+      if (['/hours.js','/report.js','/reserve-shift-policy.js'].includes(url.pathname)) return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(new URL('..'+url.pathname,import.meta.url),'utf8')});
       return route.abort();
     });
     const page = await context.newPage();
@@ -63,6 +67,26 @@ try {
     await page.goto(origin); await page.waitForFunction(()=>window.ready);
     async function check(name, fn) { await fn(); passed++; console.log(`PASS ${width}: ${name}`); }
     const state=()=>page.evaluate(()=>Object.fromEntries(['dType','dShape','dStart','dEnd','dReserveEndDay','dStart2','dEnd2'].map(id=>[id,document.getElementById(id).value])));
+    if (!creationEnabled) {
+      await check('bridge hides new type and blocks injected option', async () => {
+        await page.evaluate(()=>openRecord(null));
+        assert.equal(await page.locator('#dType option[value="reserve_shift"]').count(),0);
+        await page.evaluate(()=>{const option=new Option('Injected','reserve_shift');document.getElementById('dType').add(option);});
+        await page.selectOption('#dType','reserve_shift'); await page.click('#dSave');
+        assert.equal(await page.evaluate(()=>saved.length),0);
+        assert.match(await page.evaluate(()=>messages.at(-1)),/אינה פעילה/);
+      });
+      await check('bridge existing reserve shift stays editable and calculable', async () => {
+        await page.evaluate(()=>openRecord({day_type:'reserve_shift',shape:'regular',start:'07:00',end:'07:00',end_day:1}));
+        assert.equal(await page.locator('#dType option[value="reserve_shift"]').count(),1);
+        assert.equal(await page.locator('#dHint b').textContent(),'24');
+        await page.fill('#dNotes','Existing shift after rollback'); await page.click('#dSave');
+        await page.waitForFunction(()=>saved.length===1);
+        assert.equal(await page.evaluate(()=>saved[0].day_type),'reserve_shift');
+        assert.equal(await page.evaluate(()=>saved[0].end_day),1);
+      });
+      assert.deepEqual(errors,[]); await context.close(); continue;
+    }
     await check('new selection defaults to explicit next-day 24 hours',async()=>{
       await page.evaluate(()=>openRecord(null)); await page.selectOption('#dType','reserve_shift');
       assert.deepEqual(await state(),{dType:'reserve_shift',dShape:'regular',dStart:'07:00',dEnd:'07:00',dReserveEndDay:'1',dStart2:'',dEnd2:''});

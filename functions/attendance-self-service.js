@@ -10,6 +10,7 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
+const { assertReserveShiftTransition } = require('./reserve-shift-policy');
 const { validateAttendanceEdit } = require('./attendance-hours-calculator');
 
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
@@ -186,6 +187,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         const candidate = { ...base, ...r.intent.patch, uid: r.ctx.uid, emp_number: person.employee_number,
           full_name: person.full_name, crew: person.crew, date: r.intent.date, month: r.intent.month,
           status: 'draft', updated_at: commit };
+        try { assertReserveShiftTransition(candidate, before); }
+        catch (error) { fail('failed-precondition', error.message); }
         const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role,
           subStationIds: candidate.sub_station ? [candidate.sub_station] : [] });
         try { validateAttendanceEdit(candidate, before); }
@@ -319,6 +322,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           const candidate = { uid: r.ctx.uid, emp_number: person.employee_number, full_name: person.full_name,
             crew: person.crew, date: entry.date, month: r.intent.month, status: 'draft', reported_at: commit,
             updated_at: commit, ...entry.patch };
+          try { assertReserveShiftTransition(candidate, null); }
+          catch (error) { fail('failed-precondition', error.message); }
           try { validateAttendanceEdit(candidate, null); }
           catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
           pending.push({ ...candidate, ...derived(candidate, config) });

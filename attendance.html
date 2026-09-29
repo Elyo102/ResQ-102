@@ -425,6 +425,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
+import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h44';
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h44';
 import { subStationAvailable } from './stations.js?v=42h44';
 import { renderNav, renderStuckNav } from './nav.js?v=42h44';
@@ -1858,7 +1859,7 @@ async function editDay(key, rec){
   const shape0 = rec ? shapeOf(rec) : 'regular';
   const reasonMark = ' · נימוק חובה';
 
-  const types = DAY_TYPES.map(t =>
+  const types = DAY_TYPES.filter(t => t.id !== 'reserve_shift' || canSelectReserveShift(rec?.day_type)).map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
     '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
     '</option>').join('');
@@ -2041,6 +2042,9 @@ async function editDay(key, rec){
     }
     if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
+    }
+    if (t === 'reserve_shift' && !canSelectReserveShift(rec?.day_type)) {
+      msg('יצירת משמרת בזמן מילואים אינה פעילה כרגע. הדיווח לא נשמר.', 'err'); return;
     }
     if (t !== 'reserve_shift' && needsTimes(t) && sh !== 'continued' &&
         ((cur.start === cur.end && !(sh === 'regular' && $('dFullDay').checked)) ||

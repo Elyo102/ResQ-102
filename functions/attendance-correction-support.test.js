@@ -237,6 +237,84 @@ async function noWrites(f, fn, code) {
   assert.deepEqual(f.db.dump(), before, 'Failure must not commit queued writes');
 }
 
+// Isolated actual-source loaders: no disk/config writes and no production override
+// port. Exercise the exact server module with each release artifact's policy.
+function policyApis(f, creationEnabled) {
+  const fs = require('node:fs'), path = require('node:path');
+  const load = (name, dependency) => {
+    const filename = path.join(__dirname, name + '.js'), m = { exports: {} };
+    const localRequire = require('node:module').createRequire(filename);
+    new Function('require', 'module', 'exports', fs.readFileSync(filename, 'utf8'))(
+      id => Object.hasOwn(dependency, id) ? dependency[id] : localRequire(id), m, m.exports);
+    return m.exports;
+  };
+  const policy = load('reserve-shift-policy', { './reserve-shift-policy.json': { creationEnabled } });
+  const ports = { ...f.ports, calculate: calculateAttendanceDerived,
+    readConfig: async () => ({ siteById: {}, shiftHours: 24 }) };
+  const deps = { './reserve-shift-policy': policy };
+  return {
+    self: load('attendance-self-service', deps).createAttendanceSelfService(ports),
+    hr: load('attendance-corrections', deps).createAttendanceCorrections(ports)
+  };
+}
+
+for (const enabled of [false, true]) {
+  test(`creation policy ${enabled}: self and HR create/conversion enforce stored before-image`, async () => {
+    for (const hr of [false, true]) for (const existing of [false, true]) {
+      const f = reserveFixture(), day = f.month + '-10', api = policyApis(f, enabled);
+      if (existing) f.row(day, { status: 'draft' });
+      const expected = existing ? f.db.version(f.path(day)) : 'absent';
+      const req = hr ? f.req({ operation: existing ? 'update' : 'create', date: day,
+        expected_version: expected, patch: reservePatch(), request_id: 'policy_create_0001', reason: 'Synthetic authorized policy test' })
+        : f.selfReq({ date: day, operation: 'save', expected_version: expected, patch: reservePatch(), request_id: 'policy_create_0001' });
+      const run = () => hr ? api.hr.correctOneDay(req) : api.self.mutateDay(req);
+      if (!enabled) await noWrites(f, run, 'failed-precondition');
+      else { await run(); assert.equal(f.db.value(f.path(day)).hours, 24); }
+    }
+  });
+  test(`creation policy ${enabled}: existing self/HR edits, reads and monthly recalculation preserve data`, async () => {
+    for (const hr of [false, true]) {
+      const f = reserveFixture(), day = f.month + '-10', api = policyApis(f, enabled);
+      f.row(f.month + '-01', { status: 'draft' });
+      f.row(day, { ...reservePatch(), status: 'draft', hours: 24 });
+      const expected = f.db.version(f.path(day));
+      const req = hr ? f.req({ operation: 'update', date: day, expected_version: expected,
+        patch: { notes: 'Existing shift remains editable' }, request_id: 'policy_update_0001', reason: 'Synthetic existing record correction' })
+        : f.selfReq({ date: day, operation: 'save', expected_version: expected,
+          patch: reservePatch({ notes: 'Existing shift remains editable' }), request_id: 'policy_update_0001' });
+      await (hr ? api.hr.correctOneDay(req) : api.self.mutateDay(req));
+      const read = await api.self.readMonth(f.selfReq({ month: f.month }));
+      assert.equal(read.days.find(x => x.record.date === day).record.day_type, 'reserve_shift');
+      assert.equal(f.db.value(f.path(day)).hours, 24);
+      await api.self.mutateMonth(f.selfReq({ month: f.month, operation: 'recalculate', request_id: 'policy_recalc_0001',
+        days: read.days.map(x => ({ date: x.record.date, expected_version: x.expected_version })) }));
+      assert.equal(f.db.value(f.path(day)).hours, 24);
+    }
+  });
+  test(`creation policy ${enabled}: mixed month fill is atomic and old reserve stays 8.5 hours`, async () => {
+    const f = reserveFixture(), api = policyApis(f, enabled);
+    const req = f.selfReq({ month: f.month, operation: 'fill', request_id: 'policy_fill_0001', entries: [
+      { date: f.month + '-10', patch: { day_type: 'reserve' } },
+      { date: f.month + '-12', patch: reservePatch() }
+    ] });
+    if (!enabled) await noWrites(f, () => api.self.mutateMonth(req), 'failed-precondition');
+    else { await api.self.mutateMonth(req); assert.equal(f.db.value(f.path(f.month + '-10')).hours, 8.5); }
+    assert.equal(calculateAttendanceDerived({ day_type: 'reserve' }, { siteById: {}, shiftHours: 24 }).hours, 8.5);
+  });
+}
+test('creation policy rollback: recorded self/HR responses replay without duplicate writes after disable', async () => {
+  for (const hr of [false, true]) {
+    const f = reserveFixture(), day = f.month + '-10';
+    const req = hr ? f.req({ operation: 'create', date: day, expected_version: 'absent', patch: reservePatch(),
+      request_id: 'policy_replay_0001', reason: 'Synthetic replay after rollback' }) : reserveSave(f, day);
+    const active = policyApis(f, true), bridge = policyApis(f, false);
+    await (hr ? active.hr.correctOneDay(req) : active.self.mutateDay(req));
+    const before = f.db.dump();
+    assert.equal((await (hr ? bridge.hr.correctOneDay(req) : bridge.self.mutateDay(req))).duplicate, true);
+    assert.deepEqual(f.db.dump(), before);
+  }
+});
+
 test('factory requires safe injected ports and performs no reads or writes at construction', () => {
   const f = fixture();
   for (const name of ['db', 'auth', 'HttpsError', 'serverTimestamp', 'clock', 'monthAt']) assert.throws(() => createAttendanceCorrectionSupport({ ...f.ports, [name]: null }), TypeError);

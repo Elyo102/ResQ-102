@@ -20,6 +20,7 @@ const access = require('./schedule-access');
 const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
+const { assertReserveShiftTransition } = require('./reserve-shift-policy');
 const { validateAttendanceEdit } = require('./attendance-hours-calculator');
 const COLLECTIONS = Object.freeze({
   events: 'attendance_correction_events', receipts: 'attendance_correction_receipts',
@@ -268,6 +269,8 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
           status: 'draft', shape: 'regular', start: '', end: '', end_day: 0, start2: '', end2: '', end_day2: 0,
           sub_station: '', notes: '', overtime_reason: '' }), ...(r.intent.rows[i].patch || {})
       });
+      try { prepared.forEach((candidate, i) => assertReserveShiftTransition(candidate, before[i])); }
+      catch (error) { fail('failed-precondition', error.message); }
       const config = r.intent.operation === 'delete' ? null : await readConfig(tx, {
         stationId: r.ctx.sid, targetRole: person.role,
         subStationIds: [...new Set(prepared.map(v => v.sub_station || ''))].sort()
