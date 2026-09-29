@@ -4067,6 +4067,8 @@ exports.runReportNow = onCall(
 // שליחת הדוח במייל. הדוח החדש נשמר ומוצג במערכת בלבד,
 // כי אין במסלול הזה ספק דואר מאומת.
 const hrMonthly = hrMonthlyModule.createHrMonthlySummary({ db, HttpsError });
+const hrMonthlyReads = require('./hr-monthly-read-access').createHrMonthlyReadAccess({
+  db, auth: admin.auth(), HttpsError });
 const hrMonthlyIdentity = opsMemberIdentityModule.createOpsMemberIdentity({ db, HttpsError });
 const HR_MONTHLY_OPTIONS = Object.freeze({ region: 'europe-west1', enforceAppCheck: true,
   timeoutSeconds: 120, memory: '256MiB', maxInstances: 3, concurrency: 1 });
@@ -4099,26 +4101,30 @@ function hrMonthlyFields(req, keys) {
 }
 
 exports.getHrMonthlySummary = onCall(HR_MONTHLY_OPTIONS, async (req) => {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   const data = hrMonthlyFields(req, ['month', 'cursor']);
-  return hrMonthly.read({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
-    ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }) });
+  const month = hrMonthlyMonth(data.month);
+  const cursor = data.cursor === undefined ? undefined : String(data.cursor).slice(0, 200);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.read({ station_id: ctx.sid, month,
+    ...(cursor === undefined ? {} : { cursor }) }));
 });
 
 // שלושת המצבים של חריגת השעות. „אין דוח" אינו „אין חורגים".
 exports.getHrMonthlyOverHours = onCall(HR_MONTHLY_OPTIONS, async (req) => {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   const data = hrMonthlyFields(req, ['month']);
-  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(data.month) });
+  const month = hrMonthlyMonth(data.month);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.overHours({ station_id: ctx.sid, month }));
 });
 
 // Old app builds call this name with no body. Preserve that transport contract,
 // but return the same three-state truth as the current HR screen. In particular,
 // a missing monthly build is `not_built`, never a misleading empty alert.
 async function getHrOverHoursCompatibility(req) {
-  const ctx = hrMonthlyContext(req);
+  hrMonthlyContext(req);
   hrMonthlyFields(req, []);
-  return hrMonthly.overHours({ station_id: ctx.sid, month: hrMonthlyMonth(undefined) });
+  const month = hrMonthlyMonth(undefined);
+  return hrMonthlyReads.run(req, ctx => hrMonthly.overHours({ station_id: ctx.sid, month }));
 }
 
 // הרצה ידנית מורשת, לתחנה של הקורא בלבד, לצורכי בדיקה
