@@ -9,6 +9,67 @@ const { createAttendanceCorrections, COLLECTIONS } = require('./attendance-corre
 const { createAttendanceSelfService } = require('./attendance-self-service');
 const { calculateAttendanceDerived } = require('./attendance-hours-calculator');
 const { projectEmployeeHours } = require('./hr-hours-model');
+const reservePatch = (extra = {}) => ({ day_type:'reserve_shift', shape:'regular', start:'07:00', end:'07:00',
+  end_day:1, start2:'', end2:'', end_day2:0, sub_station:'', ...extra });
+function reserveFixture() {
+  const f=fixture();f.db.seed(f.reportPath,{...f.db.value(f.reportPath),status:'draft'});return f;
+}
+function reserveSave(f,day,extra={},id='reserve_save_0001') {
+  return f.selfReq({date:day,operation:'save',expected_version:'absent',patch:reservePatch(extra),request_id:id});
+}
+test('reserve save is server-derived, replay safe after lost response and later neighbor changes',async()=>{
+ const f=reserveFixture(),day=f.month+'-10',req=reserveSave(f,day);
+ const first=await f.selfApi().mutateDay(req);assert.equal(first.duplicate,false);
+ const saved=f.db.value(f.path(day));assert.equal(saved.hours,24);assert.equal(saved.end_day,1);
+ assert.equal(saved.day_type_he,'משמרת בזמן מילואים');assert.ok(saved.updated_at instanceof Timestamp);
+ f.row(f.month+'-11',{status:'draft',start:'06:00',end:'08:00',end_day:0});
+ const writes=f.db.metrics.writes;
+ assert.equal((await f.selfApi().mutateDay(req)).duplicate,true);assert.equal(f.db.metrics.writes,writes);
+ await noWrites(f,()=>f.selfApi().mutateDay({...req,data:{...req.data,patch:reservePatch({end:'06:00'})}}),'already-exists');
+});
+test('reserve concurrent neighboring submissions permit exactly one winner',async()=>{
+ const f=reserveFixture();
+ const results=await Promise.allSettled([
+  f.selfApi().mutateDay(reserveSave(f,f.month+'-10',{},'reserve_race_001')),
+  f.selfApi().mutateDay(reserveSave(f,f.month+'-11',{start:'06:00',end:'08:00',end_day:0},'reserve_race_002'))]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(f.db.entries('attendance').filter(r=>r.value.day_type==='reserve_shift').length,1);
+});
+test('reserve employee and HR correction reject overlap but permit endpoint adjacency',async()=>{
+ for(const hr of [false,true]){
+  const f=reserveFixture(),day=f.month+'-10';f.row(f.month+'-08',{status:'draft',start:'23:00',end:'09:00',end_day:2});
+  const req=hr?f.req({operation:'create',date:day,expected_version:'absent',patch:reservePatch(),request_id:'reserve_hr_0001',reason:'Authorized reserve shift correction reason'}):reserveSave(f,day);
+  await noWrites(f,()=>hr?f.correctionApi().correctOneDay(req):f.selfApi().mutateDay(req),'failed-precondition');
+  f.row(f.month+'-08',{status:'draft',start:'23:00',end:'07:00',end_day:2});
+  await (hr?f.correctionApi().correctOneDay(req):f.selfApi().mutateDay(req));
+  assert.equal(f.db.value(f.path(day)).hours,24);
+ }
+});
+test('reserve month fill validates all candidates before writes including boundary and internal overlap',async()=>{
+ for(const boundary of [false,true]){
+  const f=reserveFixture();
+  const entries=boundary?[{date:f.month+'-01',patch:reservePatch()}]:[
+   {date:f.month+'-10',patch:reservePatch()},
+   {date:f.month+'-11',patch:reservePatch({start:'06:00',end:'08:00',end_day:0})}];
+  if(boundary){const d=new Date(f.month+'-01T00:00:00Z');d.setUTCDate(0);const previous=d.toISOString().slice(0,10);
+   f.db.seed(f.path(f.month+'-01'),undefined);
+   f.row(previous,{date:previous,month:previous.slice(0,7),status:'draft',start:'19:00',end:'08:00',end_day:1});}
+  await noWrites(f,()=>f.selfApi().mutateMonth(f.selfReq({month:f.month,operation:'fill',entries,request_id:'reserve_fill_001'})),'failed-precondition');
+ }
+});
+test('reserve zero/missing offsets and ordinary implicit equal clocks cannot be saved',async()=>{
+ for(const patch of [reservePatch({end_day:0}),reservePatch({end_day:undefined}),
+  {day_type:'regular',shape:'regular',start:'07:00',end:'07:00'}]){
+  const f=reserveFixture();const req=reserveSave(f,f.month+'-10');req.data.patch=patch;
+  await assert.rejects(f.selfApi().mutateDay(req));assert.equal(f.db.value(f.path(f.month+'-10')),null);
+ }
+});
+test('reserve save cannot select another employee and deactivated identity is denied',async()=>{
+ const f=reserveFixture(),req=reserveSave(f,f.month+'-10');
+ await noWrites(f,()=>f.selfApi().mutateDay({...req,data:{...req.data,target_uid:f.actor}}),'invalid-argument');
+ f.records.get(f.uid).disabled=true;
+ await noWrites(f,()=>f.selfApi().mutateDay(req),'permission-denied');
+});
 class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
 class Timestamp {
   constructor(seconds, nanoseconds = 0) { this.seconds = seconds; this.nanoseconds = nanoseconds; }

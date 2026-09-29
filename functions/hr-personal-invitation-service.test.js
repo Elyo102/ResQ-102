@@ -85,7 +85,7 @@ test('real invitation redemption and actual approval planner preserve HR without
   const split=contract.splitRedemption({source:'server_document',invite,redeemed,auth:member,
     recomputed_fingerprint:redeemed.invite_fingerprint,request_id:'redeem_request_000001'});
   assert.equal(split.registration_request.shift,''); assert.equal(split.registration_request.role,undefined);
-  const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'index.js'),'utf8');
+  const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'index.js'),'utf8').replace(/\r\n/g,'\n');
   const start=source.indexOf('makePlan: function (emp, r, authority)', source.indexOf('exports.approveRegistration'));
   const end=source.indexOf('\n    }\n  });',start);
   assert.ok(start>0&&end>start);

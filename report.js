@@ -79,7 +79,8 @@ export function reportHtml(head, rows) {
     };
     const times = r.start
       ? '<td><span class="rng">' + esc(r.start) + '</span></td>' +
-        '<td><span class="rng">' + esc(r.end || '—') + '</span></td>'
+        '<td><span class="rng">' + esc(r.end || '—') + '</span>' +
+          (r.day_type === 'reserve_shift' && r.end_day === 1 ? ' למחרת' : '') + '</td>'
       : '<td>—</td><td>—</td>';
 
     // אין כאן סימון "לא צוינה סיבה". השמירה חסומה בלי נימוק

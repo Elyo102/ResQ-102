@@ -25,7 +25,7 @@ function compare(record, fixed, shift) {
 }
 
 test('exact current day-type vocabulary and Hebrew labels, including unknown passthrough', () => {
-  assert.deepEqual(browser.DAY_TYPES.map(t => t.id), ['regular','swap','extra','meeting','guard','vacation','sick','reserve']);
+  assert.deepEqual(browser.DAY_TYPES.map(t => t.id), ['regular','swap','extra','meeting','guard','vacation','sick','reserve','reserve_shift']);
   for (const type of browser.DAY_TYPES) assert.equal(actual.dayTypeHe(type.id), type.he);
   for (const unknown of [undefined, null, '', 'unknown', 'constructor']) assert.equal(actual.dayTypeHe(unknown), browser.dayTypeHe(unknown));
 });
@@ -50,7 +50,7 @@ test('exhaustive declared type/shape/offset/site/threshold/segment categorical p
               for (const shift of [undefined, 24, 24.25, 25]) {
                 compare({ ...row, day_type, shape, end_day, end_day2 }, fixed, shift); checked++;
               }
-  assert.equal(checked, 225792); t.diagnostic('Exact scalar outputs and Hebrew reasons compared for ' + checked + ' categorical cases.');
+  assert.equal(checked, 250880); t.diagnostic('Exact scalar outputs and Hebrew reasons compared for ' + checked + ' categorical cases.');
 });
 test('every valid minute as start and end against boundary anchors, with all explicit day offsets', t => {
   const clock = minute => String(Math.floor(minute / 60)).padStart(2, '0') + ':' + String(minute % 60).padStart(2, '0');

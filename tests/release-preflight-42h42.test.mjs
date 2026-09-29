@@ -218,7 +218,7 @@ const node = process.execPath;
 assert.throws(() => execFileSync(node, [path.join(root, 'release-preflight-42h42.mjs'), '--execute'],
   { cwd:root, stdio:'pipe' }));
 passed++;
-const currentSource = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf8');
+const currentSource = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
 const oldSource = execFileSync('git', ['show', '0f75d45:functions/index.js'],
   { cwd:root, encoding:'utf8' });
 const currentMeta = exportCallMetadata(currentSource);

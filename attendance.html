@@ -1409,6 +1409,7 @@ function renderRows(sug){
         '" data-l="שעות">' + (needsTimes(view.day_type)
           ? '<span class="rng">' + esc(view.start || '—') + '–' +
               esc(running ? '…' : (view.end || '—')) + '</span>' +
+            (view.day_type === 'reserve_shift' && view.end_day === 1 ? ' למחרת' : '') +
             (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
               esc(view.end2) + '</span>' : '')
           : '—') + '</td>' +
@@ -1882,6 +1883,9 @@ async function editDay(key, rec){
     '<div id="dTimes">' +
       '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
       '<div class="shapeNote" id="dShapeNote"></div>' +
+      '<div id="dReserveEndBox" class="hide"><label for="dReserveEndDay">יום הסיום</label>' +
+        '<select id="dReserveEndDay"><option value="0">באותו יום</option>' +
+        '<option value="1"' + (v.end_day === 1 ? ' selected' : '') + '>למחרת</option></select></div>' +
 
       '<div class="seg">' +
         '<div class="two">' +
@@ -1940,7 +1944,8 @@ async function editDay(key, rec){
       shape: sh,
       start: $('dStart').value,
       end:   $('dEnd').value,
-      end_day: sh === 'continued' ? 1
+      end_day: $('dType').value === 'reserve_shift' ? Number($('dReserveEndDay').value)
+        : sh === 'continued' ? 1
         : sh === 'regular' && $('dStart').value && $('dStart').value === $('dEnd').value
           ? ($('dFullDay').checked ? 1 : 0)
           : guessDayOffset($('dStart').value, $('dEnd').value),
@@ -1964,20 +1969,25 @@ async function editDay(key, rec){
   const sync = function () {
     const t  = $('dType').value;
     const sh = $('dShape').value;
-    const equalRegular = needsTimes(t) && sh === 'regular' && !!$('dStart').value &&
+    const reserveShift = t === 'reserve_shift';
+    const equalRegular = !reserveShift && needsTimes(t) && sh === 'regular' && !!$('dStart').value &&
       $('dStart').value === $('dEnd').value;
 
     $('dTimes').style.display = needsTimes(t) ? '' : 'none';
+    $('dShape').hidden = reserveShift;
+    document.querySelector('label[for="dShape"]').hidden = reserveShift;
+    $('dReserveEndBox').classList.toggle('hide', !reserveShift);
     $('dFullDayWrap').classList.toggle('hide', !equalRegular);
     if (!equalRegular) $('dFullDay').checked = false;
     $('dSeg2').classList.toggle('hide', sh !== 'split');
-    $('dShapeNote').textContent = NOTES[sh] || '';
+    $('dShapeNote').textContent = reserveShift
+      ? 'משמרת אחת עד 24 שעות לפי שעון מקומי. אפשר לערוך את השעות ואת יום הסיום.' : NOTES[sh] || '';
     $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
     $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
                             : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');
 
     const cur   = current();
-    const fixed = siteHoursOf(cur.sub_station);
+    const fixed = reserveShift ? 0 : siteHoursOf(cur.sub_station);
     const h     = equalRegular && !$('dFullDay').checked ? null : calcHours(cur, fixed);
     const why   = reasonWhy(cur, fixed, shiftHoursFor());
 
@@ -2005,7 +2015,17 @@ async function editDay(key, rec){
     }
   };
 
-  ['dType','dShape','dSite','dFullDay'].forEach(id => { $(id).onchange = sync; });
+  ['dShape','dSite','dFullDay','dReserveEndDay'].forEach(id => { $(id).onchange = sync; });
+  $('dType').onchange = () => {
+    $('dFullDay').checked = false;
+    if ($('dType').value === 'reserve_shift') {
+      $('dShape').value = 'regular';
+      $('dStart').value = '07:00'; $('dEnd').value = '07:00';
+      $('dReserveEndDay').value = '1';
+      $('dStart2').value = ''; $('dEnd2').value = '';
+    }
+    sync();
+  };
   ['dStart','dEnd'].forEach(id => { $(id).oninput = () => { $('dFullDay').checked = false; sync(); }; });
   ['dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
@@ -2022,7 +2042,7 @@ async function editDay(key, rec){
     if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
     }
-    if (needsTimes(t) && sh !== 'continued' &&
+    if (t !== 'reserve_shift' && needsTimes(t) && sh !== 'continued' &&
         ((cur.start === cur.end && !(sh === 'regular' && $('dFullDay').checked)) ||
          (sh === 'split' && cur.start2 === cur.end2))) {
       msg('כניסה ויציאה באותה שעה אינן משמרת של 24 שעות. תקן את השעות לפני שמירה.', 'err');
@@ -2038,7 +2058,7 @@ async function editDay(key, rec){
       return;
     }
 
-    const fixed = siteHoursOf(cur.sub_station);
+    const fixed = t === 'reserve_shift' ? 0 : siteHoursOf(cur.sub_station);
     const h = calcHours(cur, fixed);
     if (needsTimes(t) && h == null) {
       msg('השעות לא מסתדרות. בדוק אותן שוב.', 'err'); return;

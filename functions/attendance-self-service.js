@@ -9,6 +9,8 @@ const access = require('./schedule-access');
 const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
+const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
+const { validateAttendanceEdit } = require('./attendance-hours-calculator');
 
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -55,7 +57,7 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
   }
   function editable(v) {
     shape(v, EDITABLE, ['day_type']);
-    if (typeof v.day_type !== 'string' || !['regular', 'swap', 'extra', 'meeting', 'guard', 'vacation', 'sick', 'reserve'].includes(v.day_type)) {
+    if (typeof v.day_type !== 'string' || !['regular', 'swap', 'extra', 'meeting', 'guard', 'vacation', 'sick', 'reserve', 'reserve_shift'].includes(v.day_type)) {
       fail('invalid-argument', 'Invalid attendance day type');
     }
     const out = {};
@@ -186,7 +188,13 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           status: 'draft', updated_at: commit };
         const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role,
           subStationIds: candidate.sub_station ? [candidate.sub_station] : [] });
+        try { validateAttendanceEdit(candidate, before); }
+        catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
         const output = derived(candidate, config);
+        try {
+          await assertReserveShiftNoOverlap({ tx, root, employeeNumber: person.employee_number, uid: r.ctx.uid,
+            candidates: [candidate], knownRows: new Map([[r.intent.date, before]]) });
+        } catch (_) { fail('failed-precondition', 'יש חפיפה או דיווח סמוך שלא ניתן לאמת. יש לבדוק את השעות.'); }
         await live(tx, r);
         tx.set(rowRef, { ...candidate, ...output });
       }
@@ -306,13 +314,28 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         if (reportState !== 'draft') fail('failed-precondition', 'Monthly report is locked');
         const sites = [...new Set(r.intent.entries.map(v => v.patch.sub_station).filter(Boolean))];
         const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
-        await live(tx, r);
+        const pending = [];
         for (const entry of r.intent.entries) if (!byDate.has(entry.date)) {
           const candidate = { uid: r.ctx.uid, emp_number: person.employee_number, full_name: person.full_name,
             crew: person.crew, date: entry.date, month: r.intent.month, status: 'draft', reported_at: commit,
             updated_at: commit, ...entry.patch };
-          tx.create(root.collection('attendance').doc(person.employee_number + '_' + entry.date),
-            { ...candidate, ...derived(candidate, config) }); changed++;
+          try { validateAttendanceEdit(candidate, null); }
+          catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+          pending.push({ ...candidate, ...derived(candidate, config) });
+        }
+        const knownRows = new Map([...byDate].map(([key, row]) => [key, row.value]));
+        const [year, month] = r.intent.month.split('-').map(Number);
+        for (let day = 1; day <= new Date(Date.UTC(year, month, 0)).getUTCDate(); day++) {
+          const key = r.intent.month + '-' + String(day).padStart(2, '0');
+          if (!knownRows.has(key)) knownRows.set(key, null);
+        }
+        try {
+          await assertReserveShiftNoOverlap({ tx, root, employeeNumber: person.employee_number, uid: r.ctx.uid,
+            candidates: pending, knownRows });
+        } catch (_) { fail('failed-precondition', 'יש חפיפה או דיווח סמוך שלא ניתן לאמת. יש לבדוק את השעות.'); }
+        await live(tx, r);
+        for (const candidate of pending) {
+          tx.create(root.collection('attendance').doc(person.employee_number + '_' + candidate.date), candidate); changed++;
         }
       } else if (r.intent.operation === 'recalculate') {
         if (reportState !== 'draft' || r.intent.days.length !== byDate.size) fail('failed-precondition', 'Monthly report is locked or incomplete');
