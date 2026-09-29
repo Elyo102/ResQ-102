@@ -10,6 +10,9 @@ const { createCalendarEngine } = require('./schedule-calendar-engine.js');
 const { createPublication } = require('./schedule-publication.js');
 const { createScheduleService, ServiceError, ACTION, PRIVILEGED } = require('./schedule-service.js');
 
+assert.strictEqual(Number(process.versions.node.split('.')[0]), 22,
+  'schedule projection differential/performance tests require Node 22');
+
 let pass = 0;
 const fails = [];
 function t(name, fn) {
@@ -31,6 +34,11 @@ function HASH(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i += 1) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
   return 'h' + h.toString(16);
+}
+function shiftDayForTest(iso, delta) {
+  const value = new Date(iso + 'T00:00:00.000Z');
+  value.setUTCDate(value.getUTCDate() + delta);
+  return value.toISOString().slice(0, 10);
 }
 
 const STATION = '102';
@@ -560,6 +568,108 @@ t('יום ללא סידור מחזיר בלוק ריק ולא שגיאה', () =>
   const plan = engine.planPeriod(REQ);
   const v = service.buildStationSchedule({ actor: FIREFIGHTER, plan, date: '2026-09-01' });
   assert.deepStrictEqual(v.previous_day.sub_stations, []);
+});
+
+t('טווח תחנתי שומר בדיוק על פלט, סדר, זהות ראשונה ושעון של הקריאות היחידות', () => {
+  const engine = createCalendarEngine({ clock: CLOCK, policy: POLICY });
+  const publication = createPublication({
+    clock: CLOCK, hash: HASH, rules: { max_attempts:3, retry_backoff_ms:[1000, 5000] }
+  });
+  let ticks = 0;
+  const service = createScheduleService({
+    clock:() => '2026-09-01T12:00:' + String(ticks++).padStart(2, '0') + '.000Z',
+    engine, publication, rules:{ station_id:STATION, capabilities:CAPS }
+  });
+  const plan = engine.planPeriod(REQ);
+  const dates = ['2026-09-01', '2026-09-02', '2026-09-03'];
+  const first = Object.assign({}, ROSTER.find((personEntry) => personEntry.id === 'גדי'), { name:'שם ראשון' });
+  const duplicate = Object.assign({}, first, { name:'שם שני', kind:'external' });
+  const roster = [first, duplicate].concat(ROSTER.filter((personEntry) => personEntry.id !== 'גדי'));
+  const events = [{
+    id:'range-event', title:'בדיקת טווח', date:'2026-09-02', people:['גדי'],
+    station_id:STATION, source_snapshot:'snap_1', source_version:VERSION
+  }];
+  const ranged = service.buildStationScheduleRange({ actor:FIREFIGHTER, plan, dates, roster, events });
+  ticks = 0;
+  const singles = dates.map((date) => service.buildStationSchedule({
+    actor:FIREFIGHTER, plan, date, roster, events
+  }));
+  assert.deepStrictEqual(ranged, singles);
+  assert.strictEqual(ranged[1].day.events[0].people[0].person, 'שם ראשון');
+  assert.strictEqual(ranged[1].day.events[0].people[0].is_me, true);
+  assert.strictEqual(Object.isFrozen(ranged) && ranged.every(Object.isFrozen), true);
+});
+
+t('טווח תחנתי מאמת גם שורות ואירועים מחוץ לטווח לפני הקרנה', () => {
+  const { service, engine } = build();
+  throwsCode(() => service.buildStationScheduleRange({
+    actor:FIREFIGHTER, plan:engine.planPeriod(REQ), dates:[]
+  }), 'dates-required');
+  throwsCode(() => service.buildStationScheduleRange({
+    actor:FIREFIGHTER, plan:engine.planPeriod(REQ), dates:['2026-09-01', ''],
+    events:[{ id:'foreign-and-bad-date', date:'2099-01-01', station_id:'999',
+      source_snapshot:'snap_1', source_version:VERSION }]
+  }), 'dates-required');
+  const plan = JSON.parse(JSON.stringify(engine.planPeriod(REQ)));
+  plan.rows.push(Object.assign({}, plan.rows[0], { date:'2099-01-01', station_id:'999' }));
+  throwsCode(() => service.buildStationScheduleRange({
+    actor:FIREFIGHTER, plan, dates:['2026-09-01']
+  }), 'plan-row-station-mismatch');
+
+  const validPlan = engine.planPeriod(REQ);
+  throwsCode(() => service.buildStationScheduleRange({
+    actor:FIREFIGHTER, plan:validPlan, dates:['2026-09-01'],
+    events:[{ id:'foreign-off-range', date:'2099-01-01', station_id:'999',
+      source_snapshot:'snap_1', source_version:VERSION }]
+  }), 'event-station-mismatch');
+});
+
+t('טווח תחנתי מצמצם ביקורי איברים בסריקות מלאות מארבע לכל יום לשתיים לכל טווח', () => {
+  const { service, engine } = build();
+  const dates = loadDays(31);
+  const rawPlan = JSON.parse(JSON.stringify(engine.planPeriod(
+    Object.assign({}, REQ, { days:dates }))));
+  const rawEvents = rawPlan.rows.slice(0, 31).map((row, index) => ({
+    id:'scan-' + index, title:'סריקה', date:row.date, people:[], station_id:STATION,
+    source_snapshot:rawPlan.source_snapshot, source_version:rawPlan.source_version
+  }));
+  const tracked = (items, counts, key) => new Proxy(items, { get(target, property, receiver) {
+    if (/^\d+$/.test(String(property))) counts[key] += 1;
+    return Reflect.get(target, property, receiver);
+  } });
+  const before = { rows:0, events:0 };
+  const beforeRows = tracked(rawPlan.rows, before, 'rows');
+  const beforeEvents = tracked(rawEvents, before, 'events');
+  dates.forEach((date) => {
+    for (const row of beforeRows) void row;
+    for (const event of beforeEvents) void event;
+    [shiftDayForTest(date, -1), date, shiftDayForTest(date, 1)].forEach((day) => {
+      for (const row of beforeRows) if (row.date === day) void row;
+      beforeEvents.filter((event) => event.date === day);
+    });
+  });
+  const after = { rows:0, events:0 };
+  const plan = Object.assign({}, rawPlan, { rows:tracked(rawPlan.rows, after, 'rows') });
+  service.buildStationScheduleRange({
+    actor:FIREFIGHTER, plan, dates, roster:ROSTER,
+    events:tracked(rawEvents, after, 'events')
+  });
+  assert.deepStrictEqual(before, {
+    rows:4 * dates.length * rawPlan.rows.length,
+    events:4 * dates.length * rawEvents.length
+  });
+  assert.deepStrictEqual(after, {
+    rows:2 * rawPlan.rows.length,
+    events:2 * rawEvents.length
+  });
+  console.log('   · station-range full-array element visits rows ' + before.rows + '→' + after.rows
+    + ' · events ' + before.events + '→' + after.events);
+});
+
+t('ארבעת מסלולי הטווח משתמשים בהקרנה המוכנה והמסלול היחיד נשאר יחיד', () => {
+  const runtime = require('fs').readFileSync(__dirname + '/schedule-runtime.js', 'utf8');
+  assert.strictEqual((runtime.match(/buildStationScheduleRange\(/g) || []).length, 4);
+  assert.strictEqual((runtime.match(/\.buildStationSchedule\(/g) || []).length, 1);
 });
 
 t('התצוגות קפואות', () => {

@@ -3,7 +3,10 @@ import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 
 const require = createRequire(import.meta.url);
-const { createCalendarEngine } = require('../functions/schedule-calendar-engine.js');
+const { createCalendarEngine, LIMITS } = require('../functions/schedule-calendar-engine.js');
+
+assert.equal(Number(process.versions.node.split('.')[0]), 22,
+  'schedule candidate-edge capacity evidence requires Node 22');
 
 const station = 'load-test-station';
 const version = 'load-v1';
@@ -73,7 +76,17 @@ assert.ok(heapMb < 256, 'חריגה מתקציב זיכרון 256MB: ' + heapMb 
 console.log('✓ schedule-load-acceptance: 1000 משתמשים · 500 תקנים · חודש · 15000 שיבוצים · '
   + elapsed + 'ms · ' + heapMb + 'MB');
 
-const boundaryRoster = Array.from({ length: 5000 }, (_, i) => ({
+assert.equal(LIMITS.MAX_CANDIDATE_EDGES, 50000000,
+  'candidate-edge ceiling changed; capacity review is required');
+const boundaryDays = engine.daysBetween('2026-09-01', '2026-11-30');
+const boundarySlotsPerDay = 500;
+const boundaryRosterSize = Math.floor(
+  LIMITS.MAX_CANDIDATE_EDGES / (boundaryDays.length * boundarySlotsPerDay)) + 1;
+assert.ok((boundaryRosterSize - 1) * boundaryDays.length * boundarySlotsPerDay
+  <= LIMITS.MAX_CANDIDATE_EDGES);
+assert.ok(boundaryRosterSize * boundaryDays.length * boundarySlotsPerDay
+  > LIMITS.MAX_CANDIDATE_EDGES);
+const boundaryRoster = Array.from({ length: boundaryRosterSize }, (_, i) => ({
   id: 'boundary-' + String(i).padStart(4, '0'),
   station_id: station,
   sub_station: 'main',
@@ -86,7 +99,9 @@ const boundaryRoster = Array.from({ length: 5000 }, (_, i) => ({
   source_digest: 'digest-synthetic-boundary',
   source_complete: true
 }));
-assert.throws(() => engine.planPeriod({
+let boundaryReturned = false;
+assert.throws(() => {
+  const value = engine.planPeriod({
   station_id: station,
   source_snapshot: 'synthetic-boundary-snapshot',
   source_version: version,
@@ -98,7 +113,13 @@ assert.throws(() => engine.planPeriod({
   availability: {},
   locked: {},
   carry: {},
-  days: engine.daysBetween('2026-09-01', '2026-11-30'),
+  days: boundaryDays,
   roster: boundaryRoster
-}), (error) => error && error.code === 'candidate-edges-too-many');
-console.log('✓ schedule-load-boundary: 5000 משתמשים · 500 תקנים · 3 חודשים נחסם מראש ללא תוצאה חלקית');
+  });
+  boundaryReturned = value !== undefined;
+}, (error) => error && error.code === 'candidate-edges-too-many');
+assert.equal(boundaryReturned, false,
+  'candidate-edge overflow must fail before returning any partial plan');
+console.log('✓ schedule-load-boundary: ceiling ' + LIMITS.MAX_CANDIDATE_EDGES
+  + ' · first overflow ' + (boundaryRosterSize * boundaryDays.length * boundarySlotsPerDay)
+  + ' edges · no partial result');

@@ -8,6 +8,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+assert.equal(Number(process.versions.node.split('.')[0]), 22,
+  'schedule route performance budget requires Node 22');
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
@@ -143,8 +146,12 @@ try {
 
   const legacySource = fs.readFileSync(path.join(root, 'schedule.html'), 'utf8');
   assert.doesNotMatch(legacySource, /firebase-firestore|getFirestore|getDocs|collection\(|rotations|shift_overrides/);
+  const managementSource = fs.readFileSync(path.join(root, 'schedule-management.js'), 'utf8');
+  assert.doesNotMatch(managementSource,
+    /firebase-firestore|getFirestore|onSnapshot|getDocs|getDoc\(|collection\(/,
+    'schedule route must keep Firestore reads/listeners behind the authorized callable');
   console.log('✓ legacy schedule redirect reached the server-mediated station view in ' + elapsed + 'ms');
-  console.log('✓ legacy schedule shell performs no direct legacy Firestore reads or writes');
+  console.log('✓ schedule route budget: 1 range callable · 0 direct Firestore reads · 0 listeners · 0 writes');
   await context.close();
 } finally {
   await browser.close();

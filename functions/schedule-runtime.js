@@ -5358,10 +5358,10 @@ function createScheduleRuntime(deps) {
       roster: snapshot.roster, viewer: ctx.uid,
       rosterCrew: displayCrews.rosterCrew, dayCrews: displayCrews.dayCrews
     };
-    const days = dates.map((date) => decoratePublishedDay(service.buildStationSchedule({
+    const days = service.buildStationScheduleRange({
       actor: actor(ctx), plan: snapshot.plan, events: snapshot.events,
-      roster: snapshot.roster, date
-    }).day, extras));
+      roster: snapshot.roster, dates
+    }).map((view) => decoratePublishedDay(view.day, extras));
     /* ⭐ v2-review §1: המינוי/החברות עלולים להתבטל **בזמן** קריאת התמונה
      * (שורות, היעדרויות, סגל). אימות חי אחרון אחרי כל הקריאות ולפני
      * ההחזרה — סירוב אינו מחזיר שמות ולא היעדרויות. אותם תפקידים, בלי הרחבה. */
@@ -8502,13 +8502,16 @@ function createScheduleRuntime(deps) {
     const {reader,resolved}=await monthReaderFor(ctx,config,range.from,range.to);
     const sidecar=await readLiveGuardProjection(ctx,range.dates);
     const crews=await legacyDisplayCrews(ctx,range.from,range.to);
+    const service=serviceFor(ctx);
     await beforeLiveGuardViewRecheck({kind:'v2-guards',ctx,mode:config.mode});
     await crews.verify();
     const projected=await reader.projectRange(resolved,segment=>{
       const snapshot=segment.snapshot,extras={absences:snapshot.plan.absences||[],absenceCoverage:snapshot.plan.absence_coverage||null,
         roster:snapshot.roster,viewer:ctx.uid,rosterCrew:crews.rosterCrew,dayCrews:crews.dayCrews};
-      return range.dates.filter(date=>date>=segment.from && date<=segment.to).map(date=>({
-        ...decoratePublishedDay(stationViewWithGuards(serviceFor(ctx).buildStationSchedule({actor:actor(ctx),plan:snapshot.plan,events:snapshot.events,roster:snapshot.roster,date}),sidecar,date,ctx.uid).day,extras),
+      const dates=range.dates.filter(date=>date>=segment.from && date<=segment.to);
+      return service.buildStationScheduleRange({actor:actor(ctx),plan:snapshot.plan,events:snapshot.events,
+        roster:snapshot.roster,dates}).map(view=>({
+        ...decoratePublishedDay(stationViewWithGuards(view,sidecar,view.day.date,ctx.uid).day,extras),
         available:true,provenance:segment.provenance
       }));
     });
@@ -9104,11 +9107,11 @@ function createScheduleRuntime(deps) {
         await requireDisplayConfigurationUnchanged(ctx, config);
         await requireSameDisplayState(displayState);
         await requireLiveBoardViewer(ctx);
-        const days = range.dates.map((date) => decoratePublishedDay(
-          stationViewWithGuards(service.buildStationSchedule({
-            actor: actor(ctx), plan: displayed.plan, events: displayed.events,
-            roster: displayed.roster, date
-          }), sidecar, date, ctx.uid).day, extras));
+        const days = service.buildStationScheduleRange({
+          actor: actor(ctx), plan: displayed.plan, events: displayed.events,
+          roster: displayed.roster, dates:range.dates
+        }).map((view) => decoratePublishedDay(
+          stationViewWithGuards(view, sidecar, view.day.date, ctx.uid).day, extras));
         return {
           mode: config.mode, active: true, source: 'imported-display', imported: true,
           display_only: true, draft_id: displayState.draft_id,
@@ -9173,9 +9176,11 @@ function createScheduleRuntime(deps) {
     await displayCrews.verify();
     await activeSnapshotStillCurrent(ctx, config, active);
     await requireLiveBoardViewer(ctx);
-    const days = range.dates.map((date) => decoratePublishedDay(stationViewWithGuards(service.buildStationSchedule({
-      actor: actor(ctx), plan: active.plan, events: active.events, roster: active.roster, date
-    }), sidecar, date, ctx.uid).day, extras));
+    const days = service.buildStationScheduleRange({
+      actor: actor(ctx), plan: active.plan, events: active.events,
+      roster: active.roster, dates:range.dates
+    }).map((view) => decoratePublishedDay(
+      stationViewWithGuards(view, sidecar, view.day.date, ctx.uid).day, extras));
     return {
       mode: config.mode, active: true, source: 'v2', imported: active.plan.imported === true,
       publication_id: active.pointer.publication_id, revision: active.pointer.revision,

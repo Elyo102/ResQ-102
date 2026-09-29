@@ -4688,6 +4688,29 @@ exports.onSwapChange = onDocumentWritten(
     // אף משמרת, ולחסום אותה מוקדם מדי היה מונע גם בקשות
     // שיהיו חוקיות אחרי שהצד השני יבחר תאריך אחר.
     if (now === 'approved' && was !== 'approved') {
+      // Trigger retries can arrive after another approval/cancellation. Only
+      // the exact event document version may receive this corrective write.
+      let correctionInfrastructureFailed = false;
+      const writeCurrentSwap = async (patch) => {
+        const expectedVersion = event.data.after.updateTime;
+        if (!expectedVersion || typeof expectedVersion.isEqual !== 'function') {
+          console.error('swap correction refused: missing event document version');
+          return false;
+        }
+        const ref = db.doc('stations/' + sid + '/swaps/' + event.params.swapId);
+        try {
+          return await db.runTransaction(async (tx) => {
+            const current = await tx.get(ref);
+            if (!current.exists || !current.updateTime
+                || !expectedVersion.isEqual(current.updateTime)) return false;
+            tx.update(ref, patch);
+            return true;
+          });
+        } catch (error) {
+          correctionInfrastructureFailed = true;
+          throw error;
+        }
+      };
       try {
         const range = swapScheduleRange(after);
         if (!range) throw new Error('swap without dates');
@@ -4709,13 +4732,14 @@ exports.onSwapChange = onDocumentWritten(
               : b.who + ' יעבוד ב-' + dmyS(b.gain) + ' וגם ב-' + dmyS(b.clash);
           }).join('; ');
 
-          await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
+          const corrected = await writeCurrentSwap({
             status: 'rejected',
             rejected_by_system: true,
             reject_why: 'חוק 48 השעות: ' + why + '. בין שתי משמרות ' +
                         'חייב להיות יום מנוחה.',
             rejected_key: new Date().toISOString()
-          }, { merge: true });
+          });
+          if (!corrected) return;
 
           await pushToUsers(sid, both, 'swap_mine',
             'ההחלפה בוטלה',
@@ -4725,14 +4749,16 @@ exports.onSwapChange = onDocumentWritten(
           return;
         }
       } catch (e) {
+        if (correctionInfrastructureFailed) throw e;
         // כשל זמני בקריאה אינו יכול להפוך לאישור שקט. מחזירים את
         // ההחלפה לשלב האישור האחרון, כך שאפשר לנסות שוב אחרי שהמסד
         // חזר, בלי להמציא תוצאת מנוחה ובלי למחוק את הבקשה.
-        await db.doc('stations/' + sid + '/swaps/' + event.params.swapId).set({
+        const corrected = await writeCurrentSwap({
           status: 'cmd_to',
           rest_check_pending: true,
           rest_check_failed_at: new Date().toISOString()
-        }, { merge: true });
+        });
+        if (!corrected) return;
 
         await pushToUsers(sid, both, 'swap_mine',
           'ההחלפה ממתינה לבדיקת מנוחה',

@@ -198,15 +198,22 @@ function createScheduleService(deps) {
     return person && isNonEmptyString(person.name) ? person.name : id;
   }
 
-  /**
-   * 42H.20 §1 · „עובד ללא חשבון" — אמת מקורה במלאי הזהויות (kind
-   * שמגיע מ-schedule-import-pipeline.js), לא ניחוש בצד המסך. אדם
-   * ותיק שלא עבר דרך ייבוא חוברת (אין לו kind בכלל) נחשב מקושר,
-   * לשמירת התאמה לאחור. false בלבד — לעולם לא true — הופך ל-external.
-   */
-  function personUnlinked(roster, id) {
-    if (!Array.isArray(roster)) return false;
-    const person = roster.filter((entry) => entry && entry.id === id)[0];
+  function firstRosterById(roster) {
+    const out = new Map();
+    if (!Array.isArray(roster)) return out;
+    for (const person of roster) {
+      if (person && !out.has(person.id)) out.set(person.id, person);
+    }
+    return out;
+  }
+
+  function personNameFromIndex(rosterById, id) {
+    const person = rosterById.get(id);
+    return person && isNonEmptyString(person.name) ? person.name : id;
+  }
+
+  function personUnlinkedFromIndex(rosterById, id) {
+    const person = rosterById.get(id);
     return !!person && person.kind === 'external';
   }
 
@@ -291,10 +298,26 @@ function createScheduleService(deps) {
     return dt.getUTCFullYear() + '-' + p(dt.getUTCMonth() + 1) + '-' + p(dt.getUTCDate());
   }
 
-  function dayBlock(plan, date, viewer, events, roster) {
-    const subs = [];
+  function prepareStationProjection(plan, events, roster) {
+    const rowsByDate = new Map();
     for (const row of plan.rows) {
-      if (row.date !== date) continue;
+      const rows = rowsByDate.get(row.date) || [];
+      rows.push(row);
+      rowsByDate.set(row.date, rows);
+    }
+    const eventsByDate = new Map();
+    for (const event of events) {
+      const rows = eventsByDate.get(event.date) || [];
+      rows.push(event);
+      eventsByDate.set(event.date, rows);
+    }
+    return { rowsByDate, eventsByDate, rosterById:firstRosterById(roster) };
+  }
+
+  function dayBlock(date, viewer, prepared) {
+    const subs = [];
+    const rows = prepared.rowsByDate.get(date) || [];
+    for (const row of rows) {
       subs.push({
         sub_station: row.sub_station,
         label: row.label,
@@ -303,30 +326,42 @@ function createScheduleService(deps) {
         below_minimum: row.below_minimum === true,
         people: row.slots.map((s) => projectSlot({
           uid: s.person,
-          person: personName(roster, s.person),
+          person: personNameFromIndex(prepared.rosterById, s.person),
           role_label: s.label || null,
           hours: s.hours || null,
           cancelled: s.cancelled === true,
           /** ההדגשה של המשתמש המחובר. */
           is_me: s.person === viewer,
           /** 42H.20 §2 · אדם שאין לו חשבון מקושר לא יקבל התראת פוש. */
-          unlinked: personUnlinked(roster, s.person) === true ? true : undefined
+          unlinked: personUnlinkedFromIndex(prepared.rosterById, s.person) === true ? true : undefined
         }, s))
       });
     }
-    const dayEvents = (events || []).filter((e) => isPlainObject(e) && e.date === date)
+    const dayEvents = (prepared.eventsByDate.get(date) || [])
       .map((e) => ({
         id: e.id, kind: e.kind === 'schedule_note' ? 'schedule_note' : 'event',
         title: e.title, hours: e.hours || null,
         cancelled: e.cancelled === true,
         people: Array.isArray(e.people) ? e.people.map((id) => ({
           uid: id,
-          person: personName(roster, id),
+          person: personNameFromIndex(prepared.rosterById, id),
           is_me: id === viewer
         })) : [],
         includes_me: Array.isArray(e.people) && e.people.indexOf(viewer) > -1
       }));
     return { date, sub_stations: subs, events: dayEvents };
+  }
+
+  function stationScheduleView(actor, date, prepared) {
+    return Object.freeze({
+      kind: 'station-schedule',
+      view: 'station',
+      viewer: actor.id,
+      generated_at: clock(),
+      previous_day: Object.freeze(dayBlock(shiftDate(date, -1), actor.id, prepared)),
+      day: Object.freeze(dayBlock(date, actor.id, prepared)),
+      next_day: Object.freeze(dayBlock(shiftDate(date, 1), actor.id, prepared))
+    });
   }
 
   /**
@@ -341,15 +376,22 @@ function createScheduleService(deps) {
     if (!isNonEmptyString(inp.date)) throw new ServiceError('date-required', 'חובה למסור תאריך');
 
     const events = assertEvents(inp.events, plan, 'אירועי התחנה');
-    return Object.freeze({
-      kind: 'station-schedule',
-      view: 'station',
-      viewer: actor.id,
-      generated_at: clock(),
-      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events, inp.roster)),
-      day: Object.freeze(dayBlock(plan, inp.date, actor.id, events, inp.roster)),
-      next_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, 1), actor.id, events, inp.roster))
-    });
+    return stationScheduleView(actor, inp.date,
+      prepareStationProjection(plan, events, inp.roster));
+  }
+
+  function buildStationScheduleRange(input) {
+    const inp = isPlainObject(input) ? input : {};
+    const actor = inp.actor;
+    assertMay(ACTION.VIEW_STATION, actor);
+    const plan = assertPlan(inp.plan);
+    if (!Array.isArray(inp.dates) || inp.dates.length === 0
+        || inp.dates.some((date) => !isNonEmptyString(date))) {
+      throw new ServiceError('dates-required', 'חובה למסור רשימת תאריכים');
+    }
+    const events = assertEvents(inp.events, plan, 'אירועי התחנה');
+    const prepared = prepareStationProjection(plan, events, inp.roster);
+    return Object.freeze(inp.dates.map((date) => stationScheduleView(actor, date, prepared)));
   }
 
   /* ---------------- פעולות ניהול ---------------- */
@@ -444,6 +486,7 @@ function createScheduleService(deps) {
     assertMay,
     buildMySchedule,
     buildStationSchedule,
+    buildStationScheduleRange,
     runPlanner,
     publish,
     respond,
