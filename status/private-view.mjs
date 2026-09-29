@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs';
+import {createPrivateController} from './private-controller.mjs?v=20260929-safari-gis1';
 const taskText={local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה'};
 const kindText={heartbeat:'אות חיים',task_started:'התחלת משימה',test_passed:'בדיקה עברה',test_failed:'בדיקה נכשלה',commit_created:'נוצר קומיט',task_completed:'משימה הושלמה',task_failed:'משימה נכשלה'};
 const phaseText={signed_out:'יש להתחבר לחשבון הבעלים',denied:'אין הרשאה לצפות בדשבורד',connecting:'מתחבר למקור הפרטי…',connected:'מחובר למקור האירועים הפרטי',offline:'החיבור אינו מאומת — פעילות חיה אינה ידועה',error:'החיבור הופסק — המידע הפרטי הוסתר',paused:'התצוגה מושהית; עבודת הסוכנים לא נעצרה'};
@@ -9,7 +9,8 @@ export function signInErrorText(error){
     'auth/cancelled-popup-request':'בקשת ההתחברות בוטלה. לחץ שוב על התחברות.',
     'auth/web-storage-unsupported':'הדפדפן חוסם אחסון הדרוש להתחברות. נסה לפתוח את הקישור בחלון Safari רגיל.',
     'auth/unauthorized-domain':'כתובת האתר אינה מורשית להתחברות. נדרש תיקון בהגדרות המערכת.',
-    'auth/network-request-failed':'ההתחברות לא הושלמה עקב בעיית רשת. בדוק את החיבור ונסה שוב.'
+    'auth/network-request-failed':'ההתחברות לא הושלמה עקב בעיית רשת. בדוק את החיבור ונסה שוב.',
+    'auth/oauth-failed':'Google לא השלים את ההתחברות. סגור חלונות התחברות קודמים ונסה שוב.'
   };
   return Object.hasOwn(messages,error?.code)?messages[error.code]:'לא ניתן להתחבר כרגע. נסה שוב.';
 }

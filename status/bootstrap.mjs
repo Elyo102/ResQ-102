@@ -1,14 +1,35 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs';
-import {mountPrivateDashboard} from './private-view.mjs';
-import {firebaseConfig} from './firebase-config.mjs';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260929-safari-gis1';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260929-safari-gis1';
+import {firebaseConfig} from './firebase-config.mjs?v=20260929-safari-gis1';
 const root=document.getElementById('private-root');
+
+const loadGoogleOauth=()=>new Promise((resolve,reject)=>{
+  const ready=()=>globalThis.google?.accounts?.oauth2?.initTokenClient;
+  if(ready()){resolve(globalThis.google.accounts.oauth2);return;}
+  const prior=document.querySelector('script[data-resq-google-identity]');
+  const script=prior||document.createElement('script');
+  let settled=false;
+  const timer=setTimeout(()=>finish(Error('GOOGLE_IDENTITY_TIMEOUT')),12000);
+  function cleanup(){clearTimeout(timer);script.removeEventListener('load',loaded);script.removeEventListener('error',failed);}
+  function finish(error){if(settled)return;settled=true;cleanup();if(error)reject(error);else resolve(globalThis.google.accounts.oauth2);}
+  function loaded(){if(ready())finish();else finish(Error('GOOGLE_IDENTITY_UNAVAILABLE'));}
+  function failed(){finish(Error('GOOGLE_IDENTITY_LOAD_FAILED'));}
+  script.addEventListener('load',loaded,{once:true});
+  script.addEventListener('error',failed,{once:true});
+  if(!prior){
+    script.src='https://accounts.google.com/gsi/client';
+    script.async=true;script.defer=true;script.dataset.resqGoogleIdentity='true';
+    document.head.append(script);
+  }
+});
 try {
-  const [app,auth,firestore]=await Promise.all([
+  const [app,auth,firestore,googleOauth]=await Promise.all([
     import('https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js'),
     import('https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js'),
-    import('https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js')
+    import('https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js'),
+    loadGoogleOauth()
   ]);
-  const adapter=await createFirebaseAdapter({sdk:{...app,...auth,...firestore},config:firebaseConfig});
+  const adapter=await createFirebaseAdapter({sdk:{...app,...auth,...firestore},config:firebaseConfig,googleOauth});
   const dispose=mountPrivateDashboard({root,...adapter});
   // Hidden tabs are handled by the controller; remove private DOM when leaving.
   window.addEventListener('pagehide',dispose,{once:true});
