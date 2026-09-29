@@ -1,17 +1,43 @@
-# ResQ — הצעות עיצוב מרוכזות לאישור הבעלים
+# ResQ — Design proposals (approval required)
 
-מסמך ההצעות החזותיות הנוכחי,29.09.2026. **לא בוצע שינוי UI במסגרת
-מסמך זה.** הממשק הקיים מוקפא; לפני מימוש נדרשים mockup/preview ואישור.
-[PROPOSALS_2026.md](PROPOSALS_2026.md) נשמר כהיסטוריית ההצעות המקורית.
+Status: **proposal only**. None of the layouts below is implemented in the product.
 
-| הצעה | צורך | דרישת אמת ופרטיות | מצב |
-|---|---|---|---|
-| הבחנה בין עובד, ממתין, חסום ומידע ישן בדשבורד | לא לפרש אירוע ישן כסוכן פעיל | זמן האירוע ומקורו; כשל ספק לא מוצג כהצלחה | הצעה בלבד; קודם לבדוק מה כבר מוצג |
-| הפרדת "תקציב שמור" מ"עלות בפועל" | reservations אינם חשבונית | UNKNOWN אם אין מקור עלות מהימן; אין יתרת ספק מומצאת | הצעה בלבד |
-| תצוגת מסירת משימה | להבין מי תוכנן ומי ביצע בפועל | taskID ואישור קבלה, בלי קוד/לוגים רגישים בממשק ציבורי | תלוי בתור עמיד; לא מומש |
-| מקור ועדכניות של מידע באופליין | cache אינו אישור שרת | אין חיווי הצלחה סופי לפעולה מבצעית שלא אושרה | הדמיה נדרשת |
-| מצב שינוי אישי בסידור חודשי | פשטות והבנת שינוי שיבוץ | לשמר את הנייד ולהשוות תחילה למימוש הקיים | הצעה, לא טענה שהיכולת חסרה |
-| התקדמות העלאת מדיה או טעינת דוח | הסבר קצר לפעולה ארוכה/כשל | הצגת כשל אמיתי ואפשרות ניסיון חוזר עם אותה זהות פעולה | הצעה, לא שינוי ממשק |
+## 1. Desktop command center
 
-תוכנית ההנדסה שאינה חזותית: [ENTERPRISE_ROADMAP_20260929.md](ENTERPRISE_ROADMAP_20260929.md).
-אין אישור עיצוב משתמע מהצלחה בבדיקות, מיזוג Git או אישור לבדיקת ביצועים.
+![Desktop command center](mockups/desktop-command-center.svg)
+
+- Full-height navigation rail on the left.
+- Main operational content uses the available desktop width.
+- Personal account and application updates are open by default on the right and can be collapsed.
+- Mobile layout remains unchanged.
+
+Decision required: approve, reject, or request changes before implementation.
+## 2. Schedule manager workspace
+
+![Schedule manager](mockups/schedule-manager.svg)
+
+- Dedicated workspace under "התחנה והצוות" for authorized officers and schedule managers.
+- Monthly view, roster-based assignment, missing-person warnings, and one-click draft generation.
+- The signed workforce source is the only basis for "not scheduled" warnings.
+
+Decision required: approve, reject, or request changes before implementation.
+
+## 3. HR live status workspace
+
+![HR live status](mockups/hr-live-status.svg)
+
+- Station-scoped employee roster; never a single 3,000-person screen.
+- Live counters for sickness, reserve duty, leave, prolonged absence, and open HR requests.
+- Rejected/cancelled items remain in history but are not counted.
+
+Decision required: approve, reject, or request changes before implementation.
+
+## 4. Operational vehicles workspace
+
+![Operational vehicles](mockups/operational-vehicles.svg)
+
+- Vehicle selector, compartment photo, inventory list, equipment removal/replacement log, and vehicle-specific faults.
+- Sections are collapsible and load only when selected; the mockup intentionally shows several expanded panels so their contents can be reviewed.
+- Vehicle rotation uses available real photos now and can accept future 360-degree capture sets.
+
+Decision required: approve, reject, or request changes before implementation.
