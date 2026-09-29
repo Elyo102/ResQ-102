@@ -3,13 +3,15 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
-if (!process.env.FIRESTORE_EMULATOR_HOST) {
-  console.error('FIRESTORE_EMULATOR_HOST is required; refusing to use a real project.');
+if (!/^(?:127\.0\.0\.1|localhost):(?:8080|8191)$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')
+    || process.env.GCLOUD_PROJECT !== 'demo-resq'
+    || (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_PROJECT !== 'demo-resq')) {
+  console.error('Exact demo-resq loopback emulator target is required; refusing unsafe target.');
   process.exit(2);
 }
 
 const admin = require('firebase-admin');
-if (!admin.apps.length) admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-resq' });
+if (!admin.apps.length) admin.initializeApp({ projectId: 'demo-resq' });
 const db = admin.firestore();
 const { createCalendarEngine } = require('./schedule-calendar-engine');
 const { createPublication } = require('./schedule-publication');
@@ -96,7 +98,7 @@ function sourceContentKey(basis) {
 function runtime(sendPush, hooks) {
   const testHooks = plain(hooks) ? hooks : {};
   return createScheduleRuntime({
-    db,
+    db: testHooks.db || db,
     FieldValue: admin.firestore.FieldValue,
     FieldPath: admin.firestore.FieldPath,
     clock: CLOCK,
@@ -110,6 +112,7 @@ function runtime(sendPush, hooks) {
     // These optional hooks are a narrowly-scoped race-test seam.  Production
     // leaves them undefined; the runtime must make its own final live checks.
     beforeOutboxSend: testHooks.beforeOutboxSend,
+    afterOutboxProvider: testHooks.afterOutboxProvider,
     beforeSnapshotFinalize: testHooks.beforeSnapshotFinalize,
     beforeEffectiveViewRecheck: testHooks.beforeEffectiveViewRecheck,
     beforeLiveGuardViewRecheck: testHooks.beforeLiveGuardViewRecheck,
@@ -126,6 +129,33 @@ function compatibilityRange(patch) {
 }
 
 function station() { return db.collection('stations').doc(SID); }
+function providerEntryAudit(requiredPaths,afterClaim){
+  const audit={markers:0,claimed:false};
+  audit.db=new Proxy(db,{get(target,key){
+    if(key!=='runTransaction'){const v=target[key];return typeof v==='function'?v.bind(target):v;}
+    return async callback=>{
+      let claimed=false;
+      const result=await target.runTransaction(async tx=>{
+        const reads=new Set();
+        return callback(new Proxy(tx,{get(t,k){
+          if(k==='get')return async ref=>{reads.add(ref.path);return t.get(ref);};
+          if(k==='update')return (ref,value)=>{
+            if(value.provider_state==='entered'){
+              for(const required of requiredPaths)assert.ok(reads.has(required),'provider marker must read live source in SAME transaction: '+required);
+              audit.markers++;
+            }
+            if(value.status==='sending')claimed=true;
+            return t.update(ref,value);
+          };
+          const value=t[k];return typeof value==='function'?value.bind(t):value;
+        }}));
+      });
+      if(claimed&&!audit.claimed){audit.claimed=true;if(afterClaim)await afterClaim();}
+      return result;
+    };
+  }});
+  return audit;
+}
 function activePointer() { return station().collection('schedule_state').doc('active'); }
 function managerAccess() { return station().collection('schedule_access').doc('manager'); }
 
@@ -2494,16 +2524,26 @@ async function test(name, fn) {
     await db.doc('stations/' + SID + '/schedule_state/runtime').update({ mode: 'new' });
   });
 
-  await test('an expired sending lease is recovered instead of losing the push forever', async () => {
+  await test('an expired provider-entered lease is retried with duplicate risk visible', async () => {
     const active = (await db.doc('stations/' + SID + '/schedule_state/active').get()).data();
     const outbox = await db.collection('stations/' + SID + '/schedule_publications/'
       + active.publication_id + '/schedule_outbox').limit(1).get();
     assert.ok(outbox.size > 0);
     await outbox.docs[0].ref.update({
-      status: 'sending', lease_token: 'stale', lease_until: new Date('2026-08-30T00:00:00.000Z')
+      status: 'sending', lease_token: 'stale', lease_until: new Date('2026-08-30T00:00:00.000Z'),
+      delivery_operation_id: 'dop_existing', delivery_attempt_id: 'dat_crashed',
+      delivery_semantics: 'at-least-once', provider_state: 'entered',
+      provider_entered_at: new Date('2026-08-30T00:00:00.000Z'),
+      delivery_ack_attempt_id: null, duplicate_risk_count: 0
     });
+    await db.collection('schedule_runtime_workers').doc('outbox_resume').delete();
     await api.resumeOutbox();
-    assert.equal((await outbox.docs[0].ref.get()).data().status, 'queued');
+    const after = (await outbox.docs[0].ref.get()).data() || {};
+    assert.equal(after.status, 'queued');
+    assert.equal(after.delivery_uncertain, true);
+    assert.equal(after.duplicate_risk_count, 1);
+    assert.equal(after.last_uncertain_attempt_id, 'dat_crashed');
+    assert.equal(after.provider_state, 'uncertain');
   });
 
   await test('outbox delivery is cancelled if publication is no longer active', async () => {
@@ -2623,6 +2663,159 @@ async function test(name, fn) {
     }
     assert.equal(sends, 1);
     assert.equal(((await ref.get()).data() || {}).status, 'sent');
+  });
+
+  await test('durable cursor drains 101 equal-time queued rows across bounded runs', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    await settleOtherUnfinishedOutbox();
+    await db.collection('schedule_runtime_workers').doc('outbox_resume').delete();
+    const root = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox');
+    const batch = db.batch();
+    const refs = [];
+    for (let index = 0; index < 101; index += 1) {
+      const ref = root.doc('n_fair_' + String(index).padStart(3, '0') + '_' + randomId());
+      refs.push(ref);
+      batch.set(ref, outboxValue(active.publication_id, {
+        revision: Number(active.revision),
+        status: 'queued',
+        created_at: new Date('2026-09-01T06:00:00.000Z')
+      }));
+    }
+    await batch.commit();
+    let sends = 0;
+    const fair = runtime(async () => { sends += 1; return { sent: 1 }; });
+    const first = await fair.resumeOutbox();
+    assert.equal(first.scanned, 100);
+    assert.equal(sends, 100);
+    const second = await fair.resumeOutbox();
+    assert.equal(second.scanned, 1);
+    assert.equal(sends, 101);
+    const states = await Promise.all(refs.map((ref) => ref.get()));
+    assert.equal(states.filter((snap) => (snap.data() || {}).status === 'sent').length, 101);
+  });
+
+  await test('provider-success crash retries at least once and preserves duplicate visibility', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_provider_crash_' + randomId());
+    await settleOtherUnfinishedOutbox();
+    await db.collection('schedule_runtime_workers').doc('outbox_resume').delete();
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'queued'
+    }));
+    let sends = 0;
+    const crashing = runtime(async () => { sends += 1; return { sent: 1 }; }, {
+      afterOutboxProvider: async () => {
+        const error = new Error('simulated crash after provider success');
+        error.code = 'SIMULATED_POST_PROVIDER_CRASH';
+        throw error;
+      }
+    });
+    const first = await crashing.deliverOutbox(ref);
+    assert.equal(first.status, 'retry');
+    const uncertain = (await ref.get()).data() || {};
+    assert.equal(uncertain.delivery_semantics, 'at-least-once');
+    assert.equal(uncertain.delivery_uncertain, true);
+    assert.equal(uncertain.duplicate_risk_count, 1);
+    assert.equal(uncertain.provider_state, 'uncertain');
+    assert.ok(/^dop_/.test(uncertain.delivery_operation_id));
+    assert.equal(uncertain.last_uncertain_attempt_id, uncertain.delivery_attempt_id);
+    await ref.update({ next_attempt_at: null });
+    const recovery = runtime(async () => { sends += 1; return { sent: 1 }; });
+    await recovery.resumeOutbox();
+    assert.equal(sends, 1, 'retry reconciliation queues; it does not send in the same captured page');
+    assert.equal((await ref.get()).data().status, 'queued');
+    await recovery.resumeOutbox();
+    const delivered = (await ref.get()).data() || {};
+    assert.equal(sends, 2);
+    assert.equal(delivered.status, 'sent');
+    assert.equal(delivered.delivery_operation_id, uncertain.delivery_operation_id);
+    assert.equal(delivered.delivery_uncertain, false);
+    assert.equal(delivered.duplicate_risk_count, 1);
+    assert.notEqual(delivered.delivery_ack_attempt_id, uncertain.delivery_attempt_id);
+  });
+
+  await test('same durable operation with a different payload is rejected before provider entry', async () => {
+    const active = (await activePointer().get()).data() || {};
+    assert.ok(active.publication_id);
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_operation_conflict_' + randomId());
+    await settleOtherUnfinishedOutbox();
+    await ref.set(outboxValue(active.publication_id, {
+      revision: Number(active.revision), status: 'queued',
+      delivery_operation_id: 'dop_' + hash('push-operation|' + ref.path).slice(0, 40),
+      delivery_payload_digest: 'tampered-payload-digest'
+    }));
+    let sends = 0;
+    const result = await runtime(async () => { sends += 1; return { sent: 1 }; }).deliverOutbox(ref);
+    const after = (await ref.get()).data() || {};
+    assert.deepEqual(result, { skipped: true });
+    assert.equal(sends, 0);
+    assert.equal(after.status, 'failed');
+    assert.equal(after.last_error, 'DELIVERY_OPERATION_CONFLICT');
+    assert.ok(after.operation_conflict_at);
+  });
+
+  await test('schedule provider entry atomically reads live fences and rejects post-claim revocation', async()=>{
+    const active=(await activePointer().get()).data();
+    const user=station().collection('users').doc('viewer'),before=(await user.get()).data();
+    const required=[user.path,activePointer().path,station().collection('schedule_state').doc('runtime').path,
+      station().collection('schedule_publications').doc(active.publication_id).path];
+    for(const revoked of [false,true]){
+      const ref=station().collection('schedule_publications').doc(active.publication_id).collection('schedule_outbox').doc('n_atomic_'+randomId());
+      await ref.set(outboxValue(active.publication_id,{revision:Number(active.revision)}));
+      const audit=providerEntryAudit(required,revoked?()=>user.update({active:false}):null);
+      let sends=0;
+      try{
+        await runtime(async()=>{sends++;return {sent:1};},{db:audit.db}).deliverOutbox(ref);
+        assert.equal(sends,revoked?0:1);
+        assert.equal(audit.markers,revoked?0:1);
+        assert.equal((await ref.get()).data().status,revoked?'cancelled':'sent');
+      }finally{await user.set(before);await ref.delete();}
+    }
+  });
+
+  await test('guard provider entry atomically reads guard and recipient and refuses changed source', async()=>{
+    const user=station().collection('users').doc('viewer');
+    for(const changed of [false,true]){
+      const guard=station().collection('guards').doc('g_atomic_'+randomId());
+      const ref=station().collection('guard_outbox').doc('go_atomic_'+randomId());
+      await guard.set({status:'open',revision:1});
+      await ref.set({station_id:SID,guard_id:guard.id,recipient_uid:'viewer',kind:'open',revision:1,
+        date:'2026-09-02',start:'08:00',end:'12:00',status:'queued',attempt:0,
+        expires_at:new Date('2026-10-01T00:00:00.000Z')});
+      const audit=providerEntryAudit([user.path,guard.path],changed?()=>guard.update({status:'cancelled',revision:2}):null);
+      let sends=0;
+      try{
+        await runtime(async()=>{sends++;return {sent:1};},{db:audit.db}).deliverGuardOutbox(ref);
+        assert.equal(sends,changed?0:1);assert.equal(audit.markers,changed?0:1);
+        assert.equal((await ref.get()).data().status,changed?'cancelled':'sent');
+      }finally{await ref.delete();await guard.delete();}
+    }
+  });
+
+  await test('changed retry content cannot reuse a provider-entered operation', async () => {
+    const active = (await activePointer().get()).data() || {};
+    const ref = station().collection('schedule_publications').doc(active.publication_id)
+      .collection('schedule_outbox').doc('n_changed_retry_' + randomId());
+    await ref.set(outboxValue(active.publication_id, {revision:Number(active.revision),status:'queued'}));
+    let sends=0;
+    const delivery=runtime(async()=>{sends++;throw Error('ambiguous provider response');});
+    assert.equal((await delivery.deliverOutbox(ref)).status,'retry');
+    const before=(await ref.get()).data();
+    await ref.update({status:'queued',next_attempt_at:null,push:{title:'Changed retry title',body:'Changed retry body'}});
+    assert.deepEqual(await delivery.deliverOutbox(ref),{skipped:true});
+    const after=(await ref.get()).data();
+    assert.equal(sends,1);
+    assert.equal(after.status,'failed');
+    assert.equal(after.last_error,'DELIVERY_OPERATION_CONFLICT');
+    assert.equal(after.delivery_operation_id,before.delivery_operation_id);
+    assert.equal(after.delivery_payload_digest,before.delivery_payload_digest);
+    assert.equal(after.delivery_uncertain,true);
+    assert.equal(after.duplicate_risk_count,1);
   });
 
   await test('revocation during snapshot finalization leaves no complete draft or active publication', async () => {
@@ -3112,8 +3305,12 @@ async function test(name, fn) {
 
   for (const mode of ['shadow', 'new']) {
     await test('unconfigured workbook real Firestore lifecycle preserves external names in ' + mode, async () => {
-      const importSid = SID + '_workbook_' + mode;
+      assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(?:127\.0\.0\.1|localhost):(?:8080|8191)$/);
+      assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq');
+      assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
+      const importSid = SID + '_workbook_' + mode + '_' + randomId();
       const root = db.collection('stations').doc(importSid);
+      try {
       const runtimeRef = root.collection('schedule_state').doc('runtime');
       const importReq = data => req('manager', 'commander', data, { stationId:importSid });
       await root.set({ name:'Workbook integration ' + mode });
@@ -3203,10 +3400,17 @@ async function test(name, fn) {
         assert.deepEqual(liveRange.days, before.days, 'real cutover preserves the exact external employee board');
         assert.equal(pushes.length, 0);
       }
+      } finally {
+        assert.match(root.path, /^stations\/schedule_it_workbook_(?:shadow|new)_[a-f0-9]{24}$/);
+        assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(?:127\.0\.0\.1|localhost):(?:8080|8191)$/);
+        assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq');
+        assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
+        await db.recursiveDelete(root);
+      }
     });
   }
-  assert.equal(passed, 85);
-  console.log('\n85 schedule runtime Firestore integration checks passed.');
+  assert.equal(passed, 91);
+  console.log('\n91 schedule runtime Firestore integration checks passed.');
   process.exit(0);
 })().catch((error) => {
   console.error(error);

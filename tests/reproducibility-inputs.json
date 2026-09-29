@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "specs": [
+    "tests/e2e/private-live-bootstrap.spec.mjs",
+    "tests/e2e/private-status.spec.mjs",
+    "tests/e2e/resq-core.spec.mjs",
+    "tests/e2e/status.spec.mjs"
+  ],
+  "inputs": [
+    "tests/reproducibility-inputs.json",
+    "tests/reproducibility.mjs",
+    "tests/reproducibility.test.mjs",
+    "tests/e2e/invitation.fixture.mjs",
+    "tests/playwright.config.mjs",
+    "tests/package.json",
+    "tests/package-lock.json",
+    "rules-test/package.json",
+    "rules-test/package-lock.json",
+    "functions/package.json",
+    "functions/package-lock.json",
+    "login.html",
+    "resq-banner.jpg",
+    "theme.css",
+    "bulletin.css",
+    "public/status/index.html",
+    "public/status/status.js",
+    "public/status/status.css",
+    "public/status/snapshot.json",
+    "control-plane/web/index.html",
+    "control-plane/web/bootstrap.mjs",
+    "control-plane/web/firebase-adapter.mjs",
+    "control-plane/web/firebase-config.mjs",
+    "control-plane/web/private-controller.mjs",
+    "control-plane/web/private-view.mjs",
+    "control-plane/web/private.css"
+  ]
+}

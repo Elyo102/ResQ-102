@@ -66,7 +66,7 @@ Acceptance: per-route read/listener budgets, late-response identity tests, pagin
 3. Show transparent Hebrew state: queued, syncing, conflict, completed, or needs manual review.
 4. Test reload and browser termination—not only temporary network interception.
 
-Acceptance: offline action survives reload, syncs once, cannot duplicate, and exposes conflict resolution.
+Acceptance: an action explicitly classified as privacy-approved and queueable survives reload, syncs once, cannot duplicate, and exposes conflict resolution. Sensitive HR, attendance, callout, and push workflows remain online-required/non-persistent unless separately reviewed and approved.
 
 ### Phase 4 — release and field proof
 

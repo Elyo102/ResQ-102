@@ -5,6 +5,16 @@ const test = require('node:test');
 const backupPolicy = require('./backup-policy');
 const firestoreIndexes = require('../firestore.indexes.json');
 
+test('outbox fairness cursor is ephemeral and never restored as business authority', () => {
+  const item=backupPolicy.getPolicy('schedule_runtime_workers/{workerId}');
+  assert.equal(item.scope,'root');
+  assert.equal(item.classification,'temporary');
+  assert.equal(item.backupPolicy,'exclude');
+  assert.equal(item.restorePolicy,'do_not_restore');
+  assert.equal(item.retention,'manual_rebuild_only');
+  assert.equal(item.humanReadable,'forbidden');
+});
+
 test('policy manifest is internally valid and path-unique', () => {
   assert.deepEqual(backupPolicy.validatePolicies(backupPolicy.DATA_POLICIES), []);
   assert.equal(new Set(backupPolicy.DATA_POLICIES.map((p) => p.path)).size,

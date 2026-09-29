@@ -136,8 +136,12 @@ assert.equal(updateFailed.replaced.length, 0, 'failed update never refreshes awa
     source.indexOf("self.addEventListener('activate'"));
   assert.equal(installBody.includes('skipWaiting'), false,
     'install never forces an update over a live page');
-  assert.equal(source.includes('Promise.all(CORE_SHELL.map(function (u) { return c.add(u); }))'), true,
+  assert.equal(source.includes('c.addAll(CORE_SHELL)'), true,
     'the minimal release shell is cached atomically');
+  assert.match(source, /event\.waitUntil\(cacheRefresh\)/,
+    'runtime cache refresh is bound to the fetch-event lifetime');
+  assert.match(source, /url\.pathname\.includes\('\/__\/'\)[\s\S]{0,120}return/,
+    'same-origin Firebase reserved routes bypass shell interception');
   assert.equal(source.includes("event.data.type === 'RESQ_SKIP_WAITING'"), true,
     'a lifecycle message can activate a waiting update');
   const pageSource = fs.readFileSync(path.join(root, 'pwa.js'), 'utf8');

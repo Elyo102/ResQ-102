@@ -46,6 +46,10 @@ function policy(path, scope, classification, monitorPolicy, backupPolicy,
 }
 
 const DATA_POLICIES = Object.freeze([
+  policy('schedule_runtime_workers/{workerId}', 'root', 'temporary',
+    'none', 'exclude', 'do_not_restore', 'confidential', 'manual_rebuild_only',
+    'Rebuildable outbox traversal cursor; never restores delivery leases, provider outcomes or business authority. No TTL or automatic deletion is enabled.',
+    { humanReadable:'forbidden' }),
   policy('system_health_cycles/{cycleId}', 'root', 'derived',
     'activity', 'exclude', 'do_not_restore', 'operational', 'ttl_30_days',
     'Durable lease, inventory and summary for the rebuildable watchdog shadow cycle.',

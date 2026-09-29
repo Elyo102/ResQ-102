@@ -63,10 +63,18 @@ test('mixed-station worker chooses each authority independently and rejects forg
   await f.rt.activateMonthAuthority(activation());
   f.db.collectionGroup=name=>({where(field,op,status){
     assert.equal(name,'schedule_outbox');assert.equal(field,'status');assert.equal(op,'==');
-    return {limit(max){return {async get(){
-      const paths=f.db._paths('stations/').filter(p=>p.includes('/schedule_outbox/') && f.db._get(p).status===status).slice(0,max);
-      const docs=await Promise.all(paths.map(p=>f.db.doc(p).get()));return {docs};
-    }};}};
+    let maximum=Infinity,after=null;
+    return {
+      orderBy(key){assert.equal(key,'__name__');return this;},
+      startAfter(ref){assert.equal(typeof ref.path,'string');after=ref.path;return this;},
+      limit(max){assert.ok(Number.isSafeInteger(max)&&max>0);maximum=max;return this;},
+      async get(){
+        const compare=(a,b)=>Buffer.compare(Buffer.from(a,'utf8'),Buffer.from(b,'utf8'));
+        const paths=f.db._paths('stations/').filter(p=>p.split('/').at(-2)==='schedule_outbox'
+          &&f.db._get(p).status===status&&(!after||compare(p,after)>0)).sort(compare).slice(0,maximum);
+        const docs=await Promise.all(paths.map(p=>f.db.doc(p).get()));return {docs,size:docs.length,empty:docs.length===0};
+      }
+    };
   }});
   await f.rt.resumeOutbox();assert.ok(sent.includes(SID));assert.ok(sent.includes('other'));
   f.db._put(otherPath,{...value,station_id:SID});await assert.rejects(()=>f.rt.deliverOutbox(f.db.doc(otherPath)),/physical-scope/);

@@ -23,6 +23,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Server-owned traversal state; never business authority or client data.
+    match /schedule_runtime_workers/{workerId} {
+      allow read, write: if false;
+    }
+
     // ---------- זהות ----------
 
     // אימות מייל ירד מהדרישה ב-22.8.2026, במודע.

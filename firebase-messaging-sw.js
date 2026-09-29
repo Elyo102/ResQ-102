@@ -72,14 +72,27 @@ const SHELL = [
 // complete. The remaining files improve offline coverage but may be retried by
 // the network-first fetch path.
 const CORE_SHELL = [
-  './login.html', './pwa.js', './version.js', './theme.css'
+  './login.html', './theme.css', './bulletin.css',
+  './firebase-config.js', './stations.js', './nav.js', './roles.js',
+  './pwa.js', './version.js', './callout.js', './bulletin.js',
+  './alerts-feed.js', './home-faults.js', './home-command.js',
+  './role-view.js', './role-view-page.js', './join-ui.js',
+  './monitored-functions.js', './appcheck.js', './mode-bar.js',
+  './error-text.js', './callout-roster-cache.js'
 ];
+
+// Mobile radios can remain half-open for a long time without rejecting a
+// request. Bound only the same-origin shell path below; Firebase/Auth/data
+// requests are excluded before this code and remain network-only.
+const NETWORK_FIRST_TIMEOUT_MS = 5000;
 
 self.addEventListener('install', function (e) {
   // קבצי הליבה אטומיים. עדכון קיים נשאר waiting עד שהמשתמש
   // מאשר; רק התקנה ראשונה מופעלת אוטומטית על ידי הדפדפן.
   e.waitUntil(caches.open(CACHE).then(function (c) {
-    return Promise.all(CORE_SHELL.map(function (u) { return c.add(u); })).then(function () {
+    // Cache.addAll is atomic: one missing required file rejects installation
+    // without exposing a partially refreshed core under this release key.
+    return c.addAll(CORE_SHELL).then(function () {
       return Promise.all(SHELL.filter(function (u) {
         return !CORE_SHELL.includes(u);
       }).map(function (u) {
@@ -102,6 +115,60 @@ self.addEventListener('message', function (event) {
   if (event.data && event.data.type === 'RESQ_SKIP_WAITING') self.skipWaiting();
 });
 
+function offlineFallback(req) {
+  return caches.open(CACHE).then(function (cache) {
+    return cache.match(req, { ignoreSearch: true });
+  }).then(function (hit) {
+    if (hit) return hit;
+    // דף שלא במטמון ואין רשת. הודעה בעברית עדיפה על
+    // מסך הדינוזאור.
+    if (req.mode === 'navigate') {
+      return new Response(
+        '<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<body style="margin:0;background:#15171a;color:#e8eaed;' +
+        'font-family:Segoe UI,Arial,sans-serif;display:flex;' +
+        'align-items:center;justify-content:center;height:100vh;' +
+        'text-align:center;padding:24px">' +
+        '<div><div style="font-size:44px;margin-bottom:12px">📡</div>' +
+        '<div style="font-size:19px;font-weight:700;margin-bottom:8px">' +
+        'אין חיבור לרשת</div>' +
+        '<div style="font-size:14px;color:#9aa0a6;line-height:1.7">' +
+        'המסך הזה עוד לא נשמר במכשיר.<br>' +
+        'התחבר לרשת ונסה שוב.</div></div></body></html>',
+        { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+    return new Response('', { status: 504 });
+  });
+}
+
+function networkFirst(req, event) {
+  let timer = null;
+  const controller = new AbortController();
+  const network = fetch(req, { signal: controller.signal });
+  const cacheRefresh = network.then(function (res) {
+    if (res && res.status === 200 && res.type === 'basic') {
+      const copy = res.clone();
+      // The response must not wait for a cache write. The timeout bounds
+      // response-header acquisition; a refresh already started from a timely
+      // response may finish its body write under event.waitUntil.
+      return caches.open(CACHE).then(function (c) { return c.put(req, copy); });
+    }
+  }).catch(function () {});
+  // Keep the worker alive for a successful refresh without delaying the
+  // response delivered to the page.
+  event.waitUntil(cacheRefresh);
+  const deadline = new Promise(function (_, reject) {
+    timer = setTimeout(function () {
+      controller.abort();
+      reject(new Error('resq-network-timeout'));
+    }, NETWORK_FIRST_TIMEOUT_MS);
+  });
+  return Promise.race([network, deadline])
+    .finally(function () { if (timer !== null) clearTimeout(timer); })
+    .catch(function () { return offlineFallback(req); });
+}
+
 self.addEventListener('fetch', function (e) {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -110,47 +177,19 @@ self.addEventListener('fetch', function (e) {
   // Firestore, Auth ו-Functions לעולם לא נשמרים. תשובה
   // שמורה מהם היא נתון ישן שמתחזה לנוכחי.
   if (url.origin !== self.location.origin) return;
+  // Firebase Hosting reserves /__/ for Auth and other platform handlers.
+  // They are never shell assets, even when they share this origin.
+  if (url.pathname === '/__' || url.pathname.includes('/__/')) return;
   if (/firestore|googleapis|identitytoolkit/.test(url.href)) return;
   // מספר הגרסה לעולם לא נשמר. כל המנגנון של "יש עדכון" מבוסס
   // על כך שהקובץ הזה מגיע מהשרת — עותק שמור שלו היה גורם
   // לאפליקציה לדווח "אתה מעודכן" בדיוק כשהיא לא.
   if (/\/version\.json/.test(url.pathname)) return;
 
-  e.respondWith(
-    fetch(req).then(function (res) {
-      if (res && res.status === 200 && res.type === 'basic') {
-        const copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put(req, copy); });
-      }
-      return res;
-    }).catch(function () {
-      // קבצי המעטפת נשמרים בלי query string, בעוד הדפים
-      // מייבאים אותם עם query של גרסה. במצב לא מקוון זו אותה גרסה
-      // בתוך מטמון גרסה נפרד, ולכן מתעלמים מה-query בחיפוש.
-      return caches.match(req, { ignoreSearch: true }).then(function (hit) {
-        if (hit) return hit;
-        // דף שלא במטמון ואין רשת. הודעה בעברית עדיפה על
-        // מסך הדינוזאור.
-        if (req.mode === 'navigate') {
-          return new Response(
-            '<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8">' +
-            '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-            '<body style="margin:0;background:#15171a;color:#e8eaed;' +
-            'font-family:Segoe UI,Arial,sans-serif;display:flex;' +
-            'align-items:center;justify-content:center;height:100vh;' +
-            'text-align:center;padding:24px">' +
-            '<div><div style="font-size:44px;margin-bottom:12px">📡</div>' +
-            '<div style="font-size:19px;font-weight:700;margin-bottom:8px">' +
-            'אין חיבור לרשת</div>' +
-            '<div style="font-size:14px;color:#9aa0a6;line-height:1.7">' +
-            'המסך הזה עוד לא נשמר במכשיר.<br>' +
-            'התחבר לרשת ונסה שוב.</div></div></body></html>',
-            { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-        }
-        return new Response('', { status: 504 });
-      });
-    })
-  );
+  // קבצי המעטפת נשמרים בלי query string, בעוד הדפים מייבאים אותם
+  // עם query של גרסה. offlineFallback מתעלם מה-query רק בתוך מטמון
+  // הגרסה הנוכחית; נתוני Firebase אינם מגיעים למסלול הזה כלל.
+  e.respondWith(networkFirst(req, e));
 });
 
 

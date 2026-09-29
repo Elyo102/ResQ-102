@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test:rules": "node run-local-rules.mjs",
-    "test:all": "npm run test:rules && npm run test:e2e",
+    "test:all": "npm run test:reproducibility && npm run test:rules && npm run test:e2e",
+    "test:reproducibility": "node --test reproducibility.test.mjs && node reproducibility.mjs",
     "test:e2e": "playwright test --config playwright.config.mjs",
     "test:e2e:ui": "playwright test --config playwright.config.mjs --ui",
     "onboarding:wiring": "node onboarding-index-source.mjs && npm run onboarding:contracts && npm run onboarding:capabilities && npm run onboarding:ui && npm run mail:guard && npm run provider:wiring",
@@ -33,7 +34,7 @@
     "faults:building": "node faults-building-browser.mjs",
     "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs && node scale-3000-employees.mjs",
     "live:headers": "node live-header-smoke.mjs",
-    "all": "npm run test:inventory && npm run pages:source && npm run bulletin:receipts && npm run pwa:coordinator && npm run home:command && npm run forms:submit && npm run schedule:contract && npm run schedule:trial && npm run schedule:month-authority && npm run attendance:corrections && npm run hr:attachments:core && npm run hr:month:boundaries && npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run faults:building && npm run browser:mobile && npm run hr:archive && npm run hr:ui && npm run maintenance && npm run saas:capacity && npm run saas:test && npm run security:test && npm run dr:test && npm run metrics:test && npm run mobile:test",
+    "all": "npm run test:reproducibility && npm run test:inventory && npm run pages:source && npm run bulletin:receipts && npm run pwa:coordinator && npm run home:command && npm run forms:submit && npm run schedule:contract && npm run schedule:trial && npm run schedule:month-authority && npm run attendance:corrections && npm run hr:attachments:core && npm run hr:month:boundaries && npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run faults:building && npm run browser:mobile && npm run hr:archive && npm run hr:ui && npm run maintenance && npm run saas:capacity && npm run saas:test && npm run security:test && npm run dr:test && npm run metrics:test && npm run mobile:test",
     "home:command": "node role-view.mjs && node role-view-mutations.mjs && node role-view-page-contract.mjs && node role-view-cross-screen-source.mjs && node role-view-schedule-write-source.mjs && node ../functions/home-command-center.test.js && node home-command-wiring.mjs && node home-command-dashboard-browser.mjs && node role-view-mobile-browser.mjs && node role-view-schedule-browser.mjs",
     "maintenance": "node ../functions/maintenance-diagnosis.test.js && node ../functions/maintenance-service.test.js && node ../functions/health-scope.test.js && node ../functions/system-health-service.test.js && node system-health-v2-wiring.mjs && node maintenance-wiring.mjs && node maintenance-browser.mjs",
     "saas:capacity": "node saas-capacity-3000.mjs && node schedule-capacity-3000-runtime.mjs && node pages-parity-gate.test.mjs && node pages-live-parity.test.mjs && node firebase-release-state.test.mjs",

@@ -19,6 +19,7 @@ const scheduleGaps = require('./schedule-gaps');
 const importPipeline = require('./schedule-import-pipeline');
 const identityStoreContract = require('./schedule-identity-store-contract');
 const publicationRecipients = require('./schedule-publication-recipients');
+const outboxFairScan = require('./schedule-outbox-fair-scan');
 
 /**
  * Firestore wiring for the monthly ResQ schedule engine.
@@ -222,6 +223,8 @@ function createScheduleRuntime(deps) {
     ? d.beforeSnapshotWriteChunk : async function () {};
   const beforeOutboxSend = typeof d.beforeOutboxSend === 'function'
     ? d.beforeOutboxSend : async function () {};
+  const afterOutboxProvider = typeof d.afterOutboxProvider === 'function'
+    ? d.afterOutboxProvider : async function () {};
   const beforeEffectiveViewRecheck = typeof d.beforeEffectiveViewRecheck === 'function'
     ? d.beforeEffectiveViewRecheck : async function () {};
   // This seam exists only to prove that the final active-pointer read really
@@ -5930,9 +5933,18 @@ function createScheduleRuntime(deps) {
         const leaseUntil = timeMillis(value.lease_until);
         if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
       }
-      tx.update(ref, {
+      const uncertain = status === 'sending'
+        && value.provider_state === 'entered'
+        && nonEmpty(value.delivery_attempt_id)
+        && value.delivery_ack_attempt_id !== value.delivery_attempt_id;
+      tx.update(ref, Object.assign({
         status: 'queued', queued_at: FV.serverTimestamp(), lease_token: null, lease_until: null
-      });
+      }, uncertain ? {
+        delivery_uncertain: true,
+        duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+        last_uncertain_attempt_id: value.delivery_attempt_id,
+        provider_state: 'uncertain'
+      } : {}));
       queued = true;
     });
     return { queued, deliver };
@@ -9437,7 +9449,7 @@ function createScheduleRuntime(deps) {
     });
   }
 
-  async function validateOutboxForSend(ref, leaseToken, claimed) {
+  async function validateOutboxForSend(ref, leaseToken, claimed, enterProvider) {
     const candidateValue = plain(claimed) ? claimed : {};
     let trialAuth = null;
     let trialAuthTerminal = false;
@@ -9498,6 +9510,10 @@ function createScheduleRuntime(deps) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return false;
       }
+      if (enterProvider === true) {
+        if (value.delivery_attempt_id !== candidateValue.delivery_attempt_id) return false;
+        tx.update(ref, { provider_state: 'entered', provider_entered_at: FV.serverTimestamp() });
+      }
       return true;
     });
   }
@@ -9543,12 +9559,44 @@ function createScheduleRuntime(deps) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
+      const push = data.push || {};
+      const intent = {
+        station_id: stationId,
+        recipient_uid: person,
+        type: 'schedule_mine',
+        title: push.title || 'ResQ · הסידור שלך',
+        body: push.body || 'הסידור שלך עודכן',
+        url: './schedule-management.html?tab=mine',
+        important: true
+      };
+      const operationId = 'dop_' + hash('push-operation|' + ref.path).slice(0, 40);
+      const payloadDigest = digest(intent);
+      if ((nonEmpty(data.delivery_operation_id) && data.delivery_operation_id !== operationId)
+          || (nonEmpty(data.delivery_payload_digest) && data.delivery_payload_digest !== payloadDigest)) {
+        tx.update(ref, {
+          status: 'failed', last_error: 'DELIVERY_OPERATION_CONFLICT',
+          operation_conflict_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
       const leaseToken = 'l_' + randomId();
+      const attemptId = 'dat_' + randomId();
       tx.update(ref, {
         status: 'sending', claimed_at: FV.serverTimestamp(), lease_token: leaseToken,
-        lease_until: new Date(now + OUTBOX_LEASE_MS)
+        lease_until: new Date(now + OUTBOX_LEASE_MS),
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId,
+        delivery_semantics: 'at-least-once',
+        provider_state: 'not-entered',
+        provider_entered_at: null
       });
-      claimed = Object.assign({}, data, { lease_token: leaseToken });
+      claimed = Object.assign({}, data, intent, {
+        lease_token: leaseToken,
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId
+      });
     });
     if (!claimed) return { skipped: true };
     let providerEntered=false;
@@ -9556,7 +9604,8 @@ function createScheduleRuntime(deps) {
       await beforeOutboxSend(claimed);
       // The second transaction is as close as possible to the external call.
       // It closes pointer/mode/expiry changes that happened after the claim.
-      if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+      if (!await validateOutboxForSend(ref, claimed.lease_token, claimed,
+        claimed.delivery_policy !== 'trial_control')) return { skipped: true };
       if (claimed.delivery_policy === 'trial_control') {
         let currentAuth = null;
         try { currentAuth = await getAuthUser(String(claimed.person || '')); }
@@ -9575,13 +9624,17 @@ function createScheduleRuntime(deps) {
         // Auth and Firestore cannot share one transaction.  Re-run the leased
         // Firestore fence after the final Auth lookup so a config/mode/pointer
         // change during that lookup is still observed before the provider.
-        if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+        if (!await validateOutboxForSend(ref, claimed.lease_token, claimed, true)) return { skipped: true };
       }
-      const push = claimed.push || {};
       providerEntered=true;
       const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
-        push.title || 'ResQ · הסידור שלך', push.body || 'הסידור שלך עודכן',
-        './schedule-management.html?tab=mine', true);
+        claimed.title, claimed.body, claimed.url, claimed.important);
+      await afterOutboxProvider({
+        ref_path: ref.path,
+        operation_id: claimed.delivery_operation_id,
+        attempt_id: claimed.delivery_attempt_id,
+        delivery
+      });
       const policyReason = pushPolicySuppression(delivery);
       if (policyReason) {
         const cancelled = await cancelLeasedOutbox(ref, claimed.lease_token, 'station-policy', policyReason,true);
@@ -9599,6 +9652,10 @@ function createScheduleRuntime(deps) {
           tx.update(ref, {
             status: 'sent', sent_at: FV.serverTimestamp(), last_error: null,
             delivered_devices: Number(delivery.sent),
+            delivery_ack_attempt_id: claimed.delivery_attempt_id,
+            delivery_ack_at: FV.serverTimestamp(),
+            delivery_uncertain: false,
+            provider_state: 'acknowledged',
             lease_token: null, lease_until: null
           });
         }
@@ -9616,14 +9673,19 @@ function createScheduleRuntime(deps) {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
         if (live.status !== 'sending' || live.lease_token !== claimed.lease_token) return;
-        tx.update(ref, {
+        tx.update(ref, Object.assign({
           status: retry.status,
           attempt: retry.attempt,
           next_attempt_at: retry.next_attempt_at || null,
           last_error: retry.last_error,
           lease_token: null, lease_until: null,
           updated_at: FV.serverTimestamp()
-        });
+        }, providerEntered ? {
+          delivery_uncertain: true,
+          duplicate_risk_count: Number(live.duplicate_risk_count || 0) + 1,
+          last_uncertain_attempt_id: claimed.delivery_attempt_id,
+          provider_state: 'uncertain'
+        } : { provider_state: 'not-entered' }));
       });
       return { sent: false, status: retry.status };
     }
@@ -9634,9 +9696,10 @@ function createScheduleRuntime(deps) {
     // not starve an active retry or a previously queued delivery.
     const collected = new Map();
     for (const status of ['retry', 'sending', 'queued', 'blocked']) {
-      const snap = await db.collectionGroup('schedule_outbox')
-        .where('status', '==', status).limit(100).get();
-      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+      const page = await outboxFairScan.takeFairPage({
+        db, FieldPath, collection: 'schedule_outbox', status
+      });
+      page.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     let queued = 0;
     const now = Date.parse(clock());
@@ -9815,9 +9878,10 @@ function createScheduleRuntime(deps) {
   async function resumeGuardNotificationJobs() {
     const collected = new Map();
     for (const status of ['queued', 'sending']) {
-      const snap = await db.collectionGroup('guard_notification_jobs')
-        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
-      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+      const page = await outboxFairScan.takeFairPage({
+        db, FieldPath, collection: 'guard_notification_jobs', status
+      });
+      page.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     const now = Date.parse(clock());
     let fanned = 0;
@@ -9949,7 +10013,7 @@ function createScheduleRuntime(deps) {
     });
   }
 
-  async function validateGuardOutboxForSend(ref, leaseToken) {
+  async function validateGuardOutboxForSend(ref, leaseToken, attemptId) {
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) return false;
@@ -9980,6 +10044,8 @@ function createScheduleRuntime(deps) {
         cancelGuardOutbox(tx, ref, 'recipient-inactive');
         return false;
       }
+      if (value.delivery_attempt_id !== attemptId) return false;
+      tx.update(ref, { provider_state: 'entered', provider_entered_at: FV.serverTimestamp() });
       return true;
     });
   }
@@ -10017,35 +10083,74 @@ function createScheduleRuntime(deps) {
         cancelGuardOutbox(tx, ref, 'recipient-inactive');
         return;
       }
+      const live = guard && guard.exists ? (guard.data() || {}) : {};
+      const withPlace = Object.assign({}, value, { place: live.place });
+      const message = guardOutboxText(withPlace);
+      const deliveryTarget = guardOutboxDelivery(withPlace);
+      const intent = {
+        station_id: sid,
+        recipient_uid: recipient,
+        type: deliveryTarget.type,
+        title: message.title,
+        body: message.body,
+        url: deliveryTarget.url,
+        important: deliveryTarget.important
+      };
+      const operationId = 'dop_' + hash('push-operation|' + ref.path).slice(0, 40);
+      const payloadDigest = digest(intent);
+      if ((nonEmpty(value.delivery_operation_id) && value.delivery_operation_id !== operationId)
+          || (nonEmpty(value.delivery_payload_digest) && value.delivery_payload_digest !== payloadDigest)) {
+        tx.update(ref, {
+          status: 'failed', last_error: 'DELIVERY_OPERATION_CONFLICT',
+          operation_conflict_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
       const leaseToken = 'l_' + randomId();
+      const attemptId = 'dat_' + randomId();
       tx.update(ref, {
         status: 'sending',
         claimed_at: FV.serverTimestamp(),
         lease_token: leaseToken,
-        lease_until: new Date(now + OUTBOX_LEASE_MS)
+        lease_until: new Date(now + OUTBOX_LEASE_MS),
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId,
+        delivery_semantics: 'at-least-once',
+        provider_state: 'not-entered',
+        provider_entered_at: null
       });
       // ⭐ המקום נלקח ממסמך האבטחה **החי** שכבר נקרא כאן, ולא
       // מעותק ששמור בשורת התור. כך אין קריאה נוספת, והכתובת
       // שנשלחת היא זו שתקפה עכשיו ולא זו שהייתה כשהתור נוצר.
-      const live = guard && guard.exists ? (guard.data() || {}) : {};
-      claimed = Object.assign({}, value, {
-        lease_token: leaseToken, place: live.place
+      claimed = Object.assign({}, withPlace, intent, {
+        lease_token: leaseToken,
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId
       });
     });
     if (!claimed) return { skipped: true };
+    let providerEntered = false;
     try {
-      if (!await validateGuardOutboxForSend(ref, claimed.lease_token)) return { skipped: true };
-      const message = guardOutboxText(claimed);
-      const deliveryTarget = guardOutboxDelivery(claimed);
+      if (!await validateGuardOutboxForSend(ref, claimed.lease_token,
+        claimed.delivery_attempt_id)) return { skipped: true };
+      providerEntered = true;
       const delivery = await sendPush(
         claimed.station_id,
         claimed.recipient_uid,
-        deliveryTarget.type,
-        message.title,
-        message.body,
-        deliveryTarget.url,
-        deliveryTarget.important
+        claimed.type,
+        claimed.title,
+        claimed.body,
+        claimed.url,
+        claimed.important
       );
+      await afterOutboxProvider({
+        ref_path: ref.path,
+        operation_id: claimed.delivery_operation_id,
+        attempt_id: claimed.delivery_attempt_id,
+        delivery
+      });
       const policyReason = pushPolicySuppression(delivery);
       if (policyReason) {
         const cancelled = await cancelLeasedGuardOutbox(ref, claimed.lease_token, policyReason);
@@ -10065,6 +10170,10 @@ function createScheduleRuntime(deps) {
           sent_at: FV.serverTimestamp(),
           delivered_devices: Number(delivery.sent),
           last_error: null,
+          delivery_ack_attempt_id: claimed.delivery_attempt_id,
+          delivery_ack_at: FV.serverTimestamp(),
+          delivery_uncertain: false,
+          provider_state: 'acknowledged',
           lease_token: null,
           lease_until: null
         });
@@ -10078,7 +10187,7 @@ function createScheduleRuntime(deps) {
         const snap = await tx.get(ref);
         const value = snap.exists ? (snap.data() || {}) : {};
         if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return;
-        tx.update(ref, {
+        tx.update(ref, Object.assign({
           status: retrying ? 'retry' : 'failed',
           attempt: nextAttempt,
           next_attempt_at: retrying ? new Date(Date.parse(clock()) + wait) : null,
@@ -10086,7 +10195,12 @@ function createScheduleRuntime(deps) {
           lease_token: null,
           lease_until: null,
           updated_at: FV.serverTimestamp()
-        });
+        }, providerEntered ? {
+          delivery_uncertain: true,
+          duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+          last_uncertain_attempt_id: claimed.delivery_attempt_id,
+          provider_state: 'uncertain'
+        } : { provider_state: 'not-entered' }));
       });
       return { sent: false, status: retrying ? 'retry' : 'failed' };
     }
@@ -10137,12 +10251,21 @@ function createScheduleRuntime(deps) {
         const leaseUntil = timeMillis(value.lease_until);
         if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
       }
-      tx.update(ref, {
+      const uncertain = status === 'sending'
+        && value.provider_state === 'entered'
+        && nonEmpty(value.delivery_attempt_id)
+        && value.delivery_ack_attempt_id !== value.delivery_attempt_id;
+      tx.update(ref, Object.assign({
         status: 'queued',
         queued_at: FV.serverTimestamp(),
         lease_token: null,
         lease_until: null
-      });
+      }, uncertain ? {
+        delivery_uncertain: true,
+        duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+        last_uncertain_attempt_id: value.delivery_attempt_id,
+        provider_state: 'uncertain'
+      } : {}));
       queued = true;
     });
     return { queued, deliver };
@@ -10152,9 +10275,10 @@ function createScheduleRuntime(deps) {
     const jobs = await resumeGuardNotificationJobs();
     const collected = new Map();
     for (const status of ['retry', 'sending', 'queued']) {
-      const snap = await db.collectionGroup('guard_outbox')
-        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
-      snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
+      const page = await outboxFairScan.takeFairPage({
+        db, FieldPath, collection: 'guard_outbox', status
+      });
+      page.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     const now = Date.parse(clock());
     let queued = 0;
