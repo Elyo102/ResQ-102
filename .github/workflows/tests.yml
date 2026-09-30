@@ -86,6 +86,10 @@ jobs:
         working-directory: functions
         run: npm ci --no-audit --no-fund
 
+      - name: control-plane dependencies (listener-e2e push mode needs @grpc/grpc-js)
+        working-directory: control-plane
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: כללי האבטחה מול Firestore מקומי
         env:
           GCLOUD_PROJECT: demo-resq
