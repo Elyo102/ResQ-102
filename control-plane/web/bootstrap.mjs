@@ -1,7 +1,7 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch1';
-import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch1';
-import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch1';
-import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch1';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch2';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch2';
+import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch2';
+import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch2';
 const root=document.getElementById('private-root');
 
 const loadGoogleOauth=()=>new Promise((resolve,reject)=>{

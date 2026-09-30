@@ -3,17 +3,17 @@
 // Draft, preview and idempotency keys live here, OUTSIDE the private controller, so onIdTokenChanged resets
 // (which re-run controller.reset) never clear the form or mint new ids. No success is shown before the server
 // confirms; a timeout is 'לא אושר' and the same ids are reused on retry.
-import {DISPATCH_AGENTS,DISPATCH_TASKS,taskTypeText,noteProblem,rejectedNoteChars,counterText,newKeys,buildPayload,draftKey,
-  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch1';
+import {DISPATCH_AGENTS,DISPATCH_TASKS,taskTypeText,noteProblem,invalidCharReport,counterText,noteThreshold,thresholdText,noteSnippet,normalizeNote,NOTE_BANNER,SECRET_TEXT,newKeys,buildPayload,draftKey,
+  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch2';
 
 export const TEXT=Object.freeze({
   title:'מרכז שיגור סוכנים',
   hint:'כל שורה היא בקשה לתצוגה בלבד: היא לא מפעילה סוכן ואינה הרשאה. ההערה מוצגת בלבד ואינה משמשת כהוראה.',
-  none:'לא לשלוח',noteLabel:'הערה (עד 280 תווים: עברית, ניקוד ואנגלית/ASCII)',
+  none:'לא לשלוח',noteLabel:'הערה (עד 10000 תווים, כמה שורות: עברית, ניקוד ואנגלית/ASCII)',
   preview:'תצוגה מקדימה',send:'שליחה',retry:'ניסיון חוזר (אותו מפתח)',check:'בדיקה מול השרת',reset:'איפוס ומפתח חדש',reauth:'התחברות מחדש לאישור',
   previewTitle:'זה בדיוק מה שיישלח:',serverTime:'createdAt: שעת השרת',
   stalePreview:'הטופס השתנה — יש ליצור תצוגה מקדימה חדשה לפני שליחה.',needPreview:'יש ליצור תצוגה מקדימה לפני שליחה.',
-  noSelection:'יש לבחור סוג משימה לסוכן אחד לפחות.',noteLength:'ההערה ארוכה מ-280 תווים.',
+  noSelection:'יש לבחור סוג משימה לסוכן אחד לפחות.',noteLength:'ההערה ארוכה מ-10000 תווים — יש לקצר לפני שליחה.',
   noteChars:'ההערה מכילה תווים שאינם מותרים: ',offline:'אין חיבור רשת — השליחה מושבתת עד שהחיבור יחזור.',
   sending:'שולח… ממתין לאישור השרת.',confirmed:'נשלח ואושר על ידי השרת.',alreadySaved:'הבקשה כבר נשמרה בשרת (אומת מול השרת).',
   unconfirmed:'לא אושר — השרת לא אישר את השליחה. ייתכן שהבקשה עוד תישמר מאוחר יותר. הטופס נשמר; ניסיון חוזר ישתמש באותו מפתח ולא ייצור בקשה כפולה.',
@@ -24,7 +24,8 @@ export const TEXT=Object.freeze({
   resetDone:'נוצר מפתח חדש. אם שליחה קודמת עוד תגיע, היא תופיע בפיד.',cooldown:'יש להמתין מעט לפני שליחה נוספת.',
   active:'בקשות פעילות',history:'היסטוריה (50 אחרונות)',empty:'אין בקשות להצגה',feedError:'הפיד הופסק — מוצג רק מידע שאושר על ידי השרת.',
   cancel:'ביטול בקשה',cancelSent:'בקשת הביטול נשלחה; הסטטוס יתעדכן רק מהשרת.',cancelFailed:'הביטול לא אושר. הסטטוס לא השתנה.',
-  created:'נוצר',cancelled:'בוטל'
+  created:'נוצר',cancelled:'בוטל',showAll:'הצג את כל ההערה',noteHuman:'ההערה כפי שתישלח:',
+  offlineReason:'השליחה מושבתת: אין חיבור רשת.',cooldownReason:'השליחה מושבתת לרגע (המתנה בין שליחות).',busyReason:'השליחה מושבתת: פעולה קודמת עדיין בתהליך.'
 });
 
 export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalThis.crypto.randomUUID(),sendTimeoutMs=SEND_TIMEOUT_MS}){
@@ -42,22 +43,26 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     for(const type of DISPATCH_TASKS[agent]){const o=node('option',taskTypeText(type));o.value=type;select.append(o);}
     selects[agent]=select;wrap.append(label,select);fields.append(wrap);
   }
-  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=3;noteLabel.htmlFor=note.id;
-  const counter=node('p','','dispatch-counter');counter.id='dispatch-counter';counter.setAttribute('aria-live','polite');note.setAttribute('aria-describedby','dispatch-counter dispatch-error');
-  noteWrap.append(noteLabel,note,counter);
+  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=12;noteLabel.htmlFor=note.id;note.setAttribute('spellcheck','false');
+  // Visible counter updates on every input (no live region); a SEPARATE polite region announces threshold crossings only.
+  const counter=node('p','','dispatch-counter');counter.id='dispatch-counter';note.setAttribute('aria-describedby','dispatch-counter dispatch-error dispatch-note-banner');
+  const limitLive=node('p','','dispatch-limit-live');limitLive.id='dispatch-limit-live';limitLive.setAttribute('aria-live','polite');limitLive.setAttribute('role','status');
+  const banner=node('p',NOTE_BANNER,'dispatch-banner');banner.id='dispatch-note-banner';
+  noteWrap.append(noteLabel,note,counter,banner,limitLive);
   const error=node('p','','dispatch-error');error.id='dispatch-error';error.setAttribute('aria-live','polite');
   const previewBtn=button(TEXT.preview,'dispatch-preview'),send=button(TEXT.send,'dispatch-send'),retry=button(TEXT.retry,'dispatch-retry');
   const check=button(TEXT.check,'dispatch-reconcile'),reset=button(TEXT.reset,'dispatch-reset'),reauth=button(TEXT.reauth,'dispatch-reauth');
+  const sendReason=node('p','','dispatch-send-reason');sendReason.id='dispatch-send-reason';send.setAttribute('aria-describedby','dispatch-send-reason');
   const actions=node('div',null,'dispatch-actions');actions.append(previewBtn,send,retry,check,reauth,reset);
   const previewBox=node('div',null,'dispatch-preview');previewBox.id='dispatch-preview-box';previewBox.hidden=true;
   const result=node('p','','dispatch-result');result.id='dispatch-result';result.setAttribute('role','status');result.setAttribute('aria-live','polite');
   const feedError=node('p','','dispatch-feed-error');feedError.id='dispatch-feed-error';
   const activeList=node('ul',null,'dispatch-feed');activeList.id='dispatch-active';activeList.setAttribute('aria-label',TEXT.active);
   const historyList=node('ul',null,'dispatch-feed');historyList.id='dispatch-history';historyList.setAttribute('aria-label',TEXT.history);
-  panel.append(title,node('p',TEXT.hint,'hint'),net,fields,noteWrap,error,actions,previewBox,result,node('h3',TEXT.active),activeList,node('h3',TEXT.history),historyList,feedError);
+  panel.append(title,node('p',TEXT.hint,'hint'),net,fields,noteWrap,error,actions,sendReason,previewBox,result,node('h3',TEXT.active),activeList,node('h3',TEXT.history),historyList,feedError);
 
   let uid=null,draftUid=null,keys=null,preview=null,phase='idle',resume='idle',cooldownUntil=0,cooldownTimer=null,disposed=false;
-  let stopWatch=null,feed=[],feedFailed=false,flight=0;const cancelPending=new Set(),rowNodes=new Map();
+  let stopWatch=null,feed=[],feedFailed=false,flight=0,lastThreshold=null;const cancelPending=new Set(),rowNodes=new Map(),rowKeys=new Map(),expanded=new Set();
   const draft=()=>({selections:Object.fromEntries(DISPATCH_AGENTS.map(a=>[a,selects[a].value])),note:note.value});
   const online=()=>win?.navigator?.onLine!==false;
   const say=text=>{result.textContent=text||'';};
@@ -67,23 +72,33 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     if(disposed)return;
     const d=draft();counter.textContent=counterText(d.note);
     const problem=noteProblem(d.note);
-    error.textContent=problem==='length'?TEXT.noteLength:problem==='chars'?TEXT.noteChars+rejectedNoteChars(d.note).join(' '):'';
+    error.textContent=problemText(problem,d.note);
+    const level=noteThreshold(d.note);if(level!==lastThreshold){lastThreshold=level;if(level)limitLive.textContent=thresholdText(level);}
     net.textContent=online()?'':TEXT.offline;
     const locked=busy()||phase==='unconfirmed';
     for(const s of Object.values(selects))s.disabled=locked;note.readOnly=locked;
     const fresh=preview!==null&&preview.key===draftKey(d.selections,d.note);
     previewBtn.disabled=locked;
-    send.disabled=phase!=='idle'||!fresh||!online()||now()<cooldownUntil;
+    send.disabled=phase!=='idle'||!fresh||!online()||now()<cooldownUntil||problem!==null;
+    // Why the button is disabled, as text (aria-describedby on the button), never color alone.
+    sendReason.textContent=!send.disabled?'':problem?problemText(problem,d.note):!online()?TEXT.offlineReason:busy()?TEXT.busyReason:
+      !fresh?(preview===null?TEXT.needPreview:TEXT.stalePreview):now()<cooldownUntil?TEXT.cooldownReason:'';
     retry.hidden=check.hidden=phase!=='unconfirmed'&&phase!=='reconciling';retry.disabled=check.disabled=busy();
     reauth.hidden=phase!=='reauth';reset.hidden=keys===null||busy();reset.disabled=busy();
     if(!fresh&&preview===null)previewBox.hidden=true;
   }
+  function problemText(problem,raw){
+    return problem==='secret'?SECRET_TEXT:problem==='length'?TEXT.noteLength:problem==='chars'?TEXT.noteChars+invalidCharReport(raw).join(', '):'';
+  }
+  // Note text node: textContent only, pre-wrap, per-line bidi (CSS unicode-bidi:plaintext) plus dir=auto.
+  const noteNode=(text,cls='dispatch-note-text')=>{const n=node('div',null,cls);n.dir='auto';n.textContent=text;return n;};
   function showPreview(payload){
     const list=node('ol');
     for(const r of payload.rows){const li=node('li');const d=r.data;
-      li.append(node('strong',d.agent),node('span',' · '+taskTypeText(d.taskType)),node('p',d.note||'—','dispatch-note-text'));list.append(li);}
-    const exact=node('pre',JSON.stringify(payload.rows.map(r=>({id:r.id,...r.data})),null,1));exact.dir='ltr';exact.id='dispatch-preview-json';
-    previewBox.replaceChildren(node('p',TEXT.previewTitle),list,exact,node('p',TEXT.serverTime,'hint'));previewBox.hidden=false;
+      li.append(node('strong',d.agent),node('span',' · '+taskTypeText(d.taskType)));list.append(li);}
+    const exact=node('pre',JSON.stringify(payload.rows.map(r=>({id:r.id,...r.data})),null,1),'dispatch-scroll');exact.dir='ltr';exact.id='dispatch-preview-json';exact.tabIndex=0;
+    const human=noteNode(payload.rows[0]?.data.note||'—','dispatch-note-text dispatch-scroll');human.id='dispatch-preview-note';human.tabIndex=0;
+    previewBox.replaceChildren(node('p',TEXT.previewTitle),list,node('p',TEXT.noteHuman),human,node('p',NOTE_BANNER,'dispatch-banner'),exact,node('p',TEXT.serverTime,'hint'));previewBox.hidden=false;
   }
   function edited(){if(preview!==null){preview=null;previewBox.hidden=true;previewBox.replaceChildren();if(phase==='idle')say(TEXT.stalePreview);}render();}
   function confirmed(text){keys=null;preview=null;previewBox.hidden=true;previewBox.replaceChildren();
@@ -120,7 +135,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     if(busy()||phase==='unconfirmed')return;const d=draft(),currentUid=api.uid?.()??uid;
     const problem=noteProblem(d.note);
     if(!DISPATCH_AGENTS.some(a=>d.selections[a])){say(TEXT.noSelection);return;}
-    if(problem){say(problem==='length'?TEXT.noteLength:TEXT.noteChars+rejectedNoteChars(d.note).join(' '));return;}
+    if(problem){say(problemText(problem,d.note));return;}
     keys??=newKeys(uuid);
     try{const payload=buildPayload({...d,keys,uid:currentUid});preview={payload,key:draftKey(d.selections,d.note)};showPreview(payload);say('');}catch{say(TEXT.noSelection);}
     render();
@@ -151,11 +166,14 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
 
   function rowFor(r){
     let li=rowNodes.get(r.id);if(!li){li=node('li',null,'dispatch-row');li.tabIndex=-1;li.dataset.id=r.id;rowNodes.set(r.id,li);}
+    // Rebuild only when the server row (or local cancel state) changed: expand state and focus survive feed updates.
+    const key=JSON.stringify([r.status,r.cancelledAt,r.createdAt,r.agent,r.taskType,r.note.length,r.createdBy===uid,cancelPending.has(r.id)]);
+    if(rowKeys.get(r.id)===key)return li;rowKeys.set(r.id,key);
     const status=node('span',statusText(r.status),'dispatch-status');status.dataset.status=r.status;
     const head=node('div',null,'dispatch-row-head');head.append(node('strong',r.agent),node('span',taskTypeText(r.taskType),'dispatch-type'),status);
     const times=node('p',null,'dispatch-times');times.append(node('span',TEXT.created+' '),renderStamp(doc,r.createdAt));
     if(r.cancelledAt!==null){times.append(node('span',' · '+TEXT.cancelled+' '),renderStamp(doc,r.cancelledAt));}
-    const parts=[head,node('p',r.note||'—','dispatch-note-text'),times];
+    const parts=[head,...noteParts(r),node('p',NOTE_BANNER,'dispatch-banner'),times];
     if(r.status==='queued'&&r.createdBy===uid){const b=button(TEXT.cancel,'dispatch-cancel-'+r.id);b.className='dispatch-cancel';b.disabled=cancelPending.has(r.id);
       b.onclick=async()=>{if(cancelPending.has(r.id))return;cancelPending.add(r.id);b.disabled=true;
         try{await withTimeout(api.cancel(r.id,sendTimeoutMs));say(TEXT.cancelSent);}catch{say(TEXT.cancelFailed);}finally{cancelPending.delete(r.id);renderFeed();}};
@@ -165,11 +183,23 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     if(hadFocus){const again=focusedId?doc.getElementById(focusedId):null;(again&&li.contains(again)?again:li).focus({preventScroll:true});}
     return li;
   }
+  // Collapsed: ~500-character snippet only. <details> appears only when there is real overflow; the full text is
+  // rendered into it only when opened. Open state is kept per request id across feed re-renders.
+  function noteParts(r){
+    const snip=noteSnippet(r.note);
+    const short=noteNode(snip.text||'—');short.classList.add('dispatch-note-snippet');
+    if(!snip.truncated)return [short];
+    const more=node('details',null,'dispatch-more');const summary=node('summary',TEXT.showAll);summary.id='dispatch-more-'+r.id;more.append(summary);
+    const fill=()=>{if(more.open){if(!more.querySelector('.dispatch-note-full'))more.append(noteNode(r.note,'dispatch-note-text dispatch-note-full'));short.hidden=true;expanded.add(r.id);}
+      else{more.querySelector('.dispatch-note-full')?.remove();short.hidden=false;expanded.delete(r.id);}};
+    more.open=expanded.has(r.id);fill();more.addEventListener('toggle',fill);
+    return [short,more];
+  }
   function renderFeed(){
     if(disposed)return;const {active,history}=orderFeed(feed);
     const focused=doc.activeElement,focusRow=focused?.closest?.('.dispatch-row'),focusId=focused?.id;
     const keep=new Set([...active,...history].map(r=>r.id));
-    for(const [id,li] of rowNodes)if(!keep.has(id)){li.remove();rowNodes.delete(id);}
+    for(const [id,li] of rowNodes)if(!keep.has(id)){li.remove();rowNodes.delete(id);rowKeys.delete(id);expanded.delete(id);}
     const place=(list,rows)=>{rows.forEach((r,i)=>{const li=rowFor(r);if(list.children[i]!==li)list.insertBefore(li,list.children[i]??null);});
       while(list.children.length>rows.length)list.lastElementChild.remove();};
     place(activeList,active);place(historyList,history);
@@ -186,7 +216,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
       error(){if(disposed)return;feed=[];feedFailed=true;const s=stopWatch;stopWatch=null;try{s?.();}catch{}renderFeed();}});}
     catch{feedFailed=true;renderFeed();}
   }
-  function stopFeed(){const s=stopWatch;stopWatch=null;try{s?.();}catch{}feed=[];rowNodes.clear();activeList.replaceChildren();historyList.replaceChildren();}
+  function stopFeed(){const s=stopWatch;stopWatch=null;try{s?.();}catch{}feed=[];rowNodes.clear();rowKeys.clear();activeList.replaceChildren();historyList.replaceChildren();}
   return {element:panel,
     setIdentity(user){
       if(disposed)return;const next=user?.backendAuthorized===true&&typeof user.uid==='string'&&user.uid?user.uid:null;

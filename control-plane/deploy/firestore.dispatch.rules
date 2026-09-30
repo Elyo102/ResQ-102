@@ -111,8 +111,9 @@ service cloud.firestore {
       allow list, update, delete: if false;
     }
     // Dispatch requests: owner-authored, display-only (security review: control-plane/DISPATCH-CENTER.md).
-    // A dispatch document is a REQUEST, never an authorization. `note` is display-only text and must never
-    // flow into a prompt, shell, branch or commit name, or a routing decision. A future executor needs its
+    // A dispatch document is a REQUEST, never an authorization. `note` is display-only text (multi-line, up to
+    // 10,000 characters) and must never flow into a prompt, shell, branch or commit name, CI or a routing
+    // decision; a future executor needs a separate review and must wrap it as untrusted data. It also needs its
     // own grant, a re-check against the capability matrix and a transaction on status == 'queued'.
     // The Admin SDK bypasses these rules. Client status changes are limited to owner cancel of queued.
     function dispatchTaskMap() {
@@ -137,8 +138,8 @@ service cloud.firestore {
         && d.keys().hasOnly(['agent', 'taskType', 'note', 'status', 'batchId', 'createdAt', 'createdBy'])
         && d.agent is string && d.agent in ['Gemini', 'Codex', 'Grok']
         && d.taskType is string && d.taskType in dispatchTaskMap()[d.agent]
-        && d.note is string && d.note.size() <= 280
-        && d.note.matches('^[\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]{0,280}$')
+        && d.note is string && d.note.size() <= 10000
+        && d.note.matches('^[\\x{000A}\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]*$')
         && d.status == 'queued' && dispatchUuid(d.batchId)
         && d.createdAt == request.time && d.createdBy == request.auth.uid;
     }

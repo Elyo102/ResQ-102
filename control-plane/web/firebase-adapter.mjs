@@ -125,7 +125,7 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
         const result=await auth.currentUser.getIdTokenResult();
         const ms=Date.parse(result?.authTime);return Number.isSafeInteger(ms)?ms:null;
       },
-      // Two bounded listeners (queued pins + latest 50); never a listener on all of history.
+      // Two bounded listeners (queued pins + latest 20); never a listener on all of history.
       watch({next,error}){
         if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
         const col=sdk.collection(db,'dispatchRequests');
@@ -142,8 +142,9 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
           try{parts[name]=snapshot.docs.map(map);}catch{error();return;}
           if(parts.active&&parts.latest)next([...parts.active,...parts.latest]);
         },()=>{if(!stopped)error();});
-        const stops=[listen('active',sdk.query(col,sdk.where('status','==','queued'),sdk.limit(50))),
-          listen('latest',sdk.query(col,sdk.orderBy('createdAt','desc'),sdk.limit(50)))];
+        // Client feed size 20 (long notes); the Rules still allow list limits up to 50.
+        const stops=[listen('active',sdk.query(col,sdk.where('status','==','queued'),sdk.limit(20))),
+          listen('latest',sdk.query(col,sdk.orderBy('createdAt','desc'),sdk.limit(20)))];
         return()=>{stopped=true;for(const stop of stops){try{stop();}catch{}}};
       },
       // Atomic batch of creates with client-generated v4 ids; retries reuse the same ids.

@@ -32,6 +32,10 @@ test('client note allowlist and UUID pattern are the same as the Rules',()=>{
  assert.ok(artifact.includes(`d.note.matches('${NOTE_RULES_PATTERN}')`));assert.ok(artifact.includes(`d.note.size() <= ${NOTE_MAX}`));
  const fromRules=NOTE_RULES_PATTERN.replace(/\\\\x\{([0-9A-F]{4})\}/g,'\\u{$1}');assert.equal(NOTE_PATTERN.source,fromRules);assert.ok(NOTE_PATTERN.unicode);
  assert.ok(artifact.includes(`matches('${UUID_V4.source}')`));
+ // RE2 quantifier cap: no {m,n} above 1000 anywhere; the note uses size() before an unbounded * class.
+ for(const m of artifact.matchAll(/\{(\d+)(?:,(\d*))?\}/g))assert.ok(Number(m[2]||m[1])<=1000,m[0]);
+ assert.ok(artifact.indexOf('d.note.size() <= 10000')<artifact.indexOf('d.note.matches('));
+ assert.doesNotMatch(NOTE_RULES_PATTERN,/000D|0009|\\r|\\t/);
 });
 const walk=(dir,out=[])=>{for(const name of readdirSync(dir)){const full=join(dir,name);const st=lstatSync(full);if(st.isSymbolicLink())continue;
  if(st.isDirectory()){if(!['node_modules','.git','test-results','playwright-report'].includes(name))walk(full,out);}else if(st.isFile()&&st.size<5e6)out.push(relative(root,full).split(sep).join('/'));}return out;};
@@ -54,7 +58,8 @@ test('note is display-only: no consumer of dispatchRequests outside the browser 
 test('dispatch web code: textContent only, no statuses invented, no GitHub/CI trigger, uniform cache token',()=>{
  const web=['bootstrap.mjs','dispatch-model.mjs','dispatch-view.mjs','firebase-adapter.mjs','private-view.mjs','private-controller.mjs','index.html'].map(f=>[f,read('control-plane/web/'+f)]);
  for(const [f,t] of web){assert.doesNotMatch(t,/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/,f);
-  assert.doesNotMatch(t,/api\.github\.com|workflow_dispatch|repository_dispatch|ghp_|github_pat_/i,f);}
+  // Token-shaped strings only: the secret BLOCK list in dispatch-model.mjs names the prefixes on purpose.
+  assert.doesNotMatch(t,/api\.github\.com|workflow_dispatch|repository_dispatch|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}/i,f);}
  for(const f of ['dispatch-model.mjs','dispatch-view.mjs'])assert.doesNotMatch(read('control-plane/web/'+f),/RUNNING|CONNECTED|IN_PROGRESS|COMPLETED/,f);
- const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch1']);
+ const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch2']);
 });

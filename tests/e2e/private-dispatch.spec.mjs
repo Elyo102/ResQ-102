@@ -122,23 +122,73 @@ test('stale auth_time requires a separate direct re-sign-in click; draft and key
  await expect.poll(()=>page.evaluate(()=>creates.length)).toBe(1);
  expect(await page.evaluate(()=>creates[0].rows.map(r=>r.id))).toEqual(keys);expect(errors).toEqual([]);
 });
-test('280 code-point counter is polite; disallowed characters and emoji are refused like the Rules',async({page})=>{
- const errors=await mount(page);await authorize(page);const counter=page.locator('#dispatch-counter');
- await expect(counter).toHaveAttribute('aria-live','polite');await expect(counter).toHaveText('0/280');
- await page.locator('#dispatch-note').fill('א'.repeat(280));await expect(counter).toHaveText('280/280');await expect(page.locator('#dispatch-error')).toHaveText('');
- await page.locator('#dispatch-note').fill('א'.repeat(281));await expect(counter).toHaveText('281/280');await expect(page.locator('#dispatch-error')).toContainText('280');
- await page.locator('#dispatch-note').fill('שלום\u200fעולם😀');await expect(counter).toHaveText('10/280');
- await expect(page.locator('#dispatch-error')).toContainText('U+200F');await expect(page.locator('#dispatch-error')).toContainText('U+1F600');
+test('10000 limit: counter on every input, one announcement per threshold, over-limit paste kept in full and blocked with a reason',async({page})=>{
+ const errors=await mount(page);await authorize(page);const counter=page.locator('#dispatch-counter'),live=page.locator('#dispatch-limit-live'),note=page.locator('#dispatch-note');
+ expect(await note.getAttribute('maxlength')).toBeNull();expect(await counter.getAttribute('aria-live')).toBeNull();
+ await expect(live).toHaveAttribute('aria-live','polite');await expect(counter).toHaveText('0/10000');await expect(live).toHaveText('');
+ await note.fill('a'.repeat(8999));await expect(counter).toHaveText('8999/10000');await expect(live).toHaveText('');
+ await note.press('End');await note.type('b');await expect(counter).toHaveText('9000/10000');await expect(live).toContainText('9000');
+ const announced=await page.evaluate(()=>{window.announcements=[];new MutationObserver(()=>announcements.push(document.getElementById('dispatch-limit-live').textContent))
+  .observe(document.getElementById('dispatch-limit-live'),{childList:true,characterData:true,subtree:true});return true;});expect(announced).toBe(true);
+ await note.type('cccc');await expect(counter).toHaveText('9004/10000'); // per-keystroke counter, no new announcement
+ expect(await page.evaluate(()=>announcements.length)).toBe(0);
+ const over='x'.repeat(10001);await note.fill(over);
+ await expect(note).toHaveValue(over); // kept in full: no maxlength truncation
+ await expect(counter).toContainText('10001/10000');await expect(counter).toContainText('חריגה של 1 תווים');await expect(live).toContainText('חורגת');
+ await expect(page.locator('#dispatch-error')).toContainText('10000');
  await page.locator('#dispatch-task-Grok').selectOption('realtime');await page.locator('#dispatch-preview').click();
- await expect(page.locator('#dispatch-preview-box')).toBeHidden();await expect(page.locator('#dispatch-send')).toBeDisabled();expect(errors).toEqual([]);
+ await expect(page.locator('#dispatch-preview-box')).toBeHidden();const send=page.locator('#dispatch-send');await expect(send).toBeDisabled();
+ await expect(send).toHaveAttribute('aria-describedby','dispatch-send-reason');await expect(page.locator('#dispatch-send-reason')).toContainText('10000');
+ expect(await page.evaluate(()=>announcements.filter(Boolean).length)).toBe(1);expect(await page.evaluate(()=>creates.length)).toBe(0);
+ await note.fill('a'.repeat(10000));await expect(counter).toHaveText('10000/10000');await expect(live).toContainText('למגבלה');await expect(page.locator('#dispatch-error')).toHaveText('');
+ expect(errors).toEqual([]);
 });
-test('feed: pinned queued by createdAt desc, capped history, server-only text badges, textContent, focus kept on move',async({page})=>{
+test('CRLF counts as one, newlines survive to the payload, preview and feed; disallowed characters reported with line; secrets blocked',async({page})=>{
+ const errors=await mount(page);await authorize(page);await page.evaluate(()=>feedNext([]));const note=page.locator('#dispatch-note');
+ await page.evaluate(()=>{const t=document.getElementById('dispatch-note');t.value='שורה ראשונה\r\nsecond line\r\n\r\n\tlast';t.dispatchEvent(new Event('input',{bubbles:true}));});
+ await expect(page.locator('#dispatch-counter')).toHaveText('31/10000'); // 11+1+11+1+1+2+4: each CRLF counts 1, tab -> 2 spaces
+ await page.locator('#dispatch-task-Grok').selectOption('realtime');await page.locator('#dispatch-preview').click();
+ const human=page.locator('#dispatch-preview-note');await expect(human).toHaveAttribute('dir','auto');
+ expect(await human.textContent()).toBe('שורה ראשונה\nsecond line\n\n  last');
+ expect(await human.evaluate(n=>[getComputedStyle(n).whiteSpace,getComputedStyle(n).unicodeBidi,getComputedStyle(n).overflowWrap])).toEqual(['pre-wrap','plaintext','anywhere']);
+ expect(await page.locator('#dispatch-preview-json').evaluate(n=>[getComputedStyle(n).whiteSpace,getComputedStyle(n).overflowWrap,getComputedStyle(n).overflowY])).toEqual(['pre-wrap','anywhere','auto']);
+ await page.locator('#dispatch-send').click();await expect.poll(()=>page.evaluate(()=>creates.length)).toBe(1);
+ const sent=await page.evaluate(()=>creates[0].rows[0].data.note);expect(sent).toBe('שורה ראשונה\nsecond line\n\n  last');
+ await page.evaluate(()=>resolveCreate());await expect(page.locator('#dispatch-result')).toHaveText('נשלח ואושר על ידי השרת.');
+ await page.evaluate(n=>feedNext([{id:'00000000-0000-4000-8000-000000000001',agent:'Grok',taskType:'realtime',note:n,status:'queued',batchId:'00000000-0000-4000-8000-000000000900',createdBy:'synthetic-owner',createdAt:Date.now(),cancelledAt:null}]),sent);
+ const feedNote=page.locator('#dispatch-active .dispatch-note-text').first();expect(await feedNote.textContent()).toBe(sent);
+ expect((await feedNote.innerText()).split('\n').length).toBe(4);await expect(page.locator('#dispatch-active .dispatch-banner')).toHaveText('הערה לתצוגה בלבד, לא מבוצעת ולא מועברת לסוכן');
+ await expect(page.locator('#dispatch-note-banner')).toHaveText('הערה לתצוגה בלבד, לא מבוצעת ולא מועברת לסוכן');
+ await note.fill('שורה 1\nline “two”\n\u200f');await expect(page.locator('#dispatch-error')).toContainText('U+201C בשורה 2');await expect(page.locator('#dispatch-error')).toContainText('U+200F בשורה 3');
+ await note.fill('deploy with ghp_'+'A'.repeat(36));await expect(page.locator('#dispatch-error')).toContainText('אין להדביק סודות');
+ await expect(page.locator('#dispatch-panel')).not.toContainText('ghp_A');await page.locator('#dispatch-preview').click();await expect(page.locator('#dispatch-preview-box')).toBeHidden();
+ await expect(page.locator('#dispatch-send')).toBeDisabled();expect(await page.evaluate(()=>creates.length)).toBe(1);expect(errors).toEqual([]);
+});
+test('long notes: collapsed snippet only, <details> only on real overflow, keyboard toggle kept across feed updates without focus jump',async({page})=>{
  const errors=await mount(page);await authorize(page);
- const history=Array.from({length:70},(_,i)=>feedRow(100+i,{status:'cancelled',cancelledAt:Date.parse('2026-09-30T10:00:00Z')+i*1000}));
+ const long='L'.repeat(9000)+'\nEND-OF-NOTE';const rows=[feedRow(1,{note:long}),feedRow(2,{note:'short one'}),feedRow(3,{note:'l\n'.repeat(20)})];
+ await page.evaluate(r=>feedNext(r),rows);
+ const row1=page.locator(`[data-id="${uuid(1)}"]`);await expect(row1.locator('.dispatch-note-snippet')).toHaveText('L'.repeat(500));
+ await expect(row1.locator('.dispatch-note-full')).toHaveCount(0);await expect(row1).not.toContainText('END-OF-NOTE');
+ await expect(page.locator(`[data-id="${uuid(2)}"] details`)).toHaveCount(0);await expect(page.locator(`[data-id="${uuid(3)}"] details`)).toHaveCount(1);
+ const summary=page.locator(`#dispatch-more-${uuid(1)}`);await summary.focus();await page.keyboard.press('Enter');
+ await expect(row1.locator('.dispatch-note-full')).toHaveCount(1);await expect(row1).toContainText('END-OF-NOTE');await expect(row1.locator('.dispatch-note-snippet')).toBeHidden();
+ await page.evaluate(r=>feedNext(r.map(x=>({...x}))),rows); // same data again
+ await page.evaluate(r=>feedNext([...r,{...r[1],id:'00000000-0000-4000-8000-000000000009',createdAt:r[0].createdAt+50000}]),rows); // a new row arrives
+ await expect(row1.locator('details')).toHaveAttribute('open','');expect(await page.evaluate(()=>document.activeElement?.id)).toBe(`dispatch-more-${uuid(1)}`);
+ await page.evaluate(([r,id])=>feedNext(r.map(x=>x.id===id?{...x,status:'cancelled',cancelledAt:Date.now()}:x)),[rows,uuid(1)]); // row moves to history
+ await expect(page.locator(`#dispatch-history [data-id="${uuid(1)}"] details`)).toHaveAttribute('open','');
+ expect(await page.evaluate(()=>document.activeElement?.id)).toBe(`dispatch-more-${uuid(1)}`);
+ await page.keyboard.press('Space');await expect(page.locator(`#dispatch-history [data-id="${uuid(1)}"] .dispatch-note-full`)).toHaveCount(0);
+ await expect(page.locator(`#dispatch-history [data-id="${uuid(1)}"] .dispatch-note-snippet`)).toBeVisible();expect(errors).toEqual([]);
+});
+test('feed: pinned queued by createdAt desc, history capped at 20, server-only text badges, textContent, focus kept on move',async({page})=>{
+ const errors=await mount(page);await authorize(page);
+ const history=Array.from({length:40},(_,i)=>feedRow(100+i,{status:'cancelled',cancelledAt:Date.parse('2026-09-30T10:00:00Z')+i*1000}));
  await page.evaluate(rows=>feedNext(rows),[feedRow(1),feedRow(3),feedRow(2,{note:'<img src=x onerror=alert(1)>'}),feedRow(4,{status:'claimed',createdAt:Date.parse('2026-09-30T11:00:00Z')}),...history]);
  const active=page.locator('#dispatch-active .dispatch-row');await expect(active).toHaveCount(3);
  expect(await active.evaluateAll(n=>n.map(e=>e.dataset.id))).toEqual([uuid(3),uuid(2),uuid(1)]);
- await expect(page.locator('#dispatch-history .dispatch-row')).toHaveCount(50);
+ await expect(page.locator('#dispatch-history .dispatch-row')).toHaveCount(20);
  await expect(page.locator('#dispatch-panel img')).toHaveCount(0);await expect(active.nth(1)).toContainText('<img src=x onerror=alert(1)>');
  await expect(active.first().locator('.dispatch-status')).toHaveText('בתור');
  await expect(page.locator(`[data-id="${uuid(4)}"] .dispatch-status`)).toHaveText('סטטוס שרת: claimed');
@@ -154,16 +204,20 @@ test('feed: pinned queued by createdAt desc, capped history, server-only text ba
  await expect(page.locator(`#dispatch-history [data-id="${uuid(2)}"]`)).toHaveCount(1);
  expect(await page.evaluate(id=>document.activeElement?.dataset?.id,uuid(2))).toBe(uuid(2));
  await expect(page.locator(`#dispatch-history .dispatch-row`).first()).toHaveAttribute('data-id',uuid(2));
- await expect(page.locator('#dispatch-history .dispatch-row')).toHaveCount(50);
+ await expect(page.locator('#dispatch-history .dispatch-row')).toHaveCount(20);
  expect(errors).toEqual([]);
 });
-for(const width of [320,360,390,1280]){
- test(`layout at ${width}px: no horizontal scroll, 16px inputs, full-width controls, long labels contained`,async({page})=>{
+for(const width of [320,360,375,390,1280]){
+ test(`layout at ${width}px: 10k no-space notes, no horizontal scroll, 16px inputs, full-width controls, long labels contained`,async({page})=>{
   await page.setViewportSize({width,height:900});const errors=await mount(page);await authorize(page);
-  await page.evaluate(rows=>feedNext(rows),[feedRow(1,{note:'x'.repeat(280),taskType:'telemetry-relays'}),feedRow(2,{status:'cancelled',cancelledAt:Date.now(),note:'א'.repeat(280)})]);
+  await page.evaluate(rows=>feedNext(rows),[feedRow(1,{note:'x'.repeat(10000),taskType:'telemetry-relays'}),feedRow(2,{status:'cancelled',cancelledAt:Date.now(),note:'א'.repeat(10000)})]);
   await page.locator('#dispatch-task-Gemini').selectOption('cross-browser');await page.locator('#dispatch-task-Grok').selectOption('telemetry-relays');
-  await page.locator('#dispatch-note').fill('y'.repeat(280));await page.locator('#dispatch-preview').click();await expect(page.locator('#dispatch-preview-box')).toBeVisible();
+  await page.locator('#dispatch-note').fill('y'.repeat(10000));await page.locator('#dispatch-preview').click();await page.locator(`#dispatch-more-${uuid(1)}`).click();await expect(page.locator('.dispatch-note-full')).toHaveCount(1);await expect(page.locator('#dispatch-preview-box')).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  const ta=await page.locator('#dispatch-note').evaluate(n=>{const c=getComputedStyle(n);return {rows:n.rows,maxH:c.maxHeight,oy:c.overflowY,ob:c.overscrollBehaviorY,h:n.getBoundingClientRect().height};});
+  expect(ta.rows).toBe(12);expect(ta.maxH).not.toBe('none');expect(ta.oy).toBe('auto');expect(ta.ob).toBe('auto');expect(ta.h).toBeLessThanOrEqual(Math.min(450,384)+1);
+  for(const n of await page.locator('#dispatch-panel .dispatch-note-text, #dispatch-preview-json').all())
+   expect(await n.evaluate(e=>[getComputedStyle(e).overflowWrap,getComputedStyle(e).whiteSpace])).toEqual(['anywhere','pre-wrap']);
   const panelBox=await page.locator('#dispatch-panel').boundingBox();expect(panelBox.x).toBeGreaterThanOrEqual(0);expect(panelBox.x+panelBox.width).toBeLessThanOrEqual(width+0.5);
   for(const el of await page.locator('#dispatch-panel select, #dispatch-panel textarea').all()){
    const s=await el.evaluate(n=>{const c=getComputedStyle(n);return {font:parseFloat(c.fontSize),max:c.maxWidth,w:n.getBoundingClientRect().width,parent:n.parentElement.getBoundingClientRect().width};});

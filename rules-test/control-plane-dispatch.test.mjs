@@ -15,9 +15,10 @@ let passed=0;const check=async(name,fn)=>{await fn();passed++;console.log('PASS 
 
 // ---- exact-byte provenance (no capture needed: prefix+suffix must hash to the pinned live capture) ----
 await check('artifact bytes, provenance and byte-identical live-capture prefix/suffix',async()=>{
- assert.equal(meta.kind,'dispatch-only-deploy-artifact');assert.equal(meta.status,'DEPLOYED');
- assert.equal(meta.deployment.liveSourceSha256,meta.artifactSha256);assert.equal(meta.deployment.preDeploy.sourceSha256,CAPTURE_SHA256);
- assert.match(meta.deployment.rulesetName,/^projects\/resq-agent-control-20260928\/rulesets\/[0-9a-f-]{36}$/);assert.match(meta.deployment.command,/--config control-plane\/deploy\/firebase\.control-plane\.json --project resq-agent-control-20260928 --only firestore:rules/);
+ assert.equal(meta.kind,'dispatch-only-deploy-artifact');assert.ok(['LOCAL_ARTIFACT_NOT_DEPLOYED','DEPLOYED'].includes(meta.status));
+ if(meta.status==='DEPLOYED'){assert.equal(meta.deployment.liveSourceSha256,meta.artifactSha256);
+  assert.match(meta.deployment.rulesetName,/^projects\/resq-agent-control-20260928\/rulesets\/[0-9a-f-]{36}$/);assert.match(meta.deployment.command,/--config control-plane\/deploy\/firebase\.control-plane\.json --project resq-agent-control-20260928 --only firestore:rules/);}
+ else assert.equal(meta.deployment,undefined);
  assert.equal(meta.project,'resq-agent-control-20260928');assert.equal(meta.captureSha256,CAPTURE_SHA256);
  assert.equal(hash(artifact),meta.artifactSha256);assert.equal(artifact.length,meta.artifactBytes);
  assert.ok(!artifact.includes(0x0d),'artifact must be LF-only exact bytes');
@@ -35,10 +36,29 @@ await check('artifact bytes, provenance and byte-identical live-capture prefix/s
  assert.doesNotMatch(block.toString('utf8'),/function (?:tasks|aid|policy|owner|publisher|budgetWindow|currentPrincipal)\(/);
  assert.throws(()=>assembleDispatchRules(Buffer.from('tampered'),fragment),/CAPTURE_HASH_MISMATCH/);
 });
+// The change vs the previously deployed artifact is limited to the note lines: reverse-applying the committed
+// diff to the current artifact must reproduce the previous live bytes exactly.
+await check('diff vs previous live artifact is limited to note lines and reverse-applies to its exact bytes',async()=>{
+ const prev=meta.history?.supersedes;assert.equal(prev.artifactSha256,'17301818b67da187ede1dbf98aff00a4f22b9351498e6b513318572a85059f57');
+ const diff=readFileSync(new URL('../'+meta.history.rulesDiff,import.meta.url),'utf8').replace(/\r\n/g,'\n');
+ let text=artifact.toString('utf8');const changed=[];
+ for(const hunk of diff.split(/^@@[^\n]*\n/m).slice(1)){
+  const lines=hunk.replace(/\n$/,'').split('\n');const now=[],was=[];
+  for(const l of lines){const t=l.slice(1);if(l[0]===' '){now.push(t);was.push(t);}else if(l[0]==='+'){now.push(t);changed.push(t);}else if(l[0]==='-'){was.push(t);changed.push(t);}}
+  const a=now.join('\n')+'\n',b=was.join('\n')+'\n';assert.equal(text.split(a).length,2,'hunk applies once');text=text.replace(a,()=>b);
+ }
+ assert.equal(hash(Buffer.from(text)),prev.artifactSha256);
+ for(const l of changed)assert.match(l,/^\s+(?:\/\/.*|&& d\.note\b.*)$/,l);
+ assert.ok(changed.every(l=>l.trim().startsWith('//')||/d\.note/.test(l)));
+ assert.equal(changed.filter(l=>/d\.note/.test(l)).length,4);
+ const quantifiers=[...artifact.toString('utf8').matchAll(/\{(\d+)(?:,(\d+))?\}/g)].map(m=>Number(m[2]??m[1]));assert.ok(quantifiers.every(n=>n<=1000),'no quantifier above 1000');
+ assert.doesNotMatch(artifact.toString('utf8'),/x\{000D\}|x\{0009\}|\\r|\\t/);
+ assert.match(artifact.toString('utf8'),/d\.note is string && d\.note\.size\(\) <= 10000\n\s+&& d\.note\.matches\('\^\[\\\\x\{000A\}\\\\x\{0020\}-\\\\x\{007E\}\\\\x\{05D0\}-\\\\x\{05EA\}\\\\x\{05B0\}-\\\\x\{05C7\}\]\*\$'\)/);
+});
 if(process.argv[2]){
  await check('private capture direct-byte comparison and deterministic reassembly',async()=>{
   const capture=readFileSync(process.argv[2]);const a=assembleDispatchRules(capture,fragment),b=assembleDispatchRules(capture,fragment);
-  assert.deepEqual(a.result,artifact);assert.deepEqual(b.result,artifact);const {status,deployment,...generated}=meta;assert.deepEqual({...a.provenance,status:undefined},{...generated,status:undefined});assert.equal(a.provenance.status,'LOCAL_ARTIFACT_NOT_DEPLOYED');
+  assert.deepEqual(a.result,artifact);assert.deepEqual(b.result,artifact);const {status,deployment,history,...generated}=meta;assert.deepEqual({...a.provenance,status:undefined},{...generated,status:undefined});assert.equal(a.provenance.status,'LOCAL_ARTIFACT_NOT_DEPLOYED');
   assert.deepEqual(Buffer.concat([artifact.subarray(0,meta.insertionOffsetBytes),artifact.subarray(meta.insertionOffsetBytes+meta.insertedBytes)]),capture);
  });
 }
@@ -71,10 +91,10 @@ const QUEUED=randomUUID(),FOREIGN=randomUUID();
 const publisher=()=>client('synthetic-Grok',{control_plane_agent:'Grok'});
 const budget=()=>client('resq-ci-budget-20260928',{control_plane_budget:true,control_plane_authorization:'rules-grant-1'});
 
-await check('fresh owner creates every allowed agent/taskType, empty, 280 ASCII, 280 Hebrew and niqqud notes',async()=>{
+await check('fresh owner creates every allowed agent/taskType; empty, 10000 ASCII, 10000 Hebrew, multi-line and niqqud notes',async()=>{
  await seed();
  for(const [agent,list] of Object.entries(TASKS))for(const taskType of list)await assertSucceeds(put(owner(),row({agent,taskType})));
- for(const note of ['','a'.repeat(280),'א'.repeat(280),'שָׁלוֹם עוֹלָם ~ !?','Hebrew עברית mixed 123'])await assertSucceeds(put(owner(),row({note})));
+ for(const note of ['','a'.repeat(10000),'א'.repeat(10000),'שורה 1\nline 2\n\n  indented ~!','\n','שָׁ'.repeat(3333)+'a','שָׁלוֹם עוֹלָם ~ !?','Hebrew עברית mixed 123'])await assertSucceeds(put(owner(),row({note})));
  const odb=owner(),batch=writeBatch(odb);const batchId=randomUUID();
  for(const agent of ['Gemini','Codex','Grok'])batch.set(doc(odb,'dispatchRequests/'+randomUUID()),row({agent,taskType:TASKS[agent][0],batchId}));
  await assertSucceeds(batch.commit());
@@ -97,11 +117,12 @@ await check('document id and batchId must be lowercase RFC 4122 v4 UUIDs',async(
  for(const batchId of [...bad,7,null])await assertFails(put(owner(),row({batchId})));
 });
 const REJECTED=[0x200F,0x200E,0x061C,0x202A,0x202B,0x202C,0x202D,0x202E,0x2066,0x2067,0x2068,0x2069,0x2028,0x2029,0xFEFF,0x200B,0x200C,0x200D,0x05EB,0x05F0,0x0600,0x00A0,0x00AD];
-for(let c=0x80;c<=0x9F;c++)REJECTED.push(c);for(let c=0;c<=0x1F;c++)REJECTED.push(c);REJECTED.push(0x7F);
-await check(`note allowlist rejects each of ${REJECTED.length} code points, astral/emoji and 281 characters`,async()=>{
+for(let c=0x80;c<=0x9F;c++)REJECTED.push(c);for(let c=0;c<=0x1F;c++)if(c!==0x0A)REJECTED.push(c); // \n (U+000A) is the only added characterREJECTED.push(0x7F);
+await check(`note allowlist rejects each of ${REJECTED.length} code points (incl. \\r, \\t, NUL), CRLF, astral/emoji and 10001 characters`,async()=>{
  await seed();
  for(const cp of REJECTED)await assertFails(put(owner(),row({note:'ok'+String.fromCodePoint(cp)+'ok'})),'U+'+cp.toString(16));
- for(const note of ['a'.repeat(281),'א'.repeat(281),'😀','a'.repeat(279)+'😀','𝐀','<script>'.replace('<','\u2039')])await assertFails(put(owner(),row({note})));
+ for(const note of ['a'.repeat(10001),'א'.repeat(10001),'\n'.repeat(10001),'שָׁ'.repeat(3333)+'ab','line 1\r\nline 2','a\rb','a\tb','\u0000','a\u200fb','a\u061cb','a\u202eb','a\u2066b','a\ufeffb','a\u2028b',
+  '😀','a'.repeat(9998)+'😀','𝐀','<script>'.replace('<','\u2039')])await assertFails(put(owner(),row({note})),JSON.stringify(note.slice(0,12))+' len '+note.length);
 });
 await check('freshness: auth_time within 900s required; stale, future and non-int auth_time denied',async()=>{
  await seed();

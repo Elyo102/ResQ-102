@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch1';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch2';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
