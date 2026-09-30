@@ -150,7 +150,7 @@ await check('B1 CI (private_publishers) and budget identities are rejected as li
  for(const mutate of [{Grok:{enabled:false}},{Grok:{revokedAfter:nowSeconds()+60}},{Grok:{role:'publisher'}},{Grok:{agent:'Codex'}}]){await seed(mutate);
   await assertFails(getDoc(doc(listener(),'active_tasks/'+T_GROK)));await assertFails(progress(listener(),T_GROK,'grok',entry('READY','delivered')));}
 });
-await check('B2/B4/C3 progress transitions: none->READY|REJECTED, READY->REJECTED|IN_PROGRESS, IN_PROGRESS->COMPLETED|FAILED; nothing leaves a terminal state',async()=>{
+await check('B2/B4/C3 progress transitions: none->READY|REJECTED, READY->REJECTED, READY/delivered (only)->IN_PROGRESS, IN_PROGRESS->COMPLETED|FAILED; nothing leaves a terminal state',async()=>{
  await seed();const db=listener();
  await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivered')));
  await assertFails(progress(db,T_GROK,'grok',entry('READY','delivery_off')));            // READY -> READY
@@ -167,7 +167,10 @@ await check('B2/B4/C3 progress transitions: none->READY|REJECTED, READY->REJECTE
  await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','secret')));
  for(const [s,st] of [['READY','delivered'],['IN_PROGRESS','started'],['REJECTED','invalid']])await assertFails(progress(db,T_GROK,'grok',entry(s,st)));
  await seed();
- await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivery_off')));await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','declined')));
+ // hardening: READY/delivery_off (nothing written to the inbox) can never become IN_PROGRESS; it may only be REJECTED
+ await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivery_off')));
+ await assertFails(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));          // delivery_off -> IN_PROGRESS denied
+ await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','declined')));
  await seed();
  await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivered')));await assertSucceeds(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));
  await assertSucceeds(progress(db,T_GROK,'grok',entry('FAILED','failed')));await assertFails(progress(db,T_GROK,'grok',entry('COMPLETED','completed')));
@@ -212,10 +215,15 @@ await check('no delete for anyone; retried create of an existing taskId is denie
  let snap;await environment.withSecurityRulesDisabled(async c=>{snap=await getDoc(doc(c.firestore(),'active_tasks/'+id));});assert.equal(snap.data().payload,data.payload);
  await assertSucceeds(getDoc(doc(owner(),'active_tasks/'+id)));
 });
-await check('task_listeners heartbeat: only that agent\'s listener identity, exactly {agent, seenAt=server time}; owner reads bounded; CI never lights it',async()=>{
+await check('task_listeners heartbeat: only that agent\'s listener identity, exactly {agent, seenAt=server time}, at most one write per 30s; owner reads bounded; CI never lights it',async()=>{
  await seed();
- await assertSucceeds(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));
- await assertSucceeds(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));
+ await assertSucceeds(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));   // create
+ await assertFails(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));     // hardening: update within 30s denied
+ const aged=ms=>environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'task_listeners/grok'),{agent:'grok',seenAt:Timestamp.fromMillis(Date.now()-ms)}));
+ await aged(25000);await assertFails(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));   // 25s old: still too soon
+ await aged(31000);await assertSucceeds(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));   // >30s old: allowed
+ await assertFails(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));     // and immediately limited again
+ await aged(61000);
  for(const [path,data] of [['task_listeners/codex',{agent:'codex',seenAt:serverTimestamp()}],['task_listeners/grok',{agent:'codex',seenAt:serverTimestamp()}],
   ['task_listeners/grok',{agent:'grok',seenAt:Timestamp.now()}],['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),x:1}],['task_listeners/grok',{agent:'grok'}],
   ['task_listeners/claude',{agent:'claude',seenAt:serverTimestamp()}]])await assertFails(setDoc(doc(listener(),path),data));

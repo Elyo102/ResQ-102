@@ -1,6 +1,6 @@
 --- live/f30d3d85/source-0.rules
 +++ control-plane/deploy/firestore.control-plane.rules
-@@ -159,6 +159,109 @@
+@@ -159,6 +159,117 @@
        allow update: if owner() && dispatchCancel();
        allow delete: if false;
      }
@@ -71,9 +71,11 @@
 +        && e.state is string && e.state in atSteps() && e.step in atSteps()[e.state]
 +        && e.updatedAt == request.time;
 +    }
++    // IN_PROGRESS only after a real inbox delivery (READY/delivered); READY/delivery_off may only be REJECTED.
 +    function atTransition(prev, next) {
 +      return (prev == null && next in ['READY', 'REJECTED'])
-+        || (prev != null && prev.state == 'READY' && next in ['REJECTED', 'IN_PROGRESS'])
++        || (prev != null && prev.state == 'READY' && next == 'REJECTED')
++        || (prev != null && prev.state == 'READY' && prev.step == 'delivered' && next == 'IN_PROGRESS')
 +        || (prev != null && prev.state == 'IN_PROGRESS' && next in ['COMPLETED', 'FAILED']);
 +    }
 +    function atProgress() {
@@ -85,6 +87,12 @@
 +        && after.progress.diff(before.progress).affectedKeys().hasOnly([k])
 +        && atEntry(after.progress.get(k, null))
 +        && atTransition(before.progress.get(k, null), after.progress.get(k, {}).get('state', ''));
++    }
++    function atHeartbeat(agentKey) {
++      return atListener() && agentKey == atKey()
++        && request.resource.data.keys().hasAll(['agent', 'seenAt'])
++        && request.resource.data.keys().hasOnly(['agent', 'seenAt'])
++        && request.resource.data.agent == agentKey && request.resource.data.seenAt == request.time;
 +    }
 +    match /active_tasks/{taskId} {
 +      allow get: if owner() || (atListener() && resource.data.targets.get(atKey(), 'IGNORE') == 'EXECUTE');
@@ -101,10 +109,10 @@
 +      allow get: if owner();
 +      allow list: if owner() && request.query.limit != null
 +        && request.query.limit >= 1 && request.query.limit <= 3;
-+      allow create, update: if atListener() && agentKey == atKey()
-+        && request.resource.data.keys().hasAll(['agent', 'seenAt'])
-+        && request.resource.data.keys().hasOnly(['agent', 'seenAt'])
-+        && request.resource.data.agent == agentKey && request.resource.data.seenAt == request.time;
++      allow create: if atHeartbeat(agentKey);
++      // Minimum heartbeat interval: at most one write per 30 seconds per agent.
++      allow update: if atHeartbeat(agentKey)
++        && request.time > resource.data.seenAt + duration.value(30, 's');
 +      allow delete: if false;
 +    }
      match /{document=**} { allow read, write: if false; }

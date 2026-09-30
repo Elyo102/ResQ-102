@@ -9,7 +9,7 @@
   "baseRulesetName": "projects/resq-agent-control-20260928/rulesets/569cfc0c-a798-45b6-b8f6-d3bd501369ba",
   "baseReleaseUpdateTime": "2026-09-30T13:19:16.668156Z",
   "fragment": "control-plane/firestore-active-tasks.rules.fragment",
-  "fragmentSha256": "bf41170137ba9217526886f9737145b8d6c5671a0fcc88dc9d1935f9e8cc45a3",
+  "fragmentSha256": "43e810f982bf179dabd96837f709810e3059612e53011b7672cd13b984c79e5c",
   "fragmentHashEncoding": "utf8-lf-trimmed-plus-lf",
   "functionsAdded": [
     "atKeyFor",
@@ -22,15 +22,16 @@
     "atCancel",
     "atEntry",
     "atTransition",
-    "atProgress"
+    "atProgress",
+    "atHeartbeat"
   ],
   "insertionOffsetBytes": 9865,
-  "insertedBytes": 5851,
+  "insertedBytes": 6321,
   "prefixSha256": "17ffa20d9eb31a2b329a662a41c4a9bd1f7de17e517e8829d9c074d4057cb281",
   "suffixSha256": "c698a22e97fe847213fbd44d1b164e39ace704ee12b8b1186b876a550e1e711d",
   "artifact": "control-plane/deploy/firestore.control-plane.rules",
-  "artifactSha256": "f0296a67fba924f8bf8702b6b5cd093e1516ef02ffe289ad8fe3f2be8e65ad16",
-  "artifactBytes": 15780,
+  "artifactSha256": "358b4c0cf9bef8a49508828f1d4060864583677544ff0a449dbb545246691c7f",
+  "artifactBytes": 16250,
   "rulesDiff": "control-plane/deploy/firestore-active-tasks.diff",
   "changes": [
     "Insert active_tasks and task_listeners blocks before the final deny-all match; live f30d3d85 bytes otherwise unchanged"
