@@ -618,6 +618,16 @@
       "child": 1
     },
     {
+      "file": "tests/report-responsive-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 4,
+      "server": 0,
+      "child": 0
+    },
+    {
       "file": "tests/reproducibility.mjs",
       "imports": [],
       "launch": 0,
