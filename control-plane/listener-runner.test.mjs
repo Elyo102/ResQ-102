@@ -9,11 +9,12 @@ import {join} from 'node:path';
 import {requestJson,decodeJwt,verifyListenerClaims,verifyIdToken,createTokenSource,SafeError,PROJECT,PROJECT_NUMBER,
   SECURETOKEN_URL,CERTS_URL,LISTENER_AGENTS,FATAL_AUTH} from './listener/listener-auth.mjs';
 import {firestoreBase,encodeValue,decodeFields,createListenerOps,createFirestoreClient,structuredListenerQuery,POLL_MS,FIRESTORE_URL} from './listener/firestore-rest.mjs';
-import {createCredentialStore,listenerPaths} from './listener/credential-store.mjs';
-import {aclVerdict,createWindowsProtector,SCRIPTS,POWERSHELL} from './listener/win-protect.mjs';
+import {createCredentialStore,listenerPaths,assertHomeMatch,DIR_NAME,LEGACY_DIR_NAME} from './listener/credential-store.mjs';
+import {aclVerdict,aclFinding,inboxWriteFinding,validAclInfo,rightsName,WRITE_MASK,ACL_MANY_MAX,createWindowsProtector,SCRIPTS,POWERSHELL} from './listener/win-protect.mjs';
+import {createInbox} from './task-inbox.mjs';
 import {createIdentityAdmin} from './listener/identity-admin.mjs';
 import {provisionListener,parseProvisionArgs,listenerEmail,STREAM_THRESHOLD} from './provision-listener.mjs';
-import {startRunner,parseRunnerArgs,EXIT,MAX_POLL_FAILURES} from './task-listener-run.mjs';
+import {startRunner,parseRunnerArgs,EXIT,MAX_POLL_FAILURES,MAX_ACL_CHECK_FAILURES,aclStopLine} from './task-listener-run.mjs';
 import {HEARTBEAT_MS} from './task-listener.mjs';
 // Source files are read LF-normalized: a Windows checkout (core.autocrlf=true) must pass the same static checks.
 const readSrc=u=>readFileSync(u,'utf8').replace(/\r\n/g,'\n');
@@ -32,7 +33,7 @@ const getCerts=async()=>({k1:PEM});
 // Every key the runner may print (counters/flags only; never content).
 const RUNNER_LINE_KEYS=['agent','delivery','ack','mode','running','ready','delivered','rejected','cancelledMarkers','errors','received','lit','understood','unreadable',
   'ackDenied','rateLimited','llmFail','summarizer','pollFailures','heartbeatDenied','lastError','started','heartbeatMs','pollMs','stopped',
-  'streams','streamRestarts','restartsLastHour','streamCurrent','streamError'];
+  'streams','streamRestarts','restartsLastHour','streamCurrent','streamError','code'];
 
 test('requestJson: bounded, redirect:error, safe codes only (upstream allowlist or HTTP_<n>), never the body',async()=>{
   let seen;const f=async(u,o)=>{seen=o;return resp(400,{error:{message:'TOKEN_EXPIRED : secret-detail-xyz',status:'INVALID_ARGUMENT'}});};
@@ -179,24 +180,31 @@ function fakeProtector(){
   p.unprotect=b=>{if(p.broken||!Buffer.from(b).subarray(0,6).equals(Buffer.from('DPAPI:')))throw Error('bad');return Buffer.from(b).subarray(6).map(x=>x^0x5a);};
   p.checkAcl=()=>{if(p.acl)throw new SafeError(p.acl);};
   p.lockDown=d=>p.locked.push(d);
+  // aclMany (ACL hardening): p.many = null (clean) | fn(path,i) -> info | 'THROW' (the check itself fails)
+  p.many=null;p.manyCalls=[];
+  p.aclMany=paths=>{p.manyCalls.push([...paths]);if(p.many==='THROW')throw new SafeError('PROTECTOR_ACLMANY_FAILED');
+    return paths.map((x,i)=>typeof p.many==='function'?(p.many(x,i)??CLEAN_ACL(x)):CLEAN_ACL(x));};
   return p;
 }
-const tmp=()=>realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-unit-')));
+const ME_SID='S-1-5-21-1-2-3-1001';
+const CLEAN_ACL=()=>({me:ME_SID,owner:ME_SID,protected:true,rules:[{sid:ME_SID,type:'Allow',inherited:false,mask:0x1F01FF}]});
+const tmp=()=>{const h=realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-unit-')));mkdirSync(join(h,'AppData','Local'),{recursive:true});return h;};
+const cs=(home,protector=fakeProtector())=>createCredentialStore({home,accountHome:home,protector});
 test('credential store: DPAPI-protected refresh token (never plain on disk), ACL + DPAPI fail closed, fixed location, no links, not in git',()=>{
-  const home=tmp();const prot=fakeProtector();const store=createCredentialStore({home,protector:prot});
+  const home=tmp();const prot=fakeProtector();const store=createCredentialStore({home,accountHome:home,protector:prot});
   assert.throws(()=>store.readCredential('Grok'));
-  store.ensureDir();assert.deepEqual(prot.locked,[join(home,'.resq-listeners')]);
+  store.ensureDir();assert.deepEqual(prot.locked,[join(home,'AppData','Local','resq-listeners')]);
   const w=store.writeCredential('Grok',{uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'REFRESH-'+'x'.repeat(40)});
-  assert.equal(w.path,join(home,'.resq-listeners','grok.credential.json'));assert.match(w.sha256,/^[a-f0-9]{64}$/);
+  assert.equal(w.path,join(home,'AppData','Local','resq-listeners','grok.credential.json'));assert.match(w.sha256,/^[a-f0-9]{64}$/);
   const disk=readFileSync(w.path,'utf8');assert.doesNotMatch(disk,/REFRESH-/);
   assert.deepEqual(Object.keys(JSON.parse(disk)),['v','agent','uid','projectId','revokedAfter','protected']);
   assert.deepEqual({...store.readCredential('Grok')},{agent:'Grok',uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'REFRESH-'+'x'.repeat(40)});
-  assert.deepEqual(readdirSync(join(home,'.resq-listeners')).sort(),['grok.credential.json'],'no temp files left');
+  assert.deepEqual(readdirSync(join(home,'AppData','Local','resq-listeners')).sort(),['grok.credential.json'],'no temp files left');
   // LLM key: DPAPI-protected, fixed host per agent, validated model, never plain on disk; status never shows it
   const KEY='xai-'+'K'.repeat(40);
   assert.throws(()=>store.writeLlmKey('Grok',{apiKey:'sk-'+'a'.repeat(40),model:'grok-4'}),code('LLM_KEY_FORMAT'));
   assert.throws(()=>store.writeLlmKey('Grok',{apiKey:KEY,model:'Grok 4; rm'}),code('LLM_MODEL_FORMAT'));
-  const lw=store.writeLlmKey('Grok',{apiKey:KEY,model:'grok-4-fast'});assert.equal(lw.path,join(home,'.resq-listeners','grok.llm.json'));
+  const lw=store.writeLlmKey('Grok',{apiKey:KEY,model:'grok-4-fast'});assert.equal(lw.path,join(home,'AppData','Local','resq-listeners','grok.llm.json'));
   const ldisk=readFileSync(lw.path,'utf8');assert.doesNotMatch(ldisk,/xai-|KKKK/);assert.deepEqual(Object.keys(JSON.parse(ldisk)),['v','agent','host','model','protected']);
   assert.equal(JSON.parse(ldisk).host,'api.x.ai');
   assert.deepEqual({...store.readLlmKey('Grok')},{agent:'Grok',host:'api.x.ai',model:'grok-4-fast',apiKey:KEY});
@@ -227,12 +235,12 @@ test('credential store: DPAPI-protected refresh token (never plain on disk), ACL
   writeFileSync(listenerPaths(home,'Grok').config,JSON.stringify({inboxRoot:'/i',delivery:'true'}));assert.throws(()=>store.readConfig('Grok'),code('CONFIG_SHAPE'));
   assert.throws(()=>listenerPaths(home,'Gemini'),code('AGENT_REJECTED'));assert.throws(()=>listenerPaths(home,'Claude'),code('AGENT_REJECTED'));
   // linked folder, git worktree, work\ segment
-  const h2=tmp();const real=join(h2,'real');mkdirSync(real);symlinkSync(real,join(h2,'.resq-listeners'));
-  assert.throws(()=>createCredentialStore({home:h2,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_LINK_REJECTED'));
-  const h3=tmp();mkdirSync(join(h3,'.git'));assert.throws(()=>createCredentialStore({home:h3,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_IN_GIT_WORKTREE'));
-  const h4=join(tmp(),'work');mkdirSync(h4);assert.throws(()=>createCredentialStore({home:h4,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_UNDER_WORK'));
-  assert.throws(()=>createCredentialStore({home:'relative',protector:fakeProtector()}),code('HOME_REJECTED'));
-  assert.throws(()=>createCredentialStore({home,protector:{}}),code('PROTECTOR_REQUIRED'));
+  const h2=tmp();const real=join(h2,'real');mkdirSync(real);symlinkSync(real,join(h2,'AppData','Local','resq-listeners'));
+  assert.throws(()=>createCredentialStore({home:h2,accountHome:h2,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_LINK_REJECTED'));
+  const h3=tmp();mkdirSync(join(h3,'.git'));assert.throws(()=>createCredentialStore({home:h3,accountHome:h3,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_IN_GIT_WORKTREE'));
+  const h4=join(tmp(),'work');mkdirSync(join(h4,'AppData','Local'),{recursive:true});assert.throws(()=>createCredentialStore({home:h4,accountHome:h4,protector:fakeProtector()}).ensureDir(),code('CREDENTIAL_UNDER_WORK'));
+  assert.throws(()=>createCredentialStore({home:'relative',accountHome:'relative',protector:fakeProtector()}),code('HOME_REJECTED'));
+  assert.throws(()=>createCredentialStore({home,accountHome:home,protector:{}}),code('PROTECTOR_REQUIRED'));
 });
 test('Windows protector: ACL policy; fixed PowerShell binary, constant scripts, data on stdin only, no shell; other OS fail closed',()=>{
   const me='S-1-5-21-1-2-3-1001';const ok={me,owner:me,protected:true,rules:[{sid:me,type:'Allow',inherited:false}]};
@@ -304,20 +312,20 @@ function provisionFakes(opts={}){
 test('provisioning: provider must be enabled and client sign-up blocked (PROVIDER_SIGNUP_OPEN); uid collision disables the new user before claims/doc; revokedAfter = auth_time of the fresh token',async()=>{
   const base=()=>({mode:'production',projectId:PROJECT,getCerts,now:()=>NOW,sleep:async()=>{},home:tmp()});
   const f0=provisionFakes({emailEnabled:false});
-  await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_EMAIL_PASSWORD_DISABLED'));
+  await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f0,store:cs(tmp())}}),code('PROVIDER_EMAIL_PASSWORD_DISABLED'));
   assert.deepEqual(f0.log,[]);
   for(const open of [false,undefined,null,'true']){
     const fs0=provisionFakes({signupBlocked:open});
-    await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...fs0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_SIGNUP_OPEN'),String(open));
-    await assert.rejects(provisionListener({op:'rotate',agent:'Grok',deps:{...base(),...fs0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_SIGNUP_OPEN'));
+    await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...fs0,store:cs(tmp())}}),code('PROVIDER_SIGNUP_OPEN'),String(open));
+    await assert.rejects(provisionListener({op:'rotate',agent:'Grok',deps:{...base(),...fs0,store:cs(tmp())}}),code('PROVIDER_SIGNUP_OPEN'));
     assert.deepEqual(fs0.log,[],'nothing created when sign-up is open');
   }
   for(const col of ['private_publishers','private_budget_publishers','private_listeners']){
     const f=provisionFakes({collide:col});
-    await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),SafeError);
+    await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f,store:cs(tmp())}}),SafeError);
     assert.deepEqual(f.log,['createUser','setDisabled:true'],col);assert.equal(f.users.get('newUid00001').disabled,true);
   }
-  const f=provisionFakes();const b=base();const store=createCredentialStore({home:b.home,protector:fakeProtector()});
+  const f=provisionFakes();const b=base();const store=createCredentialStore({home:b.home,accountHome:b.home,protector:fakeProtector()});
   let tokenForVerify=null;
   const fetcher=async(url,o)=>{assert.equal(url,SECURETOKEN_URL);return resp(200,{id_token:rs256(claims({sub:'newUid00001',user_id:'newUid00001',auth_time:S-100})),user_id:'newUid00001',project_id:PROJECT_NUMBER});};
   const r=await provisionListener({op:'create',agent:'Grok',deps:{...b,...f,store,fetcher,listenerClientFor:ts=>{tokenForVerify=ts;return {runQuery:async()=>[]};}}});
@@ -333,9 +341,9 @@ test('provisioning: provider must be enabled and client sign-up blocked (PROVIDE
 });
 
 test('condition 3 (25572dc): stream restart counts persisted (numbers only, strict shape); provision status shows them against the 75/day | 8/hour threshold',async()=>{
-  const home=tmp();const store=createCredentialStore({home,protector:fakeProtector()});store.ensureDir();
+  const home=tmp();const store=createCredentialStore({home,accountHome:home,protector:fakeProtector()});store.ensureDir();
   assert.equal(store.readStreamStats('Grok'),null);
-  const w=store.writeStreamStats('Grok',{restartsLastHour:3,restartsLastDay:40,at:NOW});assert.equal(w.path,join(home,'.resq-listeners','grok.stream.json'));
+  const w=store.writeStreamStats('Grok',{restartsLastHour:3,restartsLastDay:40,at:NOW});assert.equal(w.path,join(home,'AppData','Local','resq-listeners','grok.stream.json'));
   assert.deepEqual({...store.readStreamStats('Grok')},{restartsLastHour:3,restartsLastDay:40,at:NOW});
   assert.deepEqual(Object.keys(JSON.parse(readFileSync(w.path,'utf8'))),['v','restartsLastHour','restartsLastDay','at']);
   for(const bad of [{restartsLastHour:-1,restartsLastDay:0,at:NOW},{restartsLastHour:1.5,restartsLastDay:0,at:NOW},{restartsLastHour:0,restartsLastDay:'9',at:NOW}])
@@ -351,7 +359,7 @@ test('condition 3 (25572dc): stream restart counts persisted (numbers only, stri
   }
 });
 test('runner: fail-closed startup (config/credential/token), counters-only output, stops on a dead credential and on repeated poll failures',async()=>{
-  const home=tmp();const prot=fakeProtector();const store=createCredentialStore({home,protector:prot});store.ensureDir();
+  const home=tmp();const prot=fakeProtector();const store=createCredentialStore({home,accountHome:home,protector:prot});store.ensureDir();
   const deps0={mode:'production',projectId:PROJECT,store,getCerts,now:()=>NOW,out:()=>{}};
   await assert.rejects(startRunner({agent:'Grok',deps:{...deps0,fetcher:async()=>resp(500,{})}}));           // no config
   store.writeConfig('Grok',{inboxRoot:join(home,'inbox'),delivery:false});
@@ -444,4 +452,199 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
   assert.doesNotMatch(prov,/\.log\(|password['"]?\s*[:,]\s*password\b.*out|stdout\.write\([^)]*password/i);
   for(const f of ['task-listener-run.mjs','provision-listener.mjs','listener/firestore-rest.mjs','listener/firestore-listen.mjs','listener/summarizer.mjs','listener/grpc-transport.mjs'])
     assert.doesNotMatch(readSrc(new URL('./'+f,import.meta.url)),/station-102|--force/,f);
+});
+
+// ---------------- ACL hardening (t192u, review/acl-hardening-verdicts.md: security A-G + 1-8, UI 1-5) ----------------
+const OTHER_SID='S-1-5-21-9-9-9-1004';   // e.g. LD-COMPUTER\CodexSandboxUsers
+const withRule=(rule,x={})=>({...CLEAN_ACL(),...x,rules:[...CLEAN_ACL().rules,rule]});
+test('ACL store (a): %LOCALAPPDATA%\\resq-listeners; HOME_MISMATCH; lock down + verify BEFORE the secret; existing folder verified, never repaired; legacy report-only',()=>{
+  assert.equal(DIR_NAME,'resq-listeners');assert.equal(LEGACY_DIR_NAME,'.resq-listeners');
+  const home=tmp();assert.equal(listenerPaths(home,'Grok').dir,join(home,'AppData','Local','resq-listeners'));
+  // security A: os.homedir() vs os.userInfo().homedir
+  assert.throws(()=>createCredentialStore({home,accountHome:join(home,'other'),protector:fakeProtector()}),code('HOME_MISMATCH'));
+  assert.throws(()=>createCredentialStore({home,protector:fakeProtector()}),code('HOME_MISMATCH'));
+  assertHomeMatch('C:\\Users\\User','c:\\users\\USER','win32');assert.throws(()=>assertHomeMatch('/a/User','/a/user','linux'),code('HOME_MISMATCH'));
+  // base must exist; the folder is created directly in it (non-recursive)
+  const bare=realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-bare-')));
+  assert.throws(()=>createCredentialStore({home:bare,accountHome:bare,protector:fakeProtector()}).ensureDir(),code('BASE_NOT_DIRECTORY'));
+  assert.equal(existsSync(join(bare,'AppData')),false,'never creates AppData\\Local');
+  // security C: lockDown then verify (one aclMany) before any secret write; the order is recorded
+  const prot=fakeProtector();const order=[];const lock=prot.lockDown;prot.lockDown=d=>{order.push('lockDown');lock(d);};
+  const many=prot.aclMany;prot.aclMany=p=>{order.push('verify');return many(p);};const protect=prot.protect;prot.protect=b=>{order.push('protect');return protect(b);};
+  const store=createCredentialStore({home,accountHome:home,protector:prot});
+  store.ensureDir();store.writeCredential('Grok',{uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'r'.repeat(40)});
+  assert.deepEqual(order.slice(0,3),['lockDown','verify','protect']);assert.deepEqual(prot.locked,[listenerPaths(home,'Grok').dir]);
+  // security F: an existing folder is only verified, never locked down again (no repair)
+  prot.locked.length=0;prot.many=(p,i)=>i===0?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}):null;
+  assert.throws(()=>store.ensureDir(),code('ACL_OTHER_PRINCIPAL'));assert.deepEqual(prot.locked,[],'no lockDown on an existing folder');
+  // verify: folder + every present file, paths only from store constants, one spawn; finding names path/SID/mask
+  prot.many=null;prot.manyCalls.length=0;store.writeConfig('Grok',{inboxRoot:'C:\\inbox',delivery:false});
+  assert.equal(store.verify(),null);assert.equal(prot.manyCalls.length,1);
+  assert.deepEqual(prot.manyCalls[0],[listenerPaths(home,'Grok').dir,listenerPaths(home,'Grok').credential,listenerPaths(home,'Grok').config]);
+  prot.many=(p,i)=>i===1?withRule({sid:OTHER_SID,type:'Allow',inherited:true,mask:0x1200A9},{protected:false}):null;
+  assert.deepEqual({...store.verify()},{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9,path:listenerPaths(home,'Grok').credential});
+  prot.many=(p,i)=>i===0?{...CLEAN_ACL(),protected:false}:null;assert.equal(store.verify().code,'ACL_INHERITANCE');
+  prot.many=(p,i)=>i===2?{...CLEAN_ACL(),owner:OTHER_SID}:null;assert.equal(store.verify().code,'ACL_OWNER');
+  prot.many='THROW';assert.throws(()=>store.verify(),code('PROTECTOR_ACLMANY_FAILED'));prot.many=null;
+  // security D: credential metadata for --status without DPAPI unprotect
+  prot.broken=true;assert.deepEqual({...store.credentialMeta('Grok')},{uid:UID,revokedAfter:S-100});prot.broken=false;
+  // security E: legacy folder is report-only: detected, never read (a poisoned legacy file changes nothing)
+  assert.equal(store.legacyDirPresent(),false);
+  mkdirSync(join(home,'.resq-listeners'));writeFileSync(join(home,'.resq-listeners','grok.credential.json'),'{"v":1,"poison":true}');
+  assert.equal(store.legacyDirPresent(),true);assert.equal(store.readCredential('Grok').uid,UID);
+  assert.ok(!prot.manyCalls.flat().some(x=>x.includes('.resq-listeners')),'the legacy folder is never ACL-read either');
+});
+test('ACL protector (aclMany): one spawn, paths as JSON on stdin, strict output schema, exact count, rights mask; policy for store and inbox',()=>{
+  const me='S-1-5-21-1-2-3-1001';const ok={me,owner:me,protected:true,rules:[{sid:me,type:'Allow',inherited:false,mask:0x1F01FF}]};
+  const calls=[];let reply=null;
+  const spawn=(bin,args,o)=>{calls.push({bin,args,o});return {status:0,stdout:reply??JSON.stringify(JSON.parse(o.input).map(()=>ok))};};
+  const p=createWindowsProtector({platform:'win32',spawn,exists:()=>true});
+  const paths=['C:\\Users\\User\\AppData\\Local\\resq-listeners','C:\\Users\\User\\AppData\\Local\\resq-listeners\\grok.credential.json'];
+  assert.equal(p.aclMany(paths).length,2);assert.equal(calls.length,1);
+  assert.equal(calls[0].args[5],SCRIPTS.aclMany);assert.equal(calls[0].o.input,JSON.stringify(paths));assert.equal(calls[0].args.length,6);
+  assert.ok(!calls[0].args.join(' ').includes('resq-listeners'),'paths never on the command line');assert.equal(calls[0].o.shell,false);
+  assert.ok(calls[0].o.maxBuffer>0&&calls[0].o.timeout>0);assert.deepEqual(calls[0].o.env,{});
+  reply=JSON.stringify([ok]);assert.throws(()=>p.aclMany(paths),code('ACL_SCHEMA'),'count mismatch');
+  reply=JSON.stringify([ok,{...ok,rules:[{sid:me,type:'Allow',inherited:false}]}]);assert.throws(()=>p.aclMany(paths),code('ACL_SCHEMA'),'rule without mask');
+  reply=JSON.stringify([ok,{...ok,protected:'yes'}]);assert.throws(()=>p.aclMany(paths),code('ACL_SCHEMA'));
+  reply='not json';assert.throws(()=>p.aclMany(paths),code('ACL_READ_FAILED'));reply=null;
+  for(const bad of [[],['relative\\x'],['C:\\a\nC:\\b'],[42],Array.from({length:ACL_MANY_MAX+1},()=>'C:\\x')])assert.throws(()=>p.aclMany(bad),code('ACL_MANY_INPUT'));
+  assert.doesNotMatch(SCRIPTS.aclMany,/"/);assert.match(SCRIPTS.aclMany,/\[Console\]::In\.ReadToEnd\(\)\|ConvertFrom-Json/);assert.doesNotMatch(SCRIPTS.aclMany,/Set-Acl|icacls/i,'read-only');
+  // store policy with details
+  assert.equal(aclFinding(ok,{directory:true}),null);
+  assert.deepEqual(aclFinding({...ok,rules:[...ok.rules,{sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}]},{directory:true}),{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9});
+  assert.equal(aclVerdict({...ok,protected:false},{directory:true}),'ACL_INHERITANCE');
+  // inbox write integrity: RX for others OK; W/M/F/D/WD/AD (and generic write/all) for a non-owner, non-SYSTEM/Admins principal fails
+  const inbox=x=>inboxWriteFinding({...ok,protected:false,rules:[...ok.rules,{sid:'S-1-5-18',type:'Allow',inherited:true,mask:0x1F01FF},{sid:'S-1-5-32-544',type:'Allow',inherited:true,mask:0x1F01FF},...x]});
+  assert.equal(inbox([{sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}]),null,'Codex sandbox RX is accepted');
+  for(const m of [0x1F01FF,0x1301BF,0x116,0x2,0x4,0x10000,0x40,0x40000,0x80000,0x10000000,0x40000000])
+    assert.deepEqual(inbox([{sid:OTHER_SID,type:'Allow',inherited:false,mask:m}]),{code:'INBOX_ACL_WRITABLE',sid:OTHER_SID,mask:m},m.toString(16));
+  assert.equal(inbox([{sid:OTHER_SID,type:'Deny',inherited:false,mask:0x1F01FF}]),null,'a Deny rule grants nothing');
+  assert.equal(inboxWriteFinding({...ok,owner:OTHER_SID}).code,'INBOX_ACL_WRITABLE');
+  assert.equal(inbox([{sid:OTHER_SID,type:'Allow',inherited:false}]).code,'ACL_SCHEMA');
+  assert.equal(rightsName(0x1200A9),'RX');assert.equal(rightsName(0x1301BF),'M');assert.equal(rightsName(0x1F01FF),'F');assert.equal(rightsName(0x2),'0x2');
+  assert.equal(validAclInfo(ok),true);assert.equal(validAclInfo({...ok,rules:{sid:me,type:'Allow',inherited:false,mask:1}}),true,'single rule as object');
+  assert.equal(WRITE_MASK&0x1200A9,0,'RX has no write bit');
+});
+test('ACL runner (b) + UI 1/2/4: check BEFORE the first heartbeat; per tick exit 6, no further heartbeat, stdout code only, ONE Hebrew stderr line; 1 check failure tolerated, 2 stop',async()=>{
+  const home=tmp();const prot=fakeProtector();const store=cs(home,prot);store.ensureDir();
+  store.writeConfig('Grok',{inboxRoot:join(home,'inbox'),delivery:false});
+  store.writeCredential('Grok',{uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'r'.repeat(40)});
+  const harness=()=>{
+    const st=secureTokenFake();const ev=[];const out=[];const err=[];const timers=[];
+    const fetcher=async(url,o)=>{if(url.startsWith(FIRESTORE_URL)){const hb=String(o?.body??'').includes('task_listeners/');ev.push(hb?'heartbeat':'firestore');return resp(200,hb?{writeResults:[{}]}:[]);}ev.push('token');return st(url,o);};
+    const many=prot.aclMany;prot.aclMany=p=>{ev.push('acl');return many(p);};
+    const deps={mode:'production',projectId:PROJECT,store,getCerts,now:()=>NOW,fetcher,out:l=>out.push(l),err:l=>err.push(l),
+      setTimer:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimer:()=>{}};
+    return {ev,out,err,timers,deps,restore:()=>{prot.aclMany=many;}};
+  };
+  // UI 1: a violating folder never shows "מאזין": nothing is read, no token, no heartbeat; exit 6 at once
+  let h=harness();prot.many=(p,i)=>i===0?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}):null;
+  let r=await startRunner({agent:'Grok',listen:'poll',deps:h.deps});
+  assert.equal(await r.done,EXIT.LOCAL_ACL);assert.equal(EXIT.LOCAL_ACL,6);assert.deepEqual(h.ev,['acl'],'ACL check first; no token, no Firestore, no heartbeat');
+  assert.deepEqual(JSON.parse(h.out.at(-1)),{agent:'Grok',stopped:'local_acl_violation',code:'ACL_OTHER_PRINCIPAL'});
+  assert.equal(h.err.length,1);assert.match(h.err[0],/exit 6/);assert.match(h.err[0],new RegExp(OTHER_SID));assert.match(h.err[0],/הרשאה: RX/);
+  assert.ok(h.err[0].includes(listenerPaths(home,'Grok').dir));assert.match(h.err[0],/icacls/);assert.match(h.err[0],/אין הפעלה מחדש אוטומטית/);
+  for(const l of h.out)assert.doesNotMatch(l,/S-1-5|resq-listeners|AppData/,'stdout: no SID, no path');
+  h.restore();prot.many=null;
+  // clean start: the ACL check precedes the first heartbeat
+  h=harness();r=await startRunner({agent:'Grok',listen:'poll',deps:{...h.deps,statusMs:2222}});
+  await new Promise(r=>setTimeout(r,10));
+  assert.ok(h.ev.indexOf('acl')>=0&&h.ev.indexOf('acl')<h.ev.indexOf('heartbeat'),'ACL check before the first heartbeat: '+h.ev.join(','));
+  const beats=()=>h.ev.filter(e=>e==='heartbeat').length;const b0=beats();
+  // tick: one failed check is tolerated (keeps running), the next success resets the counter
+  prot.many='THROW';r.check();assert.equal(r.listener.status().running,true);prot.many=null;r.check();
+  prot.many='THROW';r.check();assert.equal(r.listener.status().running,true);
+  r.check();assert.equal(MAX_ACL_CHECK_FAILURES,2);assert.equal(await r.done,EXIT.LOCAL_ACL);
+  assert.equal(JSON.parse(h.out.at(-1)).stopped,'local_acl_check_failed');assert.equal(JSON.parse(h.out.at(-1)).code,'ACL_CHECK_FAILED');
+  assert.equal(h.err.length,1);assert.match(h.err[0],/נכשלה פעמיים ברציפות/);prot.many=null;
+  const hbTimer=h.timers.find(t=>t.ms===HEARTBEAT_MS);await hbTimer.fn?.();await new Promise(r=>setTimeout(r,10));
+  assert.equal(r.listener.status().running,false);
+  h.restore();
+  // tick finding: stop at once, stdout code only, no heartbeat written after the stop
+  h=harness();r=await startRunner({agent:'Grok',listen:'poll',deps:{...h.deps,statusMs:2222}});await new Promise(r=>setTimeout(r,10));
+  const before=h.ev.filter(e=>e==='heartbeat').length;
+  prot.many=(p,i)=>i===1?withRule({sid:OTHER_SID,type:'Allow',inherited:true,mask:0x1200A9},{protected:false}):null;
+  r.check();assert.equal(await r.done,EXIT.LOCAL_ACL);
+  assert.deepEqual(Object.fromEntries(Object.entries(JSON.parse(h.out.at(-1))).filter(([k])=>['stopped','code'].includes(k))),{stopped:'local_acl_violation',code:'ACL_OTHER_PRINCIPAL'});
+  assert.doesNotMatch(h.out.at(-1),/S-1-5|resq-listeners/);assert.equal(h.err.length,1,JSON.stringify(h.err));assert.ok(h.err[0].includes(listenerPaths(home,'Grok').credential));
+  await h.timers.find(t=>t.ms===HEARTBEAT_MS).fn?.();await new Promise(r=>setTimeout(r,10));
+  assert.equal(h.ev.filter(e=>e==='heartbeat').length,before,'no heartbeat after the ACL stop');
+  prot.many=null;h.restore();assert.ok(b0>=1);
+  // UI 2 line shapes
+  assert.match(aclStopLine({code:'INBOX_ACL_WRITABLE',path:'C:\\Users\\User\\ResQ-Inbox',sid:OTHER_SID,mask:0x1301BF}),/הרשאה: M.*icacls "C:\\Users\\User\\ResQ-Inbox" \/remove:g \*S-1-5-21-9-9-9-1004/);
+  assert.match(aclStopLine({code:'ACL_INHERITANCE',path:'C:\\x',sid:null,mask:null}),/SID: — · הרשאה: \?/);
+});
+test('ACL inbox integrity (security 8): INBOX_ACL_WRITABLE on deliver (nothing written) and on the runner tick when delivery is on; RX alone is fine',async()=>{
+  const home=tmp();const root=join(home,'ResQ-Inbox');mkdirSync(root);
+  let finding=null;const seen=[];
+  const inbox=createInbox({root,agentKey:'grok',aclCheck:paths=>{seen.push(paths);return finding;}});
+  const id='00000000-0000-4000-8000-000000000001';
+  finding={code:'INBOX_ACL_WRITABLE',sid:OTHER_SID,mask:0x1301BF,path:root};
+  assert.throws(()=>inbox.deliver(id,'payload'),e=>e.code==='INBOX_ACL_WRITABLE');
+  assert.equal(existsSync(join(root,'grok',id+'.task.txt')),false,'nothing written');assert.deepEqual(seen.at(-1),[root,join(root,'grok')]);
+  finding=null;inbox.deliver(id,'payload');assert.equal(existsSync(join(root,'grok',id+'.task.txt')),true);
+  assert.throws(()=>createInbox({root,agentKey:'grok',aclCheck:'yes'}),/INBOX_ACL_CHECK_TYPE/);
+  // runner, delivery on: startup and tick check the inbox (root + agent folder) through the store (aclMany)
+  const prot=fakeProtector();const store=cs(home,prot);store.ensureDir();
+  store.writeConfig('Grok',{inboxRoot:root,delivery:true});store.writeCredential('Grok',{uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'r'.repeat(40)});
+  const st=secureTokenFake();const out=[];const err=[];
+  const deps={mode:'production',projectId:PROJECT,store,getCerts,now:()=>NOW,out:l=>out.push(l),err:l=>err.push(l),setTimer:()=>1,clearTimer:()=>{},
+    fetcher:async(url,o)=>url.startsWith(FIRESTORE_URL)?resp(200,String(o?.body??'').includes('task_listeners/')?{writeResults:[{}]}:[]):st(url,o)};
+  const r=await startRunner({agent:'Grok',listen:'poll',deps});
+  assert.ok(prot.manyCalls.some(c=>c[0]===root),'inbox checked at startup');
+  prot.many=(p)=>p===join(root,'grok')?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1301BF},{protected:false}):null;
+  r.check();assert.equal(await r.done,EXIT.LOCAL_ACL);assert.equal(JSON.parse(out.at(-1)).stopped,'inbox_acl_writable');assert.equal(JSON.parse(out.at(-1)).code,'INBOX_ACL_WRITABLE');
+  assert.match(err[0],/INBOX_ACL_WRITABLE/);assert.match(err[0],/הרשאה: M/);
+  prot.many=(p)=>p===root?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9},{protected:false}):null;
+  const r2=await startRunner({agent:'Grok',listen:'poll',deps:{...deps,out:()=>{}}});assert.equal(r2.listener.status().running,true,'RX (Codex sandbox) on the inbox is accepted');
+  await r2.stop();
+});
+test('ACL provisioning: rotate verifies the new store BEFORE revoking; migration writes delivery:false; status shows storeDir/legacyDir/aclFinding/credentialCurrent; delivery/ack/llm-key need a clean store',async()=>{
+  const f=provisionFakes();const home=tmp();const prot=fakeProtector();const store=cs(home,prot);
+  const fetcher=async(url,o)=>resp(200,{id_token:rs256(claims({sub:'newUid00001',user_id:'newUid00001',auth_time:S-100})),user_id:'newUid00001',project_id:PROJECT_NUMBER});
+  const deps={mode:'production',projectId:PROJECT,getCerts,now:()=>NOW,sleep:async()=>{},home,...f,store,fetcher,listenerClientFor:()=>({runQuery:async()=>[]})};
+  await provisionListener({op:'create',agent:'Grok',deps});
+  // migration simulation: the new store is empty again (fresh machine folder), the identity exists
+  const home2=tmp();const prot2=fakeProtector();const store2=cs(home2,prot2);mkdirSync(join(home2,'.resq-listeners'));
+  f.idtk.signInWithPassword=async(email,password)=>({uid:'newUid00001',idToken:rs256(claims({sub:'newUid00001',user_id:'newUid00001',auth_time:S+10,iat:S+10})),refreshToken:'refresh-'+'z'.repeat(40)});
+  let revoked=0;const idtk2={...f.idtk,revokeTokens:async()=>{revoked++;},setPassword:async(uid,pw)=>{f.users.get(uid).password=pw;}};
+  const fetch2=async(url,o)=>resp(200,{id_token:rs256(claims({sub:'newUid00001',user_id:'newUid00001',auth_time:S+10,iat:S+10})),user_id:'newUid00001',project_id:PROJECT_NUMBER});
+  const deps2={...deps,home:home2,store:store2,idtk:idtk2,fetcher:fetch2,now:()=>NOW+6000};
+  prot2.many=(p,i)=>i===0?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}):null;
+  await assert.rejects(provisionListener({op:'rotate',agent:'Grok',deps:deps2}),code('ACL_OTHER_PRINCIPAL'));
+  assert.equal(revoked,0,'an ACL problem stops rotate before any token is revoked');prot2.many=null;
+  const rr=await provisionListener({op:'rotate',agent:'Grok',deps:deps2});
+  assert.equal(revoked,1);assert.equal(rr.delivery,false);assert.equal(rr.legacyDir,true);assert.equal(rr.credentialPath,listenerPaths(home2,'Grok').credential);
+  assert.deepEqual({...store2.readConfig('Grok')},{inboxRoot:join(home2,'ResQ-Inbox'),delivery:false,ack:false});
+  const st=await provisionListener({op:'status',agent:'Grok',deps:deps2});
+  assert.equal(st.storeDir,listenerPaths(home2,'Grok').dir);assert.equal(st.legacyDir,true);assert.equal(st.aclFinding,null);assert.equal(st.credentialCurrent,true);
+  prot2.many=(p,i)=>i===0?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}):null;
+  assert.equal((await provisionListener({op:'status',agent:'Grok',deps:deps2})).aclFinding,'ACL_OTHER_PRINCIPAL');
+  await assert.rejects(provisionListener({op:'delivery-on',agent:'Grok',deps:deps2}),code('ACL_OTHER_PRINCIPAL'));
+  await assert.rejects(provisionListener({op:'ack-on',agent:'Grok',deps:deps2}),code('ACL_OTHER_PRINCIPAL'));
+  await assert.rejects(provisionListener({op:'llm-key-set',agent:'Grok',deps:{...deps2,model:'grok-4',readSecret:async()=>'xai-'+'K'.repeat(40)}}),code('ACL_OTHER_PRINCIPAL'));
+  assert.equal(store2.hasLlmKey('Grok'),false);
+  await provisionListener({op:'delivery-off',agent:'Grok',deps:deps2});   // turning OFF is always allowed
+  prot2.many=null;
+  // the Rules revokedAfter moves on (another rotate elsewhere) -> the stored credential is no longer current
+  f.docs.set('private_listeners/newUid00001',{...f.docs.get('private_listeners/newUid00001'),revokedAfter:S+999});
+  assert.equal((await provisionListener({op:'status',agent:'Grok',deps:deps2})).credentialCurrent,false);
+});
+test('static guard (ACL hardening): no auto-restart/repair in the runner; store check first in startRunner; legacy folder only lstat-ed; aclMany read-only',()=>{
+  const runner=readSrc(new URL('./task-listener-run.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
+  assert.doesNotMatch(runner,/lockDown|ensureDir|Set-Acl|icacls\s+[^"]*\/(grant|inheritance|setowner)/i,'the runner never repairs ACLs');
+  assert.doesNotMatch(runner,/schtasks|ScheduledTask|Register-|Start-Process|setTimeout\(\s*main|main\(\)\s*;\s*\}\s*\)|while\s*\(\s*true/i,'no automatic restart');
+  const body=runner.slice(runner.indexOf('export async function startRunner'));
+  assert.ok(body.indexOf('store.verify()')>0&&body.indexOf('store.verify()')<body.indexOf('store.readConfig('),'ACL check before any config/credential read');
+  assert.ok(body.indexOf('store.verify()')<body.indexOf('listener.start()'),'ACL check before the first heartbeat');
+  assert.match(runner,/const check=\(\)=>\{\n\s*if\(finished\)return;\n\s*if\(aclTick\(\)\)return;/,'every tick checks the ACL first');
+  assert.match(runner,/LOCAL_ACL:6/);
+  const store=readSrc(new URL('./listener/credential-store.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
+  assert.deepEqual([...store.matchAll(/\blegacy\b/g)].length,3,'legacy: declared, exposed, lstat-ed only');
+  assert.match(store,/legacyDirPresent\(\)\{try\{fs\.lstatSync\(legacy\);return true;\}/);
+  assert.doesNotMatch(store,/process\.env|LOCALAPPDATA/,'the store path is derived from the home folder, never from env');
+  assert.match(store,/if\(created\)protector\.lockDown\(dir\);checkDir\(\);\n\s*const f=api\.verify\(\);if\(f\)fail\(f\.code\);/);
+  const ps=readSrc(new URL('./listener/win-protect.mjs',import.meta.url));
+  assert.equal((ps.match(/spawnSync\(|spawn\(/g)||[]).length,1,'still exactly one process start');
 });

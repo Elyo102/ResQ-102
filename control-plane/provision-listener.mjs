@@ -20,10 +20,16 @@
 // - llm-key set --model <m>: reads the dedicated, spend-capped LLM key from HIDDEN stdin (TTY raw mode, no echo;
 //   refuses when stdin is not a TTY; never argv, never env) and stores it DPAPI-protected next to the credential
 //   (same ACL check). Grok -> api.x.ai, Codex -> api.openai.com only. llm-key status|remove: local, never shows the key.
+// ACL hardening (t192u, acl-hardening-verdicts.md): the store lives in %USERPROFILE%\AppData\Local\resq-listeners;
+// os.homedir() must equal os.userInfo().homedir (HOME_MISMATCH). create/rotate lock down + verify the folder BEFORE any
+// secret is written (rotate checks it before revoking anything). The legacy <home>\.resq-listeners is reported by
+// --status (legacyDir) and never read. delivery on, ack on and llm-key set need a clean store ACL check first.
+// --status adds storeDir, legacyDir, aclFinding (code only) and credentialCurrent (stored revokedAfter == the Rules one,
+// i.e. every older credential is already denied).
 // Output: JSON with agent/uid/paths/hashes/flags only. Errors: safe codes only.
 import {randomBytes} from 'node:crypto';
 import {createRequire} from 'node:module';
-import {homedir} from 'node:os';
+import {homedir,userInfo} from 'node:os';
 import {join,isAbsolute} from 'node:path';
 import * as nodeFs from 'node:fs';
 import {pathToFileURL} from 'node:url';
@@ -87,8 +93,16 @@ export async function provisionListener({op,agent,deps}){
     return {op,agent,email,uid:u?.uid??null,authDisabled:u?.disabled??null,claimsOk:u?claimsOk(u.claims):null,
       listenerDoc:d?{enabled:d.data.enabled===true,revokedAfter:d.data.revokedAfter??null}:null,
       credentialFile:store.hasCredential(agent),delivery:config?config.delivery:null,ack:config?config.ack:null,configError,
-      llmKey:llmStatus(),stream:streamStatus()};
+      llmKey:llmStatus(),stream:streamStatus(),storeDir:store.dir,legacyDir:store.legacyDirPresent(),aclFinding:aclStatus(),
+      credentialCurrent:credentialCurrent(u,d)};
   }
+  function aclStatus(){try{if(!store.hasCredential(agent)&&!store.hasConfig(agent))return null;const f=store.verify();return f?f.code:null;}catch(e){return safeCode(e);}}
+  function credentialCurrent(u,d){
+    if(!u||!d||!store.hasCredential(agent))return null;
+    try{const m=store.credentialMeta(agent);return m.uid===u.uid&&m.revokedAfter===d.data.revokedAfter;}catch{return false;}
+  }
+  // delivery on / ack on / llm-key set only over a store that passes the ACL check now (security: blocked until verified).
+  const requireCleanStore=()=>{const f=store.verify();if(f)fail(f.code);};
   // Condition 3: last restart counts written by the runner (TOKEN_ROTATE counted). Threshold for adding Codex.
   function streamStatus(){
     let st;try{st=typeof store.readStreamStats==='function'?store.readStreamStats(agent):null;}catch(e){return {error:safeCode(e)};}
@@ -99,11 +113,13 @@ export async function provisionListener({op,agent,deps}){
   function llmStatus(){try{return store.llmKeyStatus(agent);}catch(e){return {present:null,error:safeCode(e)};}}
   if(op==='delivery-on'||op==='delivery-off'){
     if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
+    if(op==='delivery-on')requireCleanStore();
     const c=store.readConfig(agent);const w=store.writeConfig(agent,{inboxRoot:c.inboxRoot,delivery:op==='delivery-on',ack:c.ack});
     return {op,agent,configPath:w.path,sha256:w.sha256,delivery:op==='delivery-on',ack:c.ack};
   }
   if(op==='ack-on'||op==='ack-off'){
     if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
+    if(op==='ack-on')requireCleanStore();
     const c=store.readConfig(agent);const w=store.writeConfig(agent,{inboxRoot:c.inboxRoot,delivery:c.delivery,ack:op==='ack-on'});
     return {op,agent,configPath:w.path,sha256:w.sha256,delivery:c.delivery,ack:op==='ack-on',llmKey:llmStatus(),
       note:'ack also needs control/ack_switch enabled by the owner in the dashboard; without an LLM key every ack is UNREADABLE (S0)'};
@@ -112,6 +128,7 @@ export async function provisionListener({op,agent,deps}){
   if(op==='llm-key-remove'){const removed=store.removeLlmKey(agent);return {op,agent,removed};}
   if(op==='llm-key-set'){
     if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
+    requireCleanStore();
     if(typeof deps.readSecret!=='function')fail('LLM_KEY_TTY_REQUIRED');
     let apiKey=await deps.readSecret();
     try{const w=store.writeLlmKey(agent,{apiKey,model:deps.model});const st=store.llmKeyStatus(agent);
@@ -152,7 +169,9 @@ export async function provisionListener({op,agent,deps}){
     return {op,agent,uid,email,revokedAfter:s.authTime,credentialPath:cred.path,credentialSha256:cred.sha256,
       configPath:store.paths(agent).config,configSha256:config?.sha256??'unchanged',delivery:store.readConfig(agent).delivery,inboxRoot,...v};
   }
-  // rotate
+  // rotate (also the migration path into the new store: the folder is created, locked down and verified FIRST, so an
+  // ACL problem stops before any token is revoked; a missing config there gets delivery:false, ack:false).
+  store.ensureDir();
   const u=await existingUser();
   if(u.disabled)fail('LISTENER_AUTH_DISABLED');
   if(!claimsOk(u.claims))fail('LISTENER_CLAIMS_MISMATCH');
@@ -169,9 +188,12 @@ export async function provisionListener({op,agent,deps}){
   await ownerDb.commit([{update:{name:ownerDb.name('private_listeners/'+u.uid),fields:{revokedAfter:encodeValue(s.authTime)}},
     updateMask:{fieldPaths:['revokedAfter']},currentDocument:{exists:true}}]);
   const cred=store.writeCredential(agent,{uid:u.uid,projectId,revokedAfter:s.authTime,refreshToken:s.refreshToken});
+  let config=null;
+  if(!store.hasConfig(agent))config=store.writeConfig(agent,{inboxRoot:deps.inboxRoot??join(home,'ResQ-Inbox'),delivery:false,ack:false});
   const v=await verifyAccess(u.uid,s.authTime);
   return {op,agent,uid:u.uid,previousRevokedAfter:doc.revokedAfter,revokedAfter:s.authTime,refreshTokensRevokedAt:since,
-    credentialPath:cred.path,credentialSha256:cred.sha256,...v};
+    credentialPath:cred.path,credentialSha256:cred.sha256,configPath:store.paths(agent).config,configSha256:config?.sha256??'unchanged',
+    delivery:store.readConfig(agent).delivery,legacyDir:store.legacyDirPresent(),...v};
 }
 
 // Strict argv: --project resq-agent-control-20260928 --agent Grok|Codex
@@ -244,10 +266,11 @@ async function main(){
   if(process.platform!=='win32')fail('PROVISION_WINDOWS_ONLY');
   const args=parseProvisionArgs(process.argv.slice(2));
   const ownerToken=ownerTokenSource();const home=homedir();
+  let accountHome;try{accountHome=userInfo().homedir;}catch{fail('HOME_MISMATCH');}
   const deps={mode:'production',projectId:PROJECT,fetcher:fetch,home,inboxRoot:args.inboxRoot,
     idtk:createIdentityAdmin({projectId:PROJECT,accessToken:ownerToken}),
     ownerDb:createFirestoreClient({base:FIRESTORE_URL,projectId:PROJECT,token:ownerToken,userProject:PROJECT}),
-    store:createCredentialStore({home,protector:createWindowsProtector({baseEnv:minimalChildEnv(process.env)})}),
+    store:createCredentialStore({home,accountHome,protector:createWindowsProtector({baseEnv:minimalChildEnv(process.env)})}),
     model:args.model,readSecret:args.op==='llm-key-set'?()=>readHiddenLine({stdin:process.stdin,stderr:process.stderr}):undefined,
     listenerClientFor:ts=>createFirestoreClient({base:FIRESTORE_URL,projectId:PROJECT,token:()=>ts.getIdToken()})};
   return provisionListener({op:args.op,agent:args.agent,deps});

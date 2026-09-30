@@ -14,6 +14,9 @@
 //   (\\server\share) and \\?\ / \\.\ device paths are rejected. The root must not be inside a git worktree.
 // - No directory is created outside the root (only the fixed per-agent folder, non-recursively, directly under it).
 // - The payload is written raw after a fixed header: no templating, no markdown or link parsing.
+// - ACL hardening (security: INBOX_ACL_WRITABLE): with an aclCheck hook (the runner passes the store's inboxFinding),
+//   every deliver first checks the root and the agent folder; a write/delete/security right for a principal other than
+//   the owner, SYSTEM or Administrators fails closed and nothing is written. Read access (the Codex sandbox RX) is fine.
 import * as nodeFs from 'node:fs';
 import {isAbsolute,join,parse,resolve,dirname,sep} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -56,7 +59,8 @@ function rejectGitWorktree(fs,path){
     const up=dirname(cur);if(up===cur)return;cur=up;
   }
 }
-export function createInbox({root,agentKey,fs=nodeFs,platform=process.platform}){
+export function createInbox({root,agentKey,fs=nodeFs,platform=process.platform,aclCheck=null}){
+  if(aclCheck!==null&&typeof aclCheck!=='function')throw Error('INBOX_ACL_CHECK_TYPE');
   if(typeof root!=='string'||!isAbsolute(root))throw Error('INBOX_ROOT_ABSOLUTE_REQUIRED');
   if(platform==='win32'&&!WIN_ROOT.test(root))throw Object.assign(Error('INBOX_ROOT_WINDOWS_FORM'),{code:'INBOX_ROOT_WINDOWS_FORM'});
   if(!Object.hasOwn(INBOX_DIRS,agentKey))throw Error('INBOX_AGENT_REJECTED');
@@ -94,12 +98,15 @@ export function createInbox({root,agentKey,fs=nodeFs,platform=process.platform})
     // Re-check after publishing: the final entry must be a regular file, not a link.
     const st=fs.lstatSync(file);if(st.isSymbolicLink()||!st.isFile())throw Error('INBOX_TARGET_NOT_FILE');
   }
+  // Paths for the write-integrity check: the root, and the agent folder once it exists.
+  function aclPaths(){let hasDir=false;try{hasDir=fs.lstatSync(dir).isDirectory();}catch(e){if(e?.code!=='ENOENT')throw e;}return hasDir?[rootReal,dir]:[rootReal];}
   return Object.freeze({
-    root:rootReal,dir,
+    root:rootReal,dir,aclPaths,
     // Throws with code 'EEXIST' if the task file already exists (the caller treats that as already delivered).
     deliver(taskId,payload){
       if(typeof payload!=='string')throw Error('INBOX_PAYLOAD_TYPE');
-      const file=target(taskId,TASK_SUFFIX);writeExclusive(file,fixedHeader(taskId,agentKey)+payload);return file;
+      const file=target(taskId,TASK_SUFFIX);
+      if(aclCheck&&aclCheck(aclPaths()))throw Object.assign(Error('INBOX_ACL_WRITABLE'),{code:'INBOX_ACL_WRITABLE'});writeExclusive(file,fixedHeader(taskId,agentKey)+payload);return file;
     },
     markCancelled(taskId){
       const file=target(taskId,CANCELLED_SUFFIX);

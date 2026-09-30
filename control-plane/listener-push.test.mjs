@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {generateKeyPairSync,createSign} from 'node:crypto';
-import {mkdtempSync,realpathSync,readFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,realpathSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {scrubSecretEnv,SECRET_ENV,UNSAFE_ENV,unsafeEnvNames} from './listener/env-scrub.mjs';
@@ -196,9 +196,11 @@ const b64=o=>Buffer.from(JSON.stringify(o)).toString('base64url');
 function rs256(body){const h=b64({alg:'RS256',kid:'k1',typ:'JWT'}),p=b64(body);const s=createSign('RSA-SHA256');s.update(h+'.'+p);s.end();return h+'.'+p+'.'+s.sign(privateKey).toString('base64url');}
 const claims={aud:PROJECT,iss:'https://securetoken.google.com/'+PROJECT,sub:UID,user_id:UID,auth_time:S-100,iat:S-10,exp:S+3500,control_plane_role:'listener',control_plane_agent:'Grok',firebase:{sign_in_provider:'password'}};
 const resp=(status,body)=>new Response(body===undefined?'':JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
-function fakeProtector(){return {protect:b=>Buffer.concat([Buffer.from('D:'),Buffer.from(b)]),unprotect:b=>Buffer.from(b).subarray(2),checkAcl(){},lockDown(){}};}
+const ME_SID='S-1-5-21-1-2-3-1001';
+function fakeProtector(){return {protect:b=>Buffer.concat([Buffer.from('D:'),Buffer.from(b)]),unprotect:b=>Buffer.from(b).subarray(2),checkAcl(){},lockDown(){},
+  aclMany:paths=>paths.map(()=>({me:ME_SID,owner:ME_SID,protected:true,rules:[{sid:ME_SID,type:'Allow',inherited:false,mask:0x1F01FF}]}))};}
 function runnerEnv({ack=false,llm=false,heartbeat=()=>resp(200,{writeResults:[{}]})}={}){
-  const home=realpathSync(mkdtempSync(join(tmpdir(),'resq-push-unit-')));const store=createCredentialStore({home,protector:fakeProtector()});store.ensureDir();
+  const home=realpathSync(mkdtempSync(join(tmpdir(),'resq-push-unit-')));mkdirSync(join(home,'AppData','Local'),{recursive:true});const store=createCredentialStore({home,accountHome:home,protector:fakeProtector()});store.ensureDir();
   store.writeConfig('Grok',{inboxRoot:join(home,'inbox'),delivery:false,ack});
   store.writeCredential('Grok',{uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'r'.repeat(40)});
   if(llm)store.writeLlmKey('Grok',{apiKey:'xai-'+'Q'.repeat(40),model:'grok-4-fast'});

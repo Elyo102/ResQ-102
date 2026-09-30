@@ -153,7 +153,7 @@ export function createListener({config,ops,inbox=null,summarizer=null,ledger=nul
     config:cfg,ackOn,ackSince:ackOn?since:null,
     start(){
       if(running)return;running=true;
-      const beat=()=>Promise.resolve().then(()=>ops.writeHeartbeat(key,heartbeatInfo)).then(()=>{try{onHeartbeat(true);}catch{}},e=>{counts.errors++;try{onHeartbeat(false,e);}catch{}});
+      const beat=()=>running?Promise.resolve().then(()=>ops.writeHeartbeat(key,heartbeatInfo)).then(()=>{try{onHeartbeat(true);}catch{}},e=>{counts.errors++;try{onHeartbeat(false,e);}catch{}}):Promise.resolve(); // exit 6 etc.: no heartbeat after stop
       void beat();timer=setTimer(beat,HEARTBEAT_MS);
       stopWatch=ops.watchTasks({key,limit:LISTENER_LIMIT,
         next(snapshot){

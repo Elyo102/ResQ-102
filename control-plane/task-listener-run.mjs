@@ -10,11 +10,17 @@
 // UNREADABLE without any model call (S0: no LLM key). It never executes, spawns, evaluates or forwards a task.
 // Fail-closed startup: FIRST an unsafe TLS/proxy/GRPC_* environment is refused (UNSAFE_ENV, names only), then the
 // secret env is scrubbed; fixed agent (Grok|Codex); config + credential (+ LLM key) from
-// %USERPROFILE%\.resq-listeners (DPAPI and ACL checks); the ID token verified BEFORE anything is read or written.
+// %USERPROFILE%\AppData\Local\resq-listeners (DPAPI and ACL checks); the ID token verified BEFORE anything is read or written.
+// ACL hardening (acl-hardening-verdicts.md): os.homedir() must equal os.userInfo().homedir (HOME_MISMATCH); ONE aclMany
+// check of the store folder + files runs FIRST (before any config/credential read and before the first heartbeat) and
+// again on every status tick; with delivery on, the inbox write integrity too (INBOX_ACL_WRITABLE). A finding, or two
+// failed checks in a row, stops the runner at once with EXIT.LOCAL_ACL (6): no further heartbeat (the card goes to
+// "מנותק"), a stdout stopped line with the code only (no SID, no path), ONE Hebrew line on stderr for the owner (path,
+// SID, right, fix, exit 6; never a secret or file content). No automatic repair and no automatic restart, ever.
 // Stops on Ctrl+C, a dead credential, PERMISSION_DENIED on the stream (ACL_DENIED) or on 2 heartbeats in a row,
 // the stream restart cap (no automatic fallback to poll), or MAX_POLL_FAILURES failed polls (poll mode).
 // Stdout: counters only. Never a payload, a summary, a token, a key or a response body. No autostart/service/task.
-import {homedir} from 'node:os';
+import {homedir,userInfo} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {createListener,validateConfig,HEARTBEAT_MS} from './task-listener.mjs';
 import {createInbox} from './task-inbox.mjs';
@@ -23,7 +29,7 @@ import {createFirestoreClient,createListenerOps,firestoreBase,POLL_MS} from './l
 import {createListenWatch} from './listener/firestore-listen.mjs';
 import {createSummarizer} from './listener/summarizer.mjs';
 import {createCredentialStore} from './listener/credential-store.mjs';
-import {createWindowsProtector} from './listener/win-protect.mjs';
+import {createWindowsProtector,rightsName} from './listener/win-protect.mjs';
 import {scrubSecretEnv,unsafeEnvNames} from './listener/env-scrub.mjs';
 // grpc-transport (and with it @grpc/grpc-js, whose tls-helpers read GRPC_* env at import time) is loaded ONLY by the
 // dynamic import below, i.e. after main() has refused an unsafe environment (condition 1, 25572dc code review).
@@ -32,7 +38,20 @@ const loadGrpcTransport=()=>import('./listener/grpc-transport.mjs');
 export const MAX_POLL_FAILURES=5;
 export const MAX_HEARTBEAT_DENIALS=2;
 export const STATUS_MS=60000;
-export const EXIT=Object.freeze({OK:0,STARTUP:1,CREDENTIAL_DEAD:2,POLL_FAILURES:3,STREAM_RESTARTS:4,ACL_DENIED:5});
+export const EXIT=Object.freeze({OK:0,STARTUP:1,CREDENTIAL_DEAD:2,POLL_FAILURES:3,STREAM_RESTARTS:4,ACL_DENIED:5,LOCAL_ACL:6});
+export const MAX_ACL_CHECK_FAILURES=2;   // security: one transient failure of the check itself is tolerated, two in a row stop
+// UI condition 2: ONE local Hebrew line (stderr / the runner log). Path, SID and right are local facts for the owner;
+// they never reach stdout counters or Firestore. Never a secret or file content.
+export function aclStopLine(f){
+  if(!f||f.code==='ACL_CHECK_FAILED')return 'ResQ מאזין נעצר (exit 6): בדיקת ההרשאות של תיקיית המאזין נכשלה פעמיים ברציפות. אין הפעלה מחדש אוטומטית. '
+    +'הרץ acl-watch.ps1 ואת --status בסקריפט ההקצאה ושלח את הפלט.';
+  const where=typeof f.path==='string'?f.path:'—',sid=typeof f.sid==='string'?f.sid:'—',right=rightsName(f.mask);
+  const fix=f.code==='INBOX_ACL_WRITABLE'
+    ?`icacls "${where}" /remove:g *${sid} (רק אחרי בדיקה ידנית), ואז הפעלה ידנית מחדש`
+    :f.code==='ACL_INHERITANCE'?'אל תתקן אוטומטית: בדוק עם acl-watch.ps1, ואז --rotate בסקריפט ההקצאה'
+    :`אל תתקן אוטומטית: בדוק עם acl-watch.ps1, הסר את ה-ACE (icacls "${where}" /remove:g *${sid}) ואז --rotate בסקריפט ההקצאה`;
+  return `ResQ מאזין נעצר (exit 6): הרשאה לא מורשית (${f.code}). נתיב: ${where} · SID: ${sid} · הרשאה: ${right} · תיקון: ${fix}. אין הפעלה מחדש אוטומטית.`;
+}
 const MODES=['push','poll'];
 
 // deps: {mode:'production'|'emulator', projectId, emulatorHost?, store, fetcher, getCerts?, now?, pollMs?, statusMs?,
@@ -41,7 +60,14 @@ export async function startRunner({agent,listen='push',deps}){
   if(!Object.hasOwn(LISTENER_AGENTS,agent))fail('RUNNER_AGENT_REJECTED');
   if(!MODES.includes(listen))fail('RUNNER_MODE_REJECTED');
   const {mode,projectId,store,fetcher,out}=deps;
+  const err=typeof deps.err==='function'?deps.err:()=>{};
   const setT=deps.setTimer??setInterval,clearT=deps.clearTimer??clearInterval;
+  // FIRST: the store ACL check (UI condition 1: a violating folder never shows "מאזין"; security: no secret read before
+  // a passing check). A check that cannot run at startup is a startup failure (no tolerance before the first pass).
+  const aclStop=f=>{err(aclStopLine(f));out(JSON.stringify({agent,stopped:f.code==='INBOX_ACL_WRITABLE'?'inbox_acl_writable':'local_acl_violation',code:f.code}));
+    return Object.freeze({listener:null,tokens:null,done:Promise.resolve(EXIT.LOCAL_ACL),check:()=>{},stop:async()=>{},watch:null});};
+  const f0=store.verify();
+  if(f0)return aclStop(f0);
   const raw=store.readConfig(agent);
   const ackWanted=raw.ack===true&&listen==='push';          // poll (rollback) forces ack off
   const rawConfig={agent,machine:'LD',inboxRoot:raw.inboxRoot,delivery:raw.delivery,ack:ackWanted};
@@ -54,7 +80,8 @@ export async function startRunner({agent,listen='push',deps}){
   const tokens=createTokenSource({mode,projectId,uid:cred.uid,agent,refreshToken:cred.refreshToken,fetcher,now:deps.now,getCerts:deps.getCerts});
   await tokens.getIdToken();                                     // verified before any Firestore access
   if(tokens.authTime<cred.revokedAfter)fail('CREDENTIAL_OLDER_THAN_REVOCATION');
-  const inbox=config.delivery?createInbox({root:config.inboxRoot,agentKey:config.key}):null;
+  const inbox=config.delivery?createInbox({root:config.inboxRoot,agentKey:config.key,aclCheck:paths=>store.inboxFinding(paths)}):null;
+  if(inbox){const fi=store.inboxFinding(inbox.aclPaths());if(fi)return aclStop(fi);}
   const client=createFirestoreClient({base:firestoreBase({mode,projectId,emulatorHost:deps.emulatorHost}),projectId,token:()=>tokens.getIdToken(),fetcher});
   let failures=0,lastCode=null,hbDenied=0,fatalCode=null;
   let stopFn=null;const pending=[];
@@ -94,12 +121,26 @@ export async function startRunner({agent,listen='push',deps}){
     if(!watch||typeof store.writeStreamStats!=='function')return;
     const w=watch.stats();try{store.writeStreamStats(agent,{restartsLastHour:w.restartsLastHour,restartsLastDay:w.restartsLastDay,at:(deps.now??Date.now)()});}catch{}
   };
-  async function stop(code,reason){
-    if(finished)return;finished=true;clearT(statusTimer);await listener.stop();saveStreamStats();try{grpc?.close?.();}catch{}line({stopped:reason});resolveDone(code);
+  async function stop(code,reason,extra={}){
+    if(finished)return;finished=true;clearT(statusTimer);await listener.stop();saveStreamStats();try{grpc?.close?.();}catch{}line({stopped:reason,...extra});resolveDone(code);
   }
   stopFn=stop;
+  // Per status tick (60 s): store folder + files, and the inbox when delivery is on. true = the runner is stopping.
+  let aclFailures=0;
+  const aclTick=()=>{
+    let f;
+    try{f=store.verify();if(!f&&inbox)f=store.inboxFinding(inbox.aclPaths());aclFailures=0;}
+    catch(e){aclFailures++;lastCode=safeCode(e);
+      if(aclFailures>=MAX_ACL_CHECK_FAILURES){err(aclStopLine({code:'ACL_CHECK_FAILED'}));void stop(EXIT.LOCAL_ACL,'local_acl_check_failed',{code:'ACL_CHECK_FAILED'});return true;}
+      return false;}
+    if(!f)return false;
+    err(aclStopLine(f));
+    void stop(EXIT.LOCAL_ACL,f.code==='INBOX_ACL_WRITABLE'?'inbox_acl_writable':'local_acl_violation',{code:f.code});
+    return true;
+  };
   const check=()=>{
     if(finished)return;
+    if(aclTick())return;
     if(tokens.fatal)void stop(EXIT.CREDENTIAL_DEAD,'credential_'+tokens.fatal.toLowerCase());
     else if(fatalCode)void stop(fatalCode==='ACL_DENIED'?EXIT.ACL_DENIED:EXIT.STREAM_RESTARTS,fatalCode.toLowerCase());
     else if(listen==='poll'&&failures>=MAX_POLL_FAILURES)void stop(EXIT.POLL_FAILURES,'poll_failures');
@@ -126,8 +167,10 @@ async function main(){
   const {childEnv}=scrubSecretEnv();                             // then: before any config, credential or key read
   if(process.platform!=='win32')fail('RUNNER_WINDOWS_ONLY');
   const {agent,listen}=parseRunnerArgs(process.argv.slice(2));
-  const store=createCredentialStore({home:homedir(),protector:createWindowsProtector({baseEnv:childEnv})});
-  const runner=await startRunner({agent,listen,deps:{mode:'production',projectId:PROJECT,store,fetcher:fetch,out:l=>process.stdout.write(l+'\n')}});
+  let accountHome;try{accountHome=userInfo().homedir;}catch{fail('HOME_MISMATCH');}
+  const store=createCredentialStore({home:homedir(),accountHome,protector:createWindowsProtector({baseEnv:childEnv})});
+  const runner=await startRunner({agent,listen,deps:{mode:'production',projectId:PROJECT,store,fetcher:fetch,
+    out:l=>process.stdout.write(l+'\n'),err:l=>process.stderr.write(l+'\n')}});
   for(const sig of ['SIGINT','SIGTERM','SIGBREAK'])process.on(sig,()=>{void runner.stop();});
   process.exitCode=await runner.done;
   process.exit();

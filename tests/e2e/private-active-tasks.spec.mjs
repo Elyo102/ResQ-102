@@ -609,3 +609,24 @@ test('536d253 LOW: focus stays on the card\'s "אחרון:" link when the card r
  await expect(card(page,'Grok').locator('.agent-ack')).toContainText('נדלק — קורא');
  await expect(card(page,'Grok').locator('.agent-ack a')).toBeFocused();expect(errors).toEqual([]);
 });
+test('ACL UI 5 FRESH+1: after the last forward-moving heartbeat the card says "מאזין" through HEARTBEAT_FRESH_MS and "מנותק" at +1 ms, against SERVER time (liveOffset, client clock 1 h ahead); a stopped listener (exit 6) writes nothing, so the card goes מנותק by age alone',async({page})=>{
+ const FRESH=165000,H=3600000;
+ await page.clock.install({time:new Date('2026-09-30T20:00:00Z')});
+ const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);
+ const line=card(page,'Grok').locator('.agent-listener');
+ await page.clock.pauseAt(new Date('2026-09-30T20:01:00Z'));   // frozen: only runFor moves time, so the boundary is exact
+ // client clock 1 h AHEAD of the server; the second snapshot's heartbeat moved forward -> liveOffset = -1 h exactly
+ await page.evaluate(H=>{window.T0=Date.now()-H;hbNext({grok:T0-120000});hbNext({grok:T0});},H);
+ await expect(line).toHaveText('משימות: מאזין');
+ expect(await page.evaluate(()=>panel.debugState().liveOffset)).toBe(-H);
+ // no further heartbeat (the runner stopped with exit 6): only the clock moves; re-deliver the SAME stamp (no forward move) to re-render
+ const refresh=()=>page.evaluate(()=>hbNext({grok:T0}));
+ await page.clock.runFor(FRESH);await refresh();
+ await expect(line).toHaveText('משימות: מאזין');await expect(line).toHaveAttribute('data-listener','up');
+ await page.clock.runFor(1);await refresh();
+ await expect(line).toHaveText('משימות: מנותק');await expect(line).toHaveAttribute('data-listener','down');
+ expect(await page.evaluate(()=>panel.debugState().liveOffset)).toBe(-H);   // a repeated stamp never moves the offset
+ // UI MUST_NOT: no cause inference on the card (no ACL/exit wording); the cause is only in the listener's local log
+ await expect(card(page,'Grok')).not.toContainText(/ACL|הרשא|exit|יציאה/);
+ expect(errors).toEqual([]);
+});

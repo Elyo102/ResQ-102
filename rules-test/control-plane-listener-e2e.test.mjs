@@ -12,7 +12,7 @@
 // of the owned containment: only the Firestore emulator endpoint is registered). Its unsigned tokens are exactly what
 // the Firestore emulator evaluates the Rules against. Synthetic identities, temporary folders, fake DPAPI only.
 import assert from 'node:assert/strict';
-import {readFileSync,mkdtempSync,rmSync,readdirSync,existsSync,realpathSync} from 'node:fs';
+import {readFileSync,mkdtempSync,mkdirSync,rmSync,readdirSync,existsSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID,randomBytes} from 'node:crypto';
@@ -89,10 +89,11 @@ function fakeAuth(){
 }
 const auth=fakeAuth();
 const fakeProtector=()=>({protect:b=>Buffer.concat([Buffer.from('DPAPI:'),Buffer.from(b).map(x=>x^0x5a)]),
-  unprotect:b=>{if(!Buffer.from(b).subarray(0,6).equals(Buffer.from('DPAPI:')))throw Error('bad');return Buffer.from(b).subarray(6).map(x=>x^0x5a);},checkAcl(){},lockDown(){}});
-const home=realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-home-')));
+  unprotect:b=>{if(!Buffer.from(b).subarray(0,6).equals(Buffer.from('DPAPI:')))throw Error('bad');return Buffer.from(b).subarray(6).map(x=>x^0x5a);},checkAcl(){},lockDown(){},
+  aclMany:paths=>paths.map(()=>({me:'S-1-5-21-1-2-3-1001',owner:'S-1-5-21-1-2-3-1001',protected:true,rules:[{sid:'S-1-5-21-1-2-3-1001',type:'Allow',inherited:false,mask:0x1F01FF}]}))});
+const home=realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-home-')));mkdirSync(join(home,'AppData','Local'),{recursive:true});   // %LOCALAPPDATA% store base (t192u)
 const inboxRoot=realpathSync(mkdtempSync(join(tmpdir(),'resq-listener-inbox-')));
-const store=createCredentialStore({home,protector:fakeProtector()});
+const store=createCredentialStore({home,accountHome:home,protector:fakeProtector()});
 const ownerDb=createFirestoreClient({base:BASE,projectId,token:async()=>'owner',fetcher:auth.f});   // emulator admin bypass = owner IAM
 const listenerClientFor=ts=>createFirestoreClient({base:BASE,projectId,token:()=>ts.getIdToken(),fetcher:auth.f});
 const tokenClient=t=>createFirestoreClient({base:BASE,projectId,token:async()=>t,fetcher:auth.f});

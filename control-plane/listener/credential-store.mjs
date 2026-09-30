@@ -1,6 +1,14 @@
 // Listener credential + config store on LD (library only). Security review 30/09/2026 (provisioning verdict, Q3):
-// - Location: <home>\.resq-listeners\ (home = the Windows user profile). Never under work\, never inside a git
-//   worktree, never through a symlink/junction component. Files: <key>.credential.json, <key>.config.json.
+// - Location (ACL hardening, t192u, acl-hardening-verdicts.md): <home>\AppData\Local\resq-listeners\ (home = the
+//   Windows user profile, and os.homedir() must equal os.userInfo().homedir, else HOME_MISMATCH). NOT a direct child of
+//   the profile: the Codex elevated sandbox grants CodexSandboxUsers read on every direct profile child (the old
+//   <home>\.resq-listeners got that ACE twice on 30/09). The legacy folder is only reported (legacyDir), never read.
+//   Never under work\, never inside a git worktree, never through a symlink/junction component (AppData and Local
+//   included). Files: <key>.credential.json, <key>.config.json.
+// - The folder is created non-recursively directly in AppData\Local, locked down (owner = me, only me:F, inheritance
+//   off) and VERIFIED before any secret is written. An existing folder is only verified, never repaired.
+// - verify(agent): one aclMany spawn over the folder + every present store file (runner: at startup before the first
+//   heartbeat and on every status tick; a finding stops the runner with exit 6). No automatic repair, ever.
 // - The refresh token is encrypted with DPAPI (CurrentUser scope, fixed entropy) AND the folder/files must pass an
 //   ACL check (owner = current user, inheritance removed on the folder, every ACE = current user only).
 //   Reading fails CLOSED if either check fails: the runner then refuses to start.
@@ -18,8 +26,11 @@ import * as nodeFs from 'node:fs';
 import {join,dirname,parse,resolve,sep} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {fail,LISTENER_AGENTS} from './listener-auth.mjs';
+import {aclFinding,inboxWriteFinding} from './win-protect.mjs';
 
-export const DIR_NAME='.resq-listeners';
+export const DIR_NAME='resq-listeners';
+export const LEGACY_DIR_NAME='.resq-listeners';
+export const storeBase=home=>join(home,'AppData','Local');
 const CRED_KEYS=['v','agent','uid','projectId','revokedAfter','protected'];
 const CONFIG_KEYS=['inboxRoot','delivery','ack'];
 const LLM_KEYS=['v','agent','host','model','protected'];
@@ -30,14 +41,23 @@ export const LEDGER_MAX=500;
 const UUID_V4=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const keyOf=agent=>{if(!Object.hasOwn(LISTENER_AGENTS,agent))fail('AGENT_REJECTED');return LISTENER_AGENTS[agent];};
 export function listenerPaths(home,agent){
-  const key=keyOf(agent);const dir=join(home,DIR_NAME);
+  const key=keyOf(agent);const dir=join(storeBase(home),DIR_NAME);
   return Object.freeze({dir,credential:join(dir,key+'.credential.json'),config:join(dir,key+'.config.json'),llm:join(dir,key+'.llm.json'),acks:join(dir,key+'.acks.json'),stream:join(dir,key+'.stream.json')});
 }
-// protector: {protect(Buffer)->Buffer, unprotect(Buffer)->Buffer, checkAcl(path,{directory})->void|throws, lockDown(dir)->void}
-export function createCredentialStore({home,fs=nodeFs,protector}){
+// Security A: the profile path node reports (os.homedir(), which follows USERPROFILE) must be the account's real profile
+// (os.userInfo().homedir, from the OS account database). Case-insensitive on Windows.
+export function assertHomeMatch(home,accountHome,platform=process.platform){
+  if(typeof home!=='string'||typeof accountHome!=='string'||!home||!accountHome)fail('HOME_MISMATCH');
+  const a=resolve(home),b=resolve(accountHome);
+  if(platform==='win32'?a.toLowerCase()!==b.toLowerCase():a!==b)fail('HOME_MISMATCH');
+}
+// protector: {protect(Buffer)->Buffer, unprotect(Buffer)->Buffer, checkAcl(path,{directory})->void|throws, lockDown(dir)->void,
+//             aclMany(paths[])->info[]}
+export function createCredentialStore({home,accountHome,platform=process.platform,fs=nodeFs,protector}){
   if(typeof home!=='string'||!home||resolve(home)!==home)fail('HOME_REJECTED');
-  if(!protector||['protect','unprotect','checkAcl','lockDown'].some(f=>typeof protector[f]!=='function'))fail('PROTECTOR_REQUIRED');
-  const dir=join(home,DIR_NAME);
+  assertHomeMatch(home,accountHome,platform);
+  if(!protector||['protect','unprotect','checkAcl','lockDown','aclMany'].some(f=>typeof protector[f]!=='function'))fail('PROTECTOR_REQUIRED');
+  const base=storeBase(home);const dir=join(base,DIR_NAME);const legacy=join(home,LEGACY_DIR_NAME);
   function rejectLinks(path){
     const full=resolve(path);const {root}=parse(full);let cur=root;
     for(const part of full.slice(root.length).split(sep).filter(Boolean)){cur=join(cur,part);if(fs.lstatSync(cur).isSymbolicLink())fail('CREDENTIAL_LINK_REJECTED');}
@@ -69,14 +89,56 @@ export function createCredentialStore({home,fs=nodeFs,protector}){
     const text=fs.readFileSync(file,'utf8');if(text.length>max)fail('CREDENTIAL_TOO_LARGE');
     try{return JSON.parse(text);}catch{fail('CREDENTIAL_JSON');}
   }
-  return Object.freeze({
+  const api=Object.freeze({
     dir,
     paths:agent=>listenerPaths(home,agent),
-    // Provisioning only: create the folder (non-recursive, directly in home) and lock its ACL down.
+    legacyPath:legacy,
+    // Provisioning only: create the folder (non-recursive, directly in AppData\Local), lock its ACL down and verify it
+    // BEFORE any secret is written (security C). An existing folder is only verified: no repair (security F).
     ensureDir(){
       if(!fs.lstatSync(home).isDirectory())fail('HOME_NOT_DIRECTORY');
-      try{fs.lstatSync(dir);}catch(e){if(e?.code!=='ENOENT')throw e;fs.mkdirSync(dir,{mode:0o700});}
-      rejectLinks(dir);protector.lockDown(dir);checkDir();return dir;
+      let b;try{b=fs.lstatSync(base);}catch(e){if(e?.code==='ENOENT')fail('BASE_NOT_DIRECTORY');throw e;}
+      if(!b.isDirectory())fail('BASE_NOT_DIRECTORY');
+      rejectLinks(base);
+      let created=false;
+      try{fs.lstatSync(dir);}catch(e){if(e?.code!=='ENOENT')throw e;fs.mkdirSync(dir,{mode:0o700});created=true;}
+      rejectLinks(dir);if(created)protector.lockDown(dir);checkDir();
+      const f=api.verify();if(f)fail(f.code);
+      return dir;
+    },
+    // Report-only (security E): whether the pre-migration folder still exists. Never opened, listed or read.
+    legacyDirPresent(){try{fs.lstatSync(legacy);return true;}catch(e){if(e?.code==='ENOENT'||e?.code==='ENOTDIR')return false;throw e;}},
+    // ONE aclMany spawn over the folder and every present store file of every agent (paths only from store constants).
+    // Returns null (clean) or {code, path, sid, mask}; throws a safe code if the check itself cannot run.
+    verify(){
+      if(dir.toLowerCase().split(/[\\/]/).includes('work'))fail('CREDENTIAL_UNDER_WORK');
+      rejectLinks(dir);if(!fs.lstatSync(dir).isDirectory())fail('CREDENTIAL_DIR_NOT_DIRECTORY');
+      const entries=[{path:dir,directory:true}];
+      for(const agent of Object.keys(LISTENER_AGENTS)){
+        const p=listenerPaths(home,agent);
+        for(const file of [p.credential,p.config,p.llm,p.acks,p.stream]){
+          let st;try{st=fs.lstatSync(file);}catch(e){if(e?.code==='ENOENT')continue;throw e;}
+          if(st.isSymbolicLink()||!st.isFile())fail('CREDENTIAL_NOT_FILE');
+          entries.push({path:file,directory:false});
+        }
+      }
+      const infos=protector.aclMany(entries.map(e=>e.path));
+      if(!Array.isArray(infos)||infos.length!==entries.length)fail('ACL_SCHEMA');
+      for(let i=0;i<entries.length;i++){const f=aclFinding(infos[i],{directory:entries[i].directory});if(f)return Object.freeze({...f,path:entries[i].path});}
+      return null;
+    },
+    // Security: inbox write integrity (INBOX_ACL_WRITABLE). paths = the validated inbox root and agent folder.
+    inboxFinding(paths){
+      const infos=protector.aclMany(paths);
+      if(!Array.isArray(infos)||infos.length!==paths.length)fail('ACL_SCHEMA');
+      for(let i=0;i<paths.length;i++){const f=inboxWriteFinding(infos[i]);if(f)return Object.freeze({...f,path:paths[i]});}
+      return null;
+    },
+    // Status (security D): the stored credential's uid/revokedAfter (ACL-checked; NO DPAPI unprotect, no token).
+    credentialMeta(agent){
+      const p=listenerPaths(home,agent);const d=readJson(p.credential,65536);
+      if(!d||typeof d!=='object'||typeof d.uid!=='string'||!Number.isSafeInteger(d.revokedAfter))fail('CREDENTIAL_SHAPE');
+      return Object.freeze({uid:d.uid,revokedAfter:d.revokedAfter});
     },
     writeCredential(agent,{uid,projectId,revokedAfter,refreshToken}){
       const p=listenerPaths(home,agent);checkDir();
@@ -164,4 +226,5 @@ export function createCredentialStore({home,fs=nodeFs,protector}){
       return Object.freeze({inboxRoot:d.inboxRoot,delivery:d.delivery,ack:d.ack===true});
     }
   });
+  return api;
 }

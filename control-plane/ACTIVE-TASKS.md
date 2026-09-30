@@ -90,7 +90,7 @@ A2 is unchanged (fixed 9-line inbox header; MESSAGE never creates an inbox file)
 - Heartbeats: owner `task_listeners` `orderBy('seenAt','desc').limit(3)` — single field.
 
 ## Operating (LD only, manual; not in scope to provision)
-- Start: manual only, in a foreground terminal on LD: `node control-plane\task-listener-run.mjs --agent Grok` (push mode by default; `--mode poll` = rollback, forces ack off). The identity lives outside the repo (`%USERPROFILE%\.resq-listeners`, DPAPI + ACL, fail closed). No autostart, no service, no scheduled task.
+- Start: manual only, in a foreground terminal on LD: `node control-plane\task-listener-run.mjs --agent Grok` (push mode by default; `--mode poll` = rollback, forces ack off). The identity lives outside the repo (`%LOCALAPPDATA%\resq-listeners`, DPAPI + ACL, fail closed; see "Local store ACL"). No autostart, no service, no scheduled task.
 - Kill (one line, PowerShell on LD): `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -match 'task-listener' | ForEach-Object { Stop-Process -Id $_.ProcessId }`
   Immediate revoke without a process: `provision-listener.mjs ... --revoke`, or set `private_listeners/{uid}.enabled=false` (or raise `revokedAfter`). The Rules deny at once.
 
@@ -112,7 +112,7 @@ A2 is unchanged (fixed 9-line inbox header; MESSAGE never creates an inbox file)
   Bearer = the listener's Firebase ID token only (no ADC). Query `targets.<key> in [EXECUTE,NOTIFY]`, `orderBy timestamp desc`, limit 5.
   **Stream restart cap: 20/h and 150/day; past it the runner exits (code 4) with NO automatic fallback to poll.** Proactive token
   rotation (`TOKEN_ROTATE`, ~24/day) stays counted. The status line shows `restartsLastHour` and `restartsLastDay`; the runner also
-  writes them (numbers only) to `%USERPROFILE%\.resq-listeners\<key>.stream.json`, and `provision-listener.mjs --project resq-agent-control-20260928 --agent Grok --status`
+  writes them (numbers only) to `%LOCALAPPDATA%\resq-listeners\<key>.stream.json`, and `provision-listener.mjs --project resq-agent-control-20260928 --agent Grok --status`
   shows them with `overThreshold`. **Threshold (condition 3): more than 75/day or more than 8/hour -> do NOT add Codex; back to
   the security reviewer.** Backoff 1 s -> 60 s
   with jitter, reset only after 5 min of stable CURRENT. REMOVE with code 7 (PERMISSION_DENIED) is fatal (exit 5); two consecutive
@@ -164,3 +164,40 @@ so the allowlist is unchanged; the UI names each blocked character with its line
 - Inbox publish uses `linkSync` + unlink instead of `renameSync`: rename replaces an existing file on POSIX and Windows, link fails with EEXIST.
 - `deploy/firebase.control-plane.json` now points at `firestore.control-plane.rules` (the live source name will change on the next approved deploy).
 - The A2 wording must also be added to the agents' constitution, which is not in this repository.
+
+## Local store ACL (t192u; design reviews SAFE_WITH_CONDITIONS, acl-hardening-verdicts.md)
+- **Why:** the Codex elevated sandbox grants `CodexSandboxUsers:(OI)(CI)(RX)` on every direct child of `%USERPROFILE%`
+  (except a fixed list) and on `%USERPROFILE%\AppData`, so `%USERPROFILE%\.resq-listeners` was readable by sandboxed commands.
+  The store moves to `%LOCALAPPDATA%\resq-listeners` (= `<home>\AppData\Local\resq-listeners`): a PROTECTED folder
+  (inheritance off, only the account SID with full control; SYSTEM/Administrators tolerated) does not inherit that grant.
+  Canary (security B) passed on LD before this change: `AppData\Local\resq-listeners-canary` + dummy file stayed User-only
+  across the sandbox runs that re-granted `ResQ-Inbox`.
+- **Home check (A):** `os.homedir()` must equal `os.userInfo().homedir` (case-insensitive on Windows), else `HOME_MISMATCH`
+  (runner and provisioning). Nothing is created if `AppData\Local` is missing (`BASE_NOT_DIRECTORY`); links are refused.
+- **Lock down + verify before the secret (C):** `ensureDir` locks the folder down only when it creates it, then verifies it
+  (one `aclMany` over the folder + present files); `--rotate` runs this BEFORE revoking or signing in, so a bad folder
+  never receives a credential. No runtime auto-repair (F): a finding stops; the owner fixes with `icacls` by hand.
+  No deny ACE, no unelevated sandbox (G).
+- **Legacy (E):** `%USERPROFILE%\.resq-listeners` is never read. `--status` shows `legacyDir: true|false` (lstat only).
+  Deleting it is manual, 24 h after a successful migration, with the owner's approval.
+- **Per cycle (b):** `task-listener-run.mjs` checks the store BEFORE anything else (before config, token, Firestore and the
+  first heartbeat) and again on every status tick (60 s), plus the inbox when delivery is on. A finding exits **6**
+  (`EXIT.LOCAL_ACL`): no further heartbeat, no auto-restart (UI 1), stdout `{"agent","stopped":"local_acl_violation"|
+  "inbox_acl_writable","code"}` (no SID, no path), and ONE Hebrew stderr line with path, SID, right, the `icacls` fix and
+  "exit 6" (UI 2). One failed check is tolerated; two in a row stop with `ACL_CHECK_FAILED` (exit 6).
+- **`aclMany`:** one PowerShell spawn site; paths only from store constants, sent as JSON over stdin (max 16), validated
+  schema and exact count, maxBuffer + timeout. Access masks are compared numerically.
+- **INBOX_ACL_WRITABLE (8):** W/M/F/D/WD/AD (Allow) on the inbox root or the agent folder for any principal other than the
+  account, SYSTEM or Administrators fails closed on every deliver (nothing written) and on each cycle when delivery is on.
+  Read/execute from others (the Codex RX grant on `ResQ-Inbox`) is allowed.
+- **Delivery/ack/LLM key** can be turned on only with a clean store (`requireCleanStore`). Migration writes `delivery:false`.
+- **UI (MUST_NOT):** no new heartbeat fields; the card never infers a cause. A stopped listener simply stops writing, so the
+  card shows "מנותק" by age alone: detection window ≈ 60 s (tick) + 165 s (`HEARTBEAT_FRESH_MS`) ≈ 4 min (UI 4).
+  Playwright "ACL UI 5 FRESH+1" pins the boundary (fresh at +165000 ms, "מנותק" at +165001 ms, server time via liveOffset).
+- **Watch (B):** run `acl-watch.ps1 -Path %LOCALAPPDATA%\resq-listeners` every 12 h and after every Codex update/reinstall.
+- **Residual risk (documented, accepted by the security review):** Codex commands that run OUTSIDE the sandbox or escalated
+  run as User and can decrypt the DPAPI credential regardless of any ACL. The ACL only protects against sandboxed reads.
+- **Migration (owner approval required for each step, D):** `provision-listener.mjs --project resq-agent-control-20260928
+  --agent Grok --rotate` (creates + verifies the new store, revokes the old credential BEFORE the new runner starts, writes a
+  delivery-off config) -> `--status` must show `credentialCurrent: true`, `aclFinding: null`, `legacyDir: true` -> start the
+  runner -> after 24 h, with approval, delete `%USERPROFILE%\.resq-listeners`.
