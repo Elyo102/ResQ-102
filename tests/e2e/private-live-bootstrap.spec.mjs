@@ -1,7 +1,7 @@
 import {test,expect} from '../lib/contained-test.mjs';
 import {readFileSync} from 'node:fs';
 const base=new URL('../../control-plane/web/',import.meta.url);
-const assets=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css','dispatch-model.mjs','dispatch-view.mjs']);
+const assets=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css','dispatch-model.mjs','dispatch-view.mjs','active-tasks-model.mjs','active-tasks-view.mjs']);
 test('staged real bootstrap loads, shows owner login, and honestly denies disabled owner',async({page})=>{
  const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
  page.on('request',request=>requests.push(request.url()));

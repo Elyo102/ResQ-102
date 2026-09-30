@@ -52,7 +52,45 @@ export function assembleDispatchRules(capture,fragment){
   excluded:['budget fragment','new event task labels'],
   status:'LOCAL_ARTIFACT_NOT_DEPLOYED'}};
 }
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)&&process.argv[2]==='--dispatch'){
+// Active tasks: appended on top of the LIVE dispatch artifact (f30d3d85, ruleset 569cfc0c). The live bytes stay
+// byte-identical; the only change is inserting the active-tasks fragment before the final deny-all match.
+// Function names must not collide with any existing function in the live rules (tasks(), aid(), policy(), ...).
+export const LIVE_BASE_SHA256='f30d3d85142e21abae4e3a2c53938242d105be8f9dbffc71e5633301f3b94e16';
+export const LIVE_BASE_RULESET='projects/resq-agent-control-20260928/rulesets/569cfc0c-a798-45b6-b8f6-d3bd501369ba';
+export function assembleActiveTasksRules(base,fragment){
+ if(hash(base)!==LIVE_BASE_SHA256)throw Error('LIVE_BASE_HASH_MISMATCH');
+ const source=base.toString('utf8');
+ if(source.includes('\r'))throw Error('BASE_EOL_UNEXPECTED');
+ const at=source.indexOf(DISPATCH_ANCHOR);
+ if(at<0||at!==source.lastIndexOf(DISPATCH_ANCHOR))throw Error('BASE_ANCHOR_MISMATCH');
+ const block=fragment.replace(/\r\n/g,'\n').trimEnd()+'\n';
+ if(/rules_version\s*=|service cloud\.firestore|match \/\{document=\*\*\}|match \/events|match \/dispatchRequests|match \/private_|match \/[a-z_]*budget|\btasks\(\)|\baid\(\)|\bpolicy\(\)/i.test(block)
+   ||!block.includes('match /active_tasks/{taskId}')||!block.includes('match /task_listeners/{agentKey}'))throw Error('ACTIVE_FRAGMENT_REQUIRED');
+ const existing=new Set([...source.matchAll(/function\s+([A-Za-z0-9_]+)\s*\(/g)].map(m=>m[1]));
+ const added=[...block.matchAll(/function\s+([A-Za-z0-9_]+)\s*\(/g)].map(m=>m[1]);
+ if(new Set(added).size!==added.length||added.some(n=>existing.has(n)))throw Error('ACTIVE_FUNCTION_NAME_COLLISION');
+ const offset=Buffer.byteLength(source.slice(0,at));
+ const prefix=base.subarray(0,offset),suffix=base.subarray(offset),inserted=Buffer.from(block);
+ const result=Buffer.concat([prefix,inserted,suffix]);
+ return {result,provenance:{schemaVersion:1,kind:'control-plane-active-tasks-deploy-artifact',project:'resq-agent-control-20260928',service:'cloud.firestore',
+  releaseName:'projects/resq-agent-control-20260928/releases/cloud.firestore',
+  base:'control-plane/deploy/firestore.dispatch.rules',baseSha256:LIVE_BASE_SHA256,baseRulesetName:LIVE_BASE_RULESET,baseReleaseUpdateTime:'2026-09-30T13:19:16.668156Z',
+  fragment:'control-plane/firestore-active-tasks.rules.fragment',fragmentSha256:hash(inserted),fragmentHashEncoding:'utf8-lf-trimmed-plus-lf',
+  functionsAdded:added,insertionOffsetBytes:offset,insertedBytes:inserted.length,prefixSha256:hash(prefix),suffixSha256:hash(suffix),
+  artifact:'control-plane/deploy/firestore.control-plane.rules',artifactSha256:hash(result),artifactBytes:result.length,
+  rulesDiff:'control-plane/deploy/firestore-active-tasks.diff',
+  changes:['Insert active_tasks and task_listeners blocks before the final deny-all match; live f30d3d85 bytes otherwise unchanged'],
+  excluded:['events rules','dispatchRequests rules','budget rules','indexes'],
+  status:'LOCAL_ARTIFACT_NOT_DEPLOYED'}};
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)&&process.argv[2]==='--active'){
+ const base=readFileSync(new URL('./deploy/firestore.dispatch.rules',import.meta.url));
+ const fragment=readFileSync(new URL('./firestore-active-tasks.rules.fragment',import.meta.url),'utf8');
+ const {result,provenance}=assembleActiveTasksRules(base,fragment);
+ writeFileSync(new URL('./deploy/firestore.control-plane.rules',import.meta.url),result);
+ writeFileSync(new URL('./deploy/firestore-active-tasks-provenance.json',import.meta.url),JSON.stringify(provenance,null,2)+'\n');
+ console.log(JSON.stringify({status:provenance.status,baseSha256:provenance.baseSha256,artifactSha256:provenance.artifactSha256}));
+}else if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)&&process.argv[2]==='--dispatch'){
  const input=process.argv[3];if(!input)throw Error('CAPTURE_PATH_REQUIRED');
  const fragment=readFileSync(new URL('./firestore-dispatch.rules.fragment',import.meta.url),'utf8');
  const {result,provenance}=assembleDispatchRules(readFileSync(input),fragment);

@@ -1,0 +1,112 @@
+--- live/f30d3d85/source-0.rules
++++ control-plane/deploy/firestore.control-plane.rules
+@@ -159,6 +159,109 @@
+       allow update: if owner() && dispatchCancel();
+       allow delete: if false;
+     }
++    // Active tasks (security review 30/09/2026, SAFE_WITH_CONDITIONS; see control-plane/ACTIVE-TASKS.md).
++    // Owner creates (fresh sign-in, 900s) and may only cancel PENDING. Agents act only through a SEPARATE
++    // listener identity (private_listeners + control_plane_role 'listener'); telemetry (CI) and budget
++    // identities are rejected explicitly. Agents write ONLY progress[own key]; they never write status.
++    // No delete. The payload is data for a human-supervised agent session, never a command.
++    // The Admin SDK bypasses these rules.
++    function atKeyFor(agent) {
++      return {'Codex': 'codex', 'Grok': 'grok', 'Gemini': 'gemini'}[agent];
++    }
++    function atUuid(value) {
++      return value is string
++        && value.matches('^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$');
++    }
++    function atFresh() {
++      return request.auth != null && request.auth.token.auth_time is int
++        && request.auth.token.auth_time * 1000 >= request.time.toMillis() - 900000;
++    }
++    function atListener() {
++      let config = get(/databases/$(database)/documents/private_listeners/$(request.auth.uid)).data;
++      let ownerConfig = get(/databases/$(database)/documents/private_access/owner).data;
++      return request.auth != null && currentPrincipal(config) && request.auth.uid != ownerConfig.uid
++        && config.role == 'listener' && config.agent in ['Codex', 'Grok', 'Gemini']
++        && request.auth.token.control_plane_role == 'listener'
++        && request.auth.token.control_plane_agent == config.agent
++        && request.auth.token.get('control_plane_budget', false) != true
++        && !exists(/databases/$(database)/documents/private_publishers/$(request.auth.uid))
++        && !exists(/databases/$(database)/documents/private_budget_publishers/$(request.auth.uid));
++    }
++    function atKey() {
++      return atKeyFor(request.auth.token.control_plane_agent);
++    }
++    function atSteps() {
++      return {
++        'READY': ['delivered', 'delivery_off'],
++        'REJECTED': ['invalid', 'secret', 'limit', 'declined'],
++        'IN_PROGRESS': ['started'],
++        'COMPLETED': ['completed'],
++        'FAILED': ['failed']
++      };
++    }
++    function atCreate(id) {
++      let d = request.resource.data;
++      let t = d.targets;
++      return atUuid(id)
++        && d.keys().hasAll(['taskId', 'dispatchedBy', 'payload', 'targets', 'status', 'timestamp', 'progress'])
++        && d.keys().hasOnly(['taskId', 'dispatchedBy', 'payload', 'targets', 'status', 'timestamp', 'progress'])
++        && d.taskId == id && d.dispatchedBy == request.auth.uid
++        && d.payload is string && d.payload.size() <= 10000
++        && d.payload.matches('^[\\x{000A}\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]*$')
++        && t is map && t.keys().hasAll(['grok', 'codex', 'gemini']) && t.keys().hasOnly(['grok', 'codex', 'gemini'])
++        && t.grok in ['EXECUTE', 'IGNORE'] && t.codex in ['EXECUTE', 'IGNORE'] && t.gemini in ['EXECUTE', 'IGNORE']
++        && (t.grok == 'EXECUTE' || t.codex == 'EXECUTE' || t.gemini == 'EXECUTE')
++        && d.status == 'PENDING' && d.progress is map && d.progress.size() == 0
++        && d.timestamp == request.time;
++    }
++    function atCancel() {
++      let before = resource.data;
++      let after = request.resource.data;
++      return before.status == 'PENDING' && before.dispatchedBy == request.auth.uid
++        && after.status == 'CANCELLED' && after.diff(before).affectedKeys().hasOnly(['status']);
++    }
++    function atEntry(e) {
++      return e is map && e.keys().hasAll(['state', 'step', 'updatedAt'])
++        && e.keys().hasOnly(['state', 'step', 'updatedAt'])
++        && e.state is string && e.state in atSteps() && e.step in atSteps()[e.state]
++        && e.updatedAt == request.time;
++    }
++    function atTransition(prev, next) {
++      return (prev == null && next in ['READY', 'REJECTED'])
++        || (prev != null && prev.state == 'READY' && next in ['REJECTED', 'IN_PROGRESS'])
++        || (prev != null && prev.state == 'IN_PROGRESS' && next in ['COMPLETED', 'FAILED']);
++    }
++    function atProgress() {
++      let k = atKey();
++      let before = resource.data;
++      let after = request.resource.data;
++      return before.status == 'PENDING' && before.targets.get(k, 'IGNORE') == 'EXECUTE'
++        && after.diff(before).affectedKeys().hasOnly(['progress']) && after.progress is map
++        && after.progress.diff(before.progress).affectedKeys().hasOnly([k])
++        && atEntry(after.progress.get(k, null))
++        && atTransition(before.progress.get(k, null), after.progress.get(k, {}).get('state', ''));
++    }
++    match /active_tasks/{taskId} {
++      allow get: if owner() || (atListener() && resource.data.targets.get(atKey(), 'IGNORE') == 'EXECUTE');
++      allow list: if (owner() && request.query.limit != null
++          && request.query.limit >= 1 && request.query.limit <= 20)
++        || (atListener() && request.query.limit != null && request.query.limit >= 1 && request.query.limit <= 5
++          && resource.data.targets[atKey()] == 'EXECUTE');
++      allow create: if owner() && atFresh() && atCreate(taskId);
++      allow update: if (owner() && atCancel()) || (atListener() && atProgress());
++      allow delete: if false;
++    }
++    // Listener liveness only (no task content): written by that agent's own listener identity.
++    match /task_listeners/{agentKey} {
++      allow get: if owner();
++      allow list: if owner() && request.query.limit != null
++        && request.query.limit >= 1 && request.query.limit <= 3;
++      allow create, update: if atListener() && agentKey == atKey()
++        && request.resource.data.keys().hasAll(['agent', 'seenAt'])
++        && request.resource.data.keys().hasOnly(['agent', 'seenAt'])
++        && request.resource.data.agent == agentKey && request.resource.data.seenAt == request.time;
++      allow delete: if false;
++    }
+     match /{document=**} { allow read, write: if false; }
+   }
+ }

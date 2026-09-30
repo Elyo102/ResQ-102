@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "control-plane-active-tasks-deploy-artifact",
+  "project": "resq-agent-control-20260928",
+  "service": "cloud.firestore",
+  "releaseName": "projects/resq-agent-control-20260928/releases/cloud.firestore",
+  "base": "control-plane/deploy/firestore.dispatch.rules",
+  "baseSha256": "f30d3d85142e21abae4e3a2c53938242d105be8f9dbffc71e5633301f3b94e16",
+  "baseRulesetName": "projects/resq-agent-control-20260928/rulesets/569cfc0c-a798-45b6-b8f6-d3bd501369ba",
+  "baseReleaseUpdateTime": "2026-09-30T13:19:16.668156Z",
+  "fragment": "control-plane/firestore-active-tasks.rules.fragment",
+  "fragmentSha256": "bf41170137ba9217526886f9737145b8d6c5671a0fcc88dc9d1935f9e8cc45a3",
+  "fragmentHashEncoding": "utf8-lf-trimmed-plus-lf",
+  "functionsAdded": [
+    "atKeyFor",
+    "atUuid",
+    "atFresh",
+    "atListener",
+    "atKey",
+    "atSteps",
+    "atCreate",
+    "atCancel",
+    "atEntry",
+    "atTransition",
+    "atProgress"
+  ],
+  "insertionOffsetBytes": 9865,
+  "insertedBytes": 5851,
+  "prefixSha256": "17ffa20d9eb31a2b329a662a41c4a9bd1f7de17e517e8829d9c074d4057cb281",
+  "suffixSha256": "c698a22e97fe847213fbd44d1b164e39ace704ee12b8b1186b876a550e1e711d",
+  "artifact": "control-plane/deploy/firestore.control-plane.rules",
+  "artifactSha256": "f0296a67fba924f8bf8702b6b5cd093e1516ef02ffe289ad8fe3f2be8e65ad16",
+  "artifactBytes": 15780,
+  "rulesDiff": "control-plane/deploy/firestore-active-tasks.diff",
+  "changes": [
+    "Insert active_tasks and task_listeners blocks before the final deny-all match; live f30d3d85 bytes otherwise unchanged"
+  ],
+  "excluded": [
+    "events rules",
+    "dispatchRequests rules",
+    "budget rules",
+    "indexes"
+  ],
+  "status": "LOCAL_ARTIFACT_NOT_DEPLOYED"
+}

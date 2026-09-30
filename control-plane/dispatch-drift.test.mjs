@@ -41,7 +41,9 @@ const walk=(dir,out=[])=>{for(const name of readdirSync(dir)){const full=join(di
  if(st.isDirectory()){if(!['node_modules','.git','test-results','playwright-report'].includes(name))walk(full,out);}else if(st.isFile()&&st.size<5e6)out.push(relative(root,full).split(sep).join('/'));}return out;};
 test('note is display-only: no consumer of dispatchRequests outside the browser adapter, docs, Rules and tests',()=>{
  const allowed=new Set(['control-plane/web/firebase-adapter.mjs','control-plane/assemble-rules.mjs','control-plane/firestore-dispatch.rules.fragment','control-plane/deploy/firestore.dispatch.rules',
-  'control-plane/DISPATCH-CENTER.md','control-plane/dispatch-drift.test.mjs','rules-test/control-plane-dispatch.test.mjs','control-plane/deploy/firestore-dispatch-provenance.json']);
+  'control-plane/DISPATCH-CENTER.md','control-plane/dispatch-drift.test.mjs','rules-test/control-plane-dispatch.test.mjs','control-plane/deploy/firestore-dispatch-provenance.json',
+  // Active-tasks deploy artifact = the live rules (incl. the unchanged dispatchRequests block) + the active-tasks block.
+  'control-plane/deploy/firestore.control-plane.rules','control-plane/deploy/firestore-active-tasks-provenance.json','rules-test/control-plane-active-tasks.test.mjs']);
  const offenders=[];
  for(const dir of ['.github','functions','control-plane','rules-test','tests'])for(const rel of walk(join(root,dir))){
   if(allowed.has(rel))continue;const text=readFileSync(join(root,rel));if(text.subarray(0,8000).includes(0))continue;
@@ -56,10 +58,10 @@ test('note is display-only: no consumer of dispatchRequests outside the browser 
  assert.match(read('control-plane/DISPATCH-CENTER.md'),/request, not an authorization/);assert.match(read('control-plane/DISPATCH-CENTER.md'),/Admin SDK bypasses/);
 });
 test('dispatch web code: textContent only, no statuses invented, no GitHub/CI trigger, uniform cache token',()=>{
- const web=['bootstrap.mjs','dispatch-model.mjs','dispatch-view.mjs','firebase-adapter.mjs','private-view.mjs','private-controller.mjs','index.html'].map(f=>[f,read('control-plane/web/'+f)]);
+ const web=['bootstrap.mjs','dispatch-model.mjs','dispatch-view.mjs','firebase-adapter.mjs','private-view.mjs','private-controller.mjs','index.html','active-tasks-model.mjs','active-tasks-view.mjs'].map(f=>[f,read('control-plane/web/'+f)]);
  for(const [f,t] of web){assert.doesNotMatch(t,/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/,f);
   // Token-shaped strings only: the secret BLOCK list in dispatch-model.mjs names the prefixes on purpose.
   assert.doesNotMatch(t,/api\.github\.com|workflow_dispatch|repository_dispatch|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}/i,f);}
  for(const f of ['dispatch-model.mjs','dispatch-view.mjs'])assert.doesNotMatch(read('control-plane/web/'+f),/RUNNING|CONNECTED|IN_PROGRESS|COMPLETED/,f);
- const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch3']);
+ const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch4']);
 });

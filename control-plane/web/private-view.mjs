@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch3';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch4';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
@@ -66,7 +66,10 @@ export function signInErrorText(error){
 }
 // dispatchPanel (optional, injected by bootstrap): {element,setIdentity(user),dispose()}. It stays hidden until a
 // backend-authorized identity arrives; hiding is UX only, Firestore Rules enforce. This module never imports it.
-export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
+// listenerStatus (optional, from the active-tasks panel): {text(agent)->string|null, state(agent), onChange(fn)->off}.
+// It adds ONE liveness line (אין מאזין / מנותק / מאזין) to the Codex/Grok/Gemini cards; card statuses are unchanged.
+// activeTasksPanel (optional): {element,setIdentity(user),dispose()}, hidden until backend authorization like dispatchPanel.
+export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,activeTasksPanel=null,listenerStatus=null}){
   if(!root || !auth?.onIdentity || !auth?.signIn || !auth?.signOut)throw Error('INVALID_ADAPTER');
   const doc=root.ownerDocument;
   const node=(tag,text,cls)=>{const n=doc.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n;};
@@ -87,7 +90,8 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
   const eventsLive=node('p','','private-events-live');eventsLive.id='private-events-live';eventsLive.setAttribute('aria-live','polite');eventsLive.setAttribute('aria-atomic','true');
   Object.assign(eventsLive.style,{position:'absolute',width:'1px',height:'1px',margin:'-1px',padding:'0',overflow:'hidden',clipPath:'inset(50%)',whiteSpace:'nowrap',border:'0'});
   const panel=dispatchPanel?.element??null;if(panel)panel.hidden=true;
-  root.replaceChildren(...[title,message,controls,panel,cards,log,eventsLive,hint].filter(Boolean));
+  const tasksPanel=activeTasksPanel?.element??null;if(tasksPanel)tasksPanel.hidden=true;
+  root.replaceChildren(...[title,message,controls,panel,tasksPanel,cards,log,eventsLive,hint].filter(Boolean));
   let state=null,paused=false,hidden=new Set(),disposed=false,actionVersion=0,actionNotice=null;
   const stamp=ms=>renderStamp(doc,ms);
   // Keyed log: one element per event id; rows are inserted/removed individually, never a full replacement.
@@ -129,11 +133,15 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
     const shown=fresh.filter(e=>!hidden.has(e.id));
     if(shown.length)eventsLive.textContent=shown.length===1?`אירוע חדש: ${shown[0].agent} · ${kindText[shown[0].kind]??'אירוע'}`:`${shown.length} אירועים חדשים`;
   }
-  const panelIdentity=user=>{try{dispatchPanel?.setIdentity(user);}catch{if(panel)panel.hidden=true;}};
+  const panelIdentity=user=>{try{dispatchPanel?.setIdentity(user);}catch{if(panel)panel.hidden=true;}
+    try{activeTasksPanel?.setIdentity(user);}catch{if(tasksPanel)tasksPanel.hidden=true;}};
   function renderCards(agents){
     cards.replaceChildren();
     for(const a of agents){const card=node('article',null,'agent');const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
-      card.append(node('h2',a.agent),status,node('small',detailText(a)));cards.append(card);}
+      card.append(node('h2',a.agent),status,node('small',detailText(a)));
+      let line=null;try{line=listenerStatus?.text(a.agent)??null;}catch{line=null;}
+      if(typeof line==='string'&&line){const p=node('p',line,'agent-listener');p.dataset.listener=listenerStatus.state?.(a.agent)??'';card.append(p);}
+      cards.append(card);}
   }
   function render(next){
     if(disposed)return;if(state?.phase!==next.phase)actionNotice=null;
@@ -150,6 +158,8 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
     renderLog(next.events,next.phase);
   }
   const controller=createPrivateController({subscribe,render});
+  const liveAllowed=()=>state!==null&&['connected','connecting','paused','offline','error'].includes(state.phase);
+  let offListeners=null;try{offListeners=listenerStatus?.onChange?.(()=>{if(!disposed&&liveAllowed())renderCards(state.agents);})??null;}catch{offListeners=null;}
   const visibility=()=>controller.setVisible(!doc.hidden&&!paused);
   doc.addEventListener('visibilitychange',visibility);visibility();
   const offAuth=auth.onIdentity(user=>{if(!disposed){actionVersion++;actionNotice=null;login.disabled=false;panelIdentity(user);controller.setIdentity(user);}});
@@ -157,5 +167,5 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
   logout.onclick=async()=>{const action=++actionVersion;actionNotice=null;panelIdentity(null);controller.setIdentity(null);try{await auth.signOut();}catch{if(!disposed&&action===actionVersion){actionNotice='המידע הוסתר, אך ניתוק החשבון לא אושר. נסה להתנתק שוב.';message.textContent=actionNotice;logout.hidden=false;}}};
   pause.onclick=()=>{paused=!paused;pause.textContent=paused?'חידוש תצוגה':'השהיית תצוגה';pause.setAttribute('aria-pressed',String(paused));visibility();};
   clear.onclick=()=>{for(const e of state?.events||[])hidden.add(e.id);if(state)render({...state,refresh:'data'});};
-  return ()=>{disposed=true;actionVersion++;actionNotice=null;try{dispatchPanel?.dispose?.();}catch{}controller.dispose();if(typeof offAuth==='function')offAuth();doc.removeEventListener('visibilitychange',visibility);state=null;hidden.clear();root.replaceChildren();};
+  return ()=>{disposed=true;actionVersion++;actionNotice=null;try{dispatchPanel?.dispose?.();}catch{}try{activeTasksPanel?.dispose?.();}catch{}try{offListeners?.();}catch{}controller.dispose();if(typeof offAuth==='function')offAuth();doc.removeEventListener('visibilitychange',visibility);state=null;hidden.clear();root.replaceChildren();};
 }

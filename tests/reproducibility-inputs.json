@@ -3,6 +3,7 @@
   "specs": [
     "tests/e2e/private-live-bootstrap.spec.mjs",
     "tests/e2e/private-dispatch.spec.mjs",
+    "tests/e2e/private-active-tasks.spec.mjs",
     "tests/e2e/private-status.spec.mjs",
     "tests/e2e/resq-core.spec.mjs",
     "tests/e2e/status.spec.mjs"
@@ -91,6 +92,8 @@
     "control-plane/web/private-view.mjs",
     "control-plane/web/private.css",
     "control-plane/web/dispatch-model.mjs",
-    "control-plane/web/dispatch-view.mjs"
+    "control-plane/web/dispatch-view.mjs",
+    "control-plane/web/active-tasks-model.mjs",
+    "control-plane/web/active-tasks-view.mjs"
   ]
 }

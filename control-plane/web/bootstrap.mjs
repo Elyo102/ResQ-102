@@ -1,7 +1,8 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch3';
-import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch3';
-import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch3';
-import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch3';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch4';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch4';
+import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch4';
+import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch4';
+import {mountActiveTasksPanel} from './active-tasks-view.mjs?v=20260930-grok-dispatch4';
 const root=document.getElementById('private-root');
 
 const loadGoogleOauth=()=>new Promise((resolve,reject)=>{
@@ -33,7 +34,9 @@ try {
   const adapter=await createFirebaseAdapter({sdk:{...app,...auth,...firestore},config:firebaseConfig,googleOauth});
   // Dispatch panel: hidden until backend authorization; re-sign-in stays inside the direct click (adapter.auth.signIn).
   const dispatchPanel=mountDispatchPanel({doc:document,api:adapter.dispatch,signIn:()=>adapter.auth.signIn()});
-  const dispose=mountPrivateDashboard({root,...adapter,dispatchPanel});
+  // Active tasks panel: owner writes (create PENDING / cancel own PENDING) only; progress comes from each agent's listener identity.
+  const activeTasksPanel=mountActiveTasksPanel({doc:document,api:adapter.activeTasks,signIn:()=>adapter.auth.signIn()});
+  const dispose=mountPrivateDashboard({root,...adapter,dispatchPanel,activeTasksPanel,listenerStatus:activeTasksPanel.listenerStatus});
   // Hidden tabs are handled by the controller; remove private DOM when leaving.
   window.addEventListener('pagehide',dispose,{once:true});
   window.addEventListener('pageshow',event=>{if(event.persisted)window.location.reload();});

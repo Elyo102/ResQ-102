@@ -1,5 +1,5 @@
 {
   "firestore": {
-    "rules": "firestore.dispatch.rules"
+    "rules": "firestore.control-plane.rules"
   }
 }

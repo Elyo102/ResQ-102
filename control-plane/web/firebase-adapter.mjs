@@ -1,7 +1,9 @@
 // SDK and Google Identity Services are injected for local regression tests.
 // This adapter never writes events and never persists or logs OAuth access tokens.
-// Its only writes are owner dispatch requests (create queued / cancel own queued), enforced by Firestore Rules.
+// Its only writes are owner dispatch requests (create queued / cancel own queued) and owner active tasks
+// (create PENDING / cancel own PENDING), enforced by Firestore Rules. It never writes progress or listener docs.
 // No GitHub token, no CI trigger and no executor call exists in the browser.
+import {mapTaskDoc,mapListenerDocs} from './active-tasks-model.mjs?v=20260930-grok-dispatch4';
 export const PROJECT = 'resq-agent-control-20260928';
 export const APP_ID = '1:802712493259:web:5634c433be7c020b7c4f4e';
 
@@ -167,6 +169,64 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
         let timer;
         try{await Promise.race([sdk.updateDoc(sdk.doc(db,'dispatchRequests',id),{status:'cancelled',cancelledAt:sdk.serverTimestamp()}),
           new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('DISPATCH_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
+      }
+    },
+    // Active tasks (control-plane/ACTIVE-TASKS.md). Owner list: orderBy(timestamp desc) + limit 20 (single-field index).
+    // Server-confirmed snapshots only (fromCache/hasPendingWrites ignored), so progress is never optimistic.
+    activeTasks:{
+      uid(){return authorized()?authorizedUid:null;},
+      async authTime(){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const result=await auth.currentUser.getIdTokenResult();
+        const ms=Date.parse(result?.authTime);return Number.isSafeInteger(ms)?ms:null;
+      },
+      watch({next,error}){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        let stopped=false;
+        const map=d=>mapTaskDoc(d.id,d.data());
+        const q=sdk.query(sdk.collection(db,'active_tasks'),sdk.orderBy('timestamp','desc'),sdk.limit(20));
+        const stop=sdk.onSnapshot(q,{includeMetadataChanges:true},snapshot=>{
+          if(stopped)return;if(!authorized()){error();return;}
+          if(snapshot.metadata.fromCache!==false||snapshot.metadata.hasPendingWrites!==false)return;
+          let rows;try{rows=snapshot.docs.map(map);}catch{error();return;}next(rows);
+        },()=>{if(!stopped)error();});
+        return()=>{stopped=true;try{stop();}catch{}};
+      },
+      // Listener liveness: task_listeners/{codex|grok|gemini}.seenAt, written only by that agent's listener identity.
+      watchListeners({next,error}){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        let stopped=false;
+        const q=sdk.query(sdk.collection(db,'task_listeners'),sdk.orderBy('seenAt','desc'),sdk.limit(3));
+        const stop=sdk.onSnapshot(q,{includeMetadataChanges:true},snapshot=>{
+          if(stopped)return;if(!authorized()){error();return;}
+          if(snapshot.metadata.fromCache!==false||snapshot.metadata.hasPendingWrites!==false)return;
+          let seen;try{seen=mapListenerDocs(snapshot.docs.map(d=>({id:d.id,data:d.data()})));}catch{error();return;}
+          next(seen);
+        },()=>{if(!stopped)error();});
+        return()=>{stopped=true;try{stop();}catch{}};
+      },
+      // Single create with a client-generated v4 taskId (== doc id); a retry reuses the same id.
+      async create(task,timeoutMs=12000){
+        if(!authorized()||task?.dispatchedBy!==authorizedUid)throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const data={taskId:task.taskId,dispatchedBy:task.dispatchedBy,payload:task.payload,targets:{...task.targets},status:'PENDING',
+          timestamp:sdk.serverTimestamp(),progress:{}};
+        let timer;
+        try{await Promise.race([sdk.setDoc(sdk.doc(db,'active_tasks',task.taskId),data),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACTIVE_TASK_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
+      },
+      async verify(taskId){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const snap=await sdk.getDocFromServer(sdk.doc(db,'active_tasks',taskId));
+        if(!snap.exists())return {exists:false};const x=snap.data();
+        return {exists:true,taskId:x.taskId,dispatchedBy:x.dispatchedBy,payload:x.payload,targets:x.targets,status:x.status};
+      },
+      async cancel(taskId,timeoutMs=12000){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        let timer;
+        try{await Promise.race([sdk.updateDoc(sdk.doc(db,'active_tasks',taskId),{status:'CANCELLED'}),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACTIVE_TASK_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
         finally{clearTimeout(timer);}
       }
     },

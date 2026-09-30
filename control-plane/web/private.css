@@ -27,3 +27,26 @@ button:focus-visible{outline:3px solid #7fdad6;outline-offset:3px}button:disable
 .dispatch-more summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.dispatch-more summary:focus-visible{outline:3px solid #7fdad6;outline-offset:2px}.dispatch-times{color:#b8c7dc;margin:4px 0}.dispatch-times time{font-variant-numeric:tabular-nums;white-space:nowrap}
 .dispatch-row:focus-visible{outline:3px solid #7fdad6;outline-offset:2px}
 @media(max-width:760px){.dispatch-fields{grid-template-columns:1fr}}
+/* Active tasks panel: same layout contract as the dispatch panel; chips wrap; long no-space payloads wrap anywhere. */
+.active-tasks{background:#101b30;border:1px solid #405371;border-radius:12px;padding:16px;margin:0 0 24px;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.active-tasks h2{margin-top:0}.active-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.active-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.active-field label{width:100%}
+.active-tasks select,.active-tasks textarea{font:inherit;font-size:16px;width:100%;max-width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid #617797;border-radius:8px;background:#0b1324;color:#e7eefc}
+.active-tasks textarea{resize:vertical;max-height:min(50vh,24rem);overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.active-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;margin:12px 0}
+.active-tasks button{width:100%;max-width:100%;min-width:0;min-height:44px;white-space:normal;overflow-wrap:anywhere}
+.active-counter,.active-error,.active-result,.active-feed-error,.active-send-reason{margin:4px 0;line-height:1.5}.active-error{color:#ffb4a8}
+.active-preview{border:1px dashed #617797;border-radius:8px;padding:10px;margin:8px 0;min-width:0}.active-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font-size:.85rem;margin:8px 0;unicode-bidi:isolate}
+.active-feed{list-style:none;padding:0;margin:0}.active-row{border-bottom:1px solid #243247;padding:10px 0;min-width:0}
+.active-row-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.active-status{border:1px solid #7fdad6;border-radius:999px;padding:2px 10px;font-size:.85rem;overflow-wrap:anywhere}
+.active-chips{list-style:none;padding:0;margin:6px 0;display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.active-chip{border:1px solid #617797;border-radius:10px;padding:4px 8px;font-size:.85rem;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.active-chip strong{margin-inline-end:6px}.active-chip time,.active-times time{font-variant-numeric:tabular-nums;white-space:nowrap}
+.active-chip[data-kind="ignore"]{border-style:dashed;color:#b8c7dc}
+.active-payload-text{white-space:pre-wrap;unicode-bidi:plaintext;overflow-wrap:anywhere;word-break:break-word;margin:6px 0;max-width:100%;min-width:0}
+.active-times,.active-cancel-note{color:#b8c7dc;margin:4px 0;font-size:.9rem}
+.active-more summary{cursor:pointer;min-height:44px;display:flex;align-items:center}
+.active-cancel{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px;margin-top:6px}.active-confirm-text,.active-cancel-note{grid-column:1/-1}
+.agent-listener{margin:4px 0 0;font-size:.85rem;color:#b8c7dc}
+@media(max-width:760px){.active-fields{grid-template-columns:1fr}}
