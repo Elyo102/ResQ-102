@@ -38,7 +38,10 @@ if (violations) {
   const known = new Set(['implicit-child-shell', 'unapproved-child-executable',
     'unapproved-posix-shell-command', 'unapproved-shell-command', 'child-stripped-containment',
     'external-dns', 'external-dns-query', 'external-resolver-query', 'socket-path-not-authorized',
-    'git-command-not-readonly', 'browser-without-containment-proxy', 'unapproved-shell-exec']);
+    'git-command-not-readonly', 'browser-without-containment-proxy', 'unapproved-shell-exec',
+    'unregistered-or-nonloopback-socket', 'unsafe-emulator-environment', 'unsafe-owned-emulator-environment',
+    'invalid-loopback-registration', 'udp-send', 'udp-connect', 'nonloopback-listener', 'non-tcp-listener',
+    'fork-executable-override']);
   let fd;
   try {
     fd = fs.openSync(poison, 'r');

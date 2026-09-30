@@ -308,3 +308,15 @@ test('both worker imports are required and unknown external imports reject', () 
   assert.throws(() => localizeWorker(source.replace('firebase-app-compat.js', 'missing.js')), /exactly one/);
   assert.throws(() => localizeWorker(source + "\nimportScripts('https://example.invalid/extra.js');"), /external worker import/);
 });
+
+for (const hub of ['127.0.0.1:4400', 'localhost:4400', '[::1]:4400']) test('unregistered emulator hub discovery is denied: ' + hub, () => blocked(
+  `console.log('PROBE_ACTION_REACHED');fetch('http://${hub}/emulators').catch(()=>{});setTimeout(()=>process.exit(0),200);`,
+  /^unregistered-or-nonloopback-socket$/));
+
+test('rules runner strips FIREBASE_EMULATOR_HUB from the local child env before spawning suites', () => {
+  const source = fs.readFileSync(new URL('./run-local-rules.mjs', import.meta.url), 'utf8');
+  const strip = source.search(/^delete env\.FIREBASE_EMULATOR_HUB;\r?$/m);
+  assert.ok(strip > 0, 'hub must be deleted from the local child env');
+  assert.ok(strip < source.indexOf('spawnSync(process.execPath'), 'strip must precede the rules spawn');
+  assert.doesNotMatch(source, /process\.env\.FIREBASE_EMULATOR_HUB/);
+});

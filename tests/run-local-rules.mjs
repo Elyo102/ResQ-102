@@ -24,6 +24,10 @@ const env = { ...process.env, GOOGLE_CLOUD_PROJECT: 'demo-resq',
   METADATA_SERVER_DETECTION: 'none' };
 delete env.GOOGLE_APPLICATION_CREDENTIALS;
 delete env.FIREBASE_TOKEN;
+// firebase emulators:exec exports FIREBASE_EMULATOR_HUB (localhost:4400 or the next free port).
+// Every rules suite passes explicit Firestore host/port, so hub discovery is unnecessary and the
+// hub stays an unregistered, fail-closed endpoint under tests/lib/network-guard.cjs.
+delete env.FIREBASE_EMULATOR_HUB;
 for (const entry of entries) {
   const result = spawnSync(process.execPath, [entry], { cwd, env, stdio: 'inherit', windowsHide: true, timeout: 180000 });
   if (result.error || result.status !== 0) {
