@@ -1,6 +1,6 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260929-safari-gis1';
-import {mountPrivateDashboard} from './private-view.mjs?v=20260929-safari-gis1';
-import {firebaseConfig} from './firebase-config.mjs?v=20260929-safari-gis1';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-stamp1';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-stamp1';
+import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-stamp1';
 const root=document.getElementById('private-root');
 
 const loadGoogleOauth=()=>new Promise((resolve,reject)=>{
