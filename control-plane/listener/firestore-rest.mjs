@@ -13,7 +13,9 @@ import {listenerQuery,TARGET_KEYS} from '../task-listener.mjs';
 
 export const FIRESTORE_URL='https://firestore.googleapis.com';
 export const EMULATOR_HOSTS=Object.freeze(['127.0.0.1:8191','127.0.0.1:8199']);
-export const POLL_MS=60000;
+// 120 s: project is on Spark (hard 50k reads/day). Per agent/day at 120 s: <=720 polls x (<=5 docs + <=4 Rules lookups)
+// + 1440 heartbeats x <=4 Rules lookups = <=12.2k reads; both agents <=24.5k (was <=37.4k at 60 s). Quota check 30/09/2026.
+export const POLL_MS=120000;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const STATES=Object.freeze({READY:['delivered','delivery_off'],REJECTED:['invalid','secret','limit','declined'],IN_PROGRESS:['started'],COMPLETED:['completed'],FAILED:['failed']});
 

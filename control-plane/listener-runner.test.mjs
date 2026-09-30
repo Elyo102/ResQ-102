@@ -122,7 +122,7 @@ test('REST adapter: endpoint guards; exact listener query; progress = ONE masked
     timestamp:{timestampValue:'2026-09-30T10:00:00Z'},dispatchedBy:{stringValue:'o'},progress:{mapValue:{}}}}}];
   const snaps=[];const stop=ops.watchTasks({key:'grok',limit:5,next:s=>snaps.push(s),error:()=>{}});
   await new Promise(r=>setImmediate(r));
-  assert.equal(timers[0][1],POLL_MS);assert.equal(POLL_MS,60000);
+  assert.equal(timers[0][1],POLL_MS);assert.equal(POLL_MS,120000);
   assert.deepEqual(reqs[0].body,{structuredQuery:structuredListenerQuery('grok')});
   assert.deepEqual(structuredListenerQuery('grok'),{from:[{collectionId:'active_tasks'}],where:{fieldFilter:{field:{fieldPath:'targets.grok'},op:'EQUAL',value:{stringValue:'EXECUTE'}}},orderBy:[{field:{fieldPath:'timestamp'},direction:'DESCENDING'}],limit:5});
   assert.equal(reqs[0].auth,'Bearer ID-TOKEN');assert.match(reqs[0].url,/^https:\/\/firestore\.googleapis\.com\/v1\/projects\/resq-agent-control-20260928\/databases\/\(default\)\/documents:runQuery$/);
