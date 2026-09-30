@@ -1,7 +1,9 @@
 # Agent Dispatch Center — security review and deploy runbook
 
-Status: the first dispatch artifact (note ≤ 280) was DEPLOYED on 30/09/2026 15:53:04 IL (ruleset
-`ba01608d-2c4b-41c0-9a3c-b019fb518007`, sha256 `17301818…`). The note-10k artifact supersedes it. Its status and
+Status: the note-10k artifact (sha256 `f30d3d85…`) is **DEPLOYED** as of 30/09/2026 16:19:16 IL (ruleset
+`569cfc0c-a798-45b6-b8f6-d3bd501369ba`). It superseded the first dispatch artifact (note ≤ 280, sha256 `17301818…`,
+ruleset `ba01608d-2c4b-41c0-9a3c-b019fb518007`, deployed 15:53:04 IL). The pre-deploy drift check and post-deploy
+hash check both passed. Its status and
 deployment details are in `control-plane/deploy/firestore-dispatch-provenance.json` (`status`, `deployment`,
 `history`). The assembler CLI regenerates the local (undeployed) record, so keep the `deployment`/`history`
 blocks when you re-run it.
