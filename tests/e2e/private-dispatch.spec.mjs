@@ -143,6 +143,7 @@ test('10000 limit: counter on every input, one announcement per threshold, over-
  await expect(send).toHaveAttribute('aria-describedby','dispatch-send-reason');await expect(page.locator('#dispatch-send-reason')).toContainText('10000');
  expect(await page.evaluate(()=>announcements.filter(Boolean).length)).toBe(1);expect(await page.evaluate(()=>creates.length)).toBe(0);
  await note.fill('a'.repeat(10000));await expect(counter).toHaveText('10000/10000');await expect(live).toContainText('למגבלה');await expect(page.locator('#dispatch-error')).toHaveText('');
+ await note.fill('קצר');await expect(live).toHaveText('');   // back under every threshold: the stale announcement is cleared
  expect(errors).toEqual([]);
 });
 test('CRLF counts as one, newlines survive to the payload, preview and feed; disallowed characters reported with line; secrets blocked',async({page})=>{

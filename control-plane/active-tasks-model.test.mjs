@@ -67,7 +67,9 @@ test('IN_PROGRESS: בביצוע only with a fresh listener heartbeat; otherwise 
   const o2=overallStatus(r,[stuck]);assert.equal(o2.kind,'stuck');
   assert.equal(overallStatus(r,[chipFor(r,'grok',{now,seenAt:now}),np]).kind,'running');
   // listener stream unknown (error / cache): pulse is unknown, never "אין דופק"-as-fact nor "בביצוע"
-  const unk=chipFor(r,'grok',{now,seenAt:now,pulseKnown:false});assert.notEqual(unk.kind,'running');assert.doesNotMatch(unk.text,/^בביצוע$/);
+  const unk=chipFor(r,'grok',{now,seenAt:now,pulseKnown:false});assert.equal(unk.kind,'pulse_unknown');assert.equal(unk.text,'מצב המאזין לא ידוע');
+  assert.equal(chipFor(r,'grok',{now,pulseKnown:false}).kind,'pulse_unknown');   // never no_pulse ("אין דופק מהמאזין") when the stream failed
+  assert.deepEqual(overallStatus(r,[unk]),{kind:'pulse_unknown',text:'מצב המאזין לא ידוע'});
 });
 test('"ללא עדכון מאז" after 30 minutes on waiting/delivered chips; CANCELLED overall is text',()=>{
   const w=chipFor(row({timestamp:now-QUIET_MS-1}),'grok',{now});assert.equal(w.quiet,true);assert.match(w.text,/^ממתין למאזין · ללא עדכון מאז \d\d:\d\d$/);

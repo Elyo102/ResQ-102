@@ -45,8 +45,9 @@ test('agent cards show listener liveness only: אין מאזין until a real he
  const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);
  await expect(page.locator('.agent')).toHaveCount(4);
  // before the first server snapshot of task_listeners the state is unknown, never "אין מאזין"
- await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: לא ידוע (אין חיבור)');
- await page.evaluate(()=>hbNext({}));
+ await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: טוען…');
+ await expect(page.locator('#active-feed .active-loading')).toHaveText('טוען…');   // before the first feed snapshot
+ await page.evaluate(()=>{hbNext({});feedNext([]);});await expect(page.locator('.active-loading')).toHaveCount(0);await expect(page.locator('.active-empty')).toHaveCount(1);
  for(const a of ['Codex','Grok','Gemini'])await expect(card(page,a).locator('.agent-listener')).toHaveText('משימות: אין מאזין');
  // telemetry status labelled "CI:" when a listener line is present; the .agent-status text itself is unchanged
  await expect(card(page,'Codex').locator('.agent-status-row .agent-source')).toHaveText('CI:');await expect(card(page,'Codex').locator('.agent-status')).toHaveCount(1);
@@ -125,6 +126,7 @@ test('cancel cycle: only own PENDING rows, inline confirm with the no-guarantee 
  await r1.locator('.active-cancel-no').click();await expect(r1.locator('.active-cancel-btn')).toBeVisible();expect(await page.evaluate(()=>cancels.length)).toBe(0);
  await r1.locator('.active-cancel-btn').click();await r1.locator('.active-cancel-yes').click();
  await expect(page.locator('#active-result')).toHaveText('בקשת הביטול נשלחה; הסטטוס יתעדכן רק מהשרת.');
+ await expect(r1.locator('.active-cancel-btn')).toBeFocused();   // focus returns to the row's cancel button, not lost to <body>
  expect(await page.evaluate(()=>cancels)).toEqual(['00000000-0000-4000-8000-000000000001']);
  await expect(r1.locator('.active-status')).not.toHaveText('סטטוס: בוטל');   // no optimistic status
  await page.evaluate(()=>feedNext([row(1,{status:'CANCELLED'})]));
@@ -183,6 +185,8 @@ test('feed error: last rows kept and marked stale with the snapshot time; reconn
  await expect(rowEl(page,1).locator('.active-stale')).toBeHidden();await expect(page.locator('.active-row')).toHaveCount(2);
  await page.evaluate(()=>hbError());
  await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: לא ידוע (אין חיבור)');await expect(card(page,'Grok').locator('.agent-listener')).toHaveAttribute('data-listener','unknown');
+ await page.evaluate(()=>feedNext([row(3,{progress:{grok:entry('IN_PROGRESS','started')}})]));   // stream failed: pulse unknown, never "אין דופק מהמאזין"
+ await expect(chip(page,3,'grok').locator('.active-chip-text')).toHaveText('מצב המאזין לא ידוע');await expect(chip(page,3,'grok')).toHaveAttribute('data-kind','pulse_unknown');
  await expect(page.locator('body')).not.toContainText('משימות: אין מאזין');await expect(page.locator('#active-feed-error')).toContainText('מצב המאזינים לא ידוע (אין חיבור).');
  await page.locator('#active-reconnect').click();expect(await page.evaluate(()=>[listenerStarts,watchStarts])).toEqual([2,2]);
  await page.evaluate(()=>hbNext({grok:Date.now()}));await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מאזין');expect(errors).toEqual([]);
@@ -195,7 +199,8 @@ test('fromCache snapshots are never shown as current: "אין חיבור — מ�
  await page.evaluate(()=>{feedNext(null,{fromCache:true});hbNext(null,{fromCache:true});});
  await expect(page.locator('#active-feed-error')).toHaveText(/^אין חיבור — מצב אחרון מ-\d\d:\d\d מצב המאזינים לא ידוע \(אין חיבור\)\.$/);
  await expect(rowEl(page,1)).toHaveAttribute('data-stale','true');await expect(page.locator('#active-reconnect')).toBeHidden();   // the SDK reconnects by itself
- await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('בביצוע — מצב המאזין לא ידוע (אין חיבור)');
+ await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('מצב המאזין לא ידוע');await expect(chip(page,1,'grok')).toHaveAttribute('data-kind','pulse_unknown');
+ await expect(rowEl(page,1).locator('.active-status')).toHaveAttribute('data-kind','pulse_unknown');await expect(page.locator('#active-tasks-panel')).not.toContainText('אין דופק');
  await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: לא ידוע (אין חיבור)');expect(errors).toEqual([]);
 });
 test('preview names agents without a live listener: "אין מאזין — המשימה תישמר בלבד"; no payloadLength; dir=auto + plaintext bidi',async({page})=>{
@@ -205,10 +210,14 @@ test('preview names agents without a live listener: "אין מאזין — המ�
  await page.locator('#active-payload').fill('abc שלום');await page.locator('#active-preview').click();
  await expect(page.locator('#active-preview-listeners li')).toHaveText(['Gemini: מנותק — המשימה תישמר עד שהמאזין יחזור','Codex: אין מאזין — המשימה תישמר בלבד']);
  await expect(page.locator('#active-preview-json')).not.toContainText('payloadLength');
+ // the warning follows listener state changes while the preview is open
+ await page.evaluate(()=>hbNext({grok:Date.now(),gemini:Date.now(),codex:Date.now()}));await expect(page.locator('#active-preview-listeners')).toHaveCount(0);
+ await page.evaluate(()=>hbError());await expect(page.locator('#active-preview-listeners li')).toHaveText(['Gemini: מצב המאזין לא ידוע — ייתכן שהמשימה תישמר בלבד','Codex: מצב המאזין לא ידוע — ייתכן שהמשימה תישמר בלבד','Grok: מצב המאזין לא ידוע — ייתכן שהמשימה תישמר בלבד']);
  await expect(page.locator('#active-payload')).toHaveAttribute('dir','auto');
  expect(await page.locator('#active-payload').evaluate(e=>getComputedStyle(e).unicodeBidi)).toBe('plaintext');
  expect(await page.locator('#active-payload').getAttribute('maxlength')).toBeNull();
  await page.locator('#active-payload').fill('a'.repeat(9000));await expect(page.locator('#active-limit-live')).toHaveText('התוכן הגיע ל-9000 תווים מתוך 10000.');
+ await page.locator('#active-payload').fill('קצר');await expect(page.locator('#active-limit-live')).toHaveText('');   // stale announcement cleared
  await expect(page.locator('#active-limit-live')).toHaveAttribute('aria-live','polite');expect(errors).toEqual([]);
 });
 test('double submit while auth_time is pending creates exactly one write; auth_time timeout returns to idle',async({page})=>{
@@ -272,5 +281,10 @@ test('cancel hidden when every selected agent finished; cancel failure texts (de
  await expect(page.locator('#active-result')).toHaveText('השרת דחה את הביטול. הסטטוס לא השתנה.');await expect(r2.locator('.active-cancel-btn')).toBeFocused();
  await page.evaluate(()=>{window.cancelImpl=()=>Promise.reject(Object.assign(Error('x'),{code:'unavailable'}));});
  await r2.locator('.active-cancel-btn').click();await r2.locator('.active-cancel-yes').click();
- await expect(page.locator('#active-result')).toHaveText('לא אושר — ייתכן שהביטול עוד יחול. הסטטוס יתעדכן רק מהשרת.');expect(errors).toEqual([]);
+ await expect(page.locator('#active-result')).toHaveText('לא אושר — ייתכן שהביטול עוד יחול. הסטטוס יתעדכן רק מהשרת.');
+ // the server already shows CANCELLED when the request settles: the cancel button is gone, focus goes to the row itself
+ await page.evaluate(()=>{window.cancelImpl=()=>new Promise(r=>{window.releaseCancel=r;});});
+ await r2.locator('.active-cancel-btn').click();await r2.locator('.active-cancel-yes').click();await expect(r2).toBeFocused();
+ await page.evaluate(()=>{feedNext([row(1,{progress:{grok:entry('COMPLETED','completed')}}),row(2,{status:'CANCELLED'})]);releaseCancel();});
+ await expect(r2.locator('.active-status')).toHaveText('סטטוס: בוטל');await expect(r2).toBeFocused();expect(errors).toEqual([]);
 });

@@ -28,11 +28,11 @@ export const SEND_TIMEOUT_MS=12000;
 
 export const TEXT=Object.freeze({
   ignore:'לא נבחר',waiting:'ממתין למאזין',delivered:'נמסר — טרם התחיל',deliveryOff:'מסירה כבויה, המשימה נשמרה בלבד',
-  inProgress:'בביצוע',noPulse:'בביצוע — אין דופק מאז ',noPulseEver:'בביצוע — אין דופק מהמאזין',pulseUnknown:'בביצוע — מצב המאזין לא ידוע (אין חיבור)',stuck:'לא ידוע / תקוע',
+  inProgress:'בביצוע',noPulse:'בביצוע — אין דופק מאז ',noPulseEver:'בביצוע — אין דופק מהמאזין',pulseUnknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
   completed:'הושלם',failed:'נכשל',unknown:'מצב לא מוכר',quiet:'ללא עדכון מאז ',
   rejected:{invalid:'נדחה — משימה לא תקינה',secret:'נדחה — נראה שיש סוד',limit:'נדחה — יותר מדי משימות פתוחות',declined:'נדחה ע"י הסוכן'},
   listenerNone:'אין מאזין',listenerDown:'מנותק',listenerUp:'מאזין',listenerUnknown:'לא ידוע (אין חיבור)',
-  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע (לפי דיווח הסוכן)',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',stuck:'לא ידוע / תקוע',
+  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע (לפי דיווח הסוכן)',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',pulse_unknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
     delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין'}
 });
 
@@ -113,7 +113,8 @@ export function listenerState(seenAt,now,known=true){
 export function listenerText(seenAt,now,known=true){return {none:TEXT.listenerNone,down:TEXT.listenerDown,up:TEXT.listenerUp,unknown:TEXT.listenerUnknown}[listenerState(seenAt,now,known)];}
 const hhmm=ms=>{const s=formatDisplayStamp(ms);return s==='—'?'—':s.slice(11);};
 // One chip per target agent: {key, agent, kind, text, updatedAt|null, quiet:boolean}.
-// kind: ignore | waiting | delivered | delivery_off | rejected | in_progress | no_pulse | stuck | completed | failed | unknown
+// kind: ignore | waiting | delivered | delivery_off | rejected | in_progress | no_pulse | pulse_unknown | stuck | completed | failed | unknown
+// pulse_unknown: the listener stream failed / is offline, so the pulse is not known (never shown as no_pulse).
 export function chipFor(row,key,{now,seenAt,pulseKnown=true}){
   const agent=TARGET_AGENTS.find(([,k])=>k===key)[0];
   if(row.targets[key]!=='EXECUTE')return Object.freeze({key,agent,kind:'ignore',text:TEXT.ignore,updatedAt:null,quiet:false});
@@ -130,7 +131,7 @@ export function chipFor(row,key,{now,seenAt,pulseKnown=true}){
   if(raw.state==='FAILED')return Object.freeze({...base,kind:'failed',text:TEXT.failed,updatedAt:at});
   // IN_PROGRESS: reported by that agent's own listener identity. Stale -> unknown/stuck; no fresh heartbeat -> say so.
   if(now-at>STUCK_MS)return Object.freeze({...base,kind:'stuck',text:TEXT.stuck+' · '+TEXT.quiet+hhmm(at),updatedAt:at,quiet:true});
-  if(!pulseKnown)return Object.freeze({...base,kind:'no_pulse',text:TEXT.pulseUnknown,updatedAt:at});
+  if(!pulseKnown)return Object.freeze({...base,kind:'pulse_unknown',text:TEXT.pulseUnknown,updatedAt:at});
   const live=listenerState(seenAt,now);
   if(live!=='up')return Object.freeze({...base,kind:'no_pulse',text:Number.isSafeInteger(seenAt)?TEXT.noPulse+hhmm(seenAt):TEXT.noPulseEver,updatedAt:at});
   return Object.freeze({...base,kind:'in_progress',text:TEXT.inProgress,updatedAt:at});
@@ -142,6 +143,7 @@ export function overallStatus(row,chips){
   const active=chips.filter(c=>c.kind!=='ignore');
   if(active.length&&active.every(c=>['completed','failed','rejected'].includes(c.kind)))return {kind:'done',text:TEXT.overall.done};
   if(active.some(c=>c.kind==='in_progress'))return {kind:'running',text:TEXT.overall.running};
+  if(active.some(c=>c.kind==='pulse_unknown'))return {kind:'pulse_unknown',text:TEXT.overall.pulse_unknown};
   if(active.some(c=>c.kind==='no_pulse'))return {kind:'no_pulse',text:TEXT.overall.no_pulse};
   if(active.some(c=>c.kind==='stuck'))return {kind:'stuck',text:TEXT.overall.stuck};
   if(active.some(c=>c.kind==='delivered'))return {kind:'delivered',text:TEXT.overall.delivered};

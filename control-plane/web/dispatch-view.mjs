@@ -73,7 +73,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     const d=draft();counter.textContent=counterText(d.note);
     const problem=noteProblem(d.note);
     error.textContent=problemText(problem,d.note);
-    const level=noteThreshold(d.note);if(level!==lastThreshold){lastThreshold=level;if(level)limitLive.textContent=thresholdText(level);}
+    const level=noteThreshold(d.note);if(level!==lastThreshold){lastThreshold=level;limitLive.textContent=level?thresholdText(level):'';}
     net.textContent=online()?'':TEXT.offline;
     const locked=busy()||phase==='unconfirmed';
     for(const s of Object.values(selects))s.disabled=locked;note.readOnly=locked;

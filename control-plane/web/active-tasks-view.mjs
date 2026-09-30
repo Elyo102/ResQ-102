@@ -33,7 +33,7 @@ export const TEXT=Object.freeze({
   feedCache:'אין חיבור — מצב אחרון מ-',feedCacheNone:'אין חיבור — עדיין אין מצב מאושר מהשרת.',feedErrorAt:'הפיד הופסק — מוצג מצב אחרון מ-',feedErrorSuffix:' (לא עדכני)',
   feedErrorNone:'הפיד הופסק — אין מצב מאושר להצגה.',listenersUnknown:'מצב המאזינים לא ידוע (אין חיבור).',reconnect:'התחברות מחדש לפיד',stale:'לא עדכני',
   listenerNoneLine:'אין מאזין — המשימה תישמר בלבד',listenerDownLine:'מנותק — המשימה תישמר עד שהמאזין יחזור',listenerUnknownLine:'מצב המאזין לא ידוע — ייתכן שהמשימה תישמר בלבד',
-  listenersTitle:'מצב המאזינים לסוכנים שנבחרו:'
+  listenersTitle:'מצב המאזינים לסוכנים שנבחרו:',loading:'טוען…',listenerLoadingLine:'טוען את מצב המאזין…'
 });
 
 export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>globalThis.crypto.randomUUID(),sendTimeoutMs=SEND_TIMEOUT_MS,tickMs=15000}){
@@ -89,7 +89,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   function render(){
     if(disposed)return;
     const d=draft();const n=payloadLength(d.payload);counter.textContent=n>PAYLOAD_MAX?`${n}/${PAYLOAD_MAX} — חריגה של ${n-PAYLOAD_MAX} תווים`:`${n}/${PAYLOAD_MAX}`;
-    const level=payloadThreshold(d.payload);if(level!==lastThreshold){lastThreshold=level;if(level)limitLive.textContent=payloadThresholdText(level);}
+    const level=payloadThreshold(d.payload);if(level!==lastThreshold){lastThreshold=level;limitLive.textContent=level?payloadThresholdText(level):'';}
     const payloadIssue=payloadProblem(d.payload);
     error.textContent=payloadIssue&&payloadIssue!=='empty'?problemText(d):'';
     const locked=busy()||phase==='unconfirmed';
@@ -103,18 +103,26 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   }
   function listenerLine(key){
     const st=listenerState(seen[key],now(),listenersKnown());
+    if(listenersState==='idle')return TEXT.listenerLoadingLine;
     return st==='none'?TEXT.listenerNoneLine:st==='down'?TEXT.listenerDownLine:st==='unknown'?TEXT.listenerUnknownLine:null;
+  }
+  // The preview's listener warnings follow listener state changes (snapshot, error, heartbeat ageing on the tick).
+  let previewLinesSig=null;
+  function renderPreviewListeners(){
+    const box=previewBox.querySelector('.active-preview-listeners-box');if(!box||!preview)return;
+    const lines=TARGET_AGENTS.filter(([,k])=>preview.task.targets[k]==='EXECUTE').map(([a,k])=>[a,k,listenerLine(k)]).filter(x=>x[2]);
+    const sig=JSON.stringify(lines);if(sig===previewLinesSig)return;previewLinesSig=sig;
+    if(!lines.length){box.replaceChildren();return;}
+    const ul=node('ul',null,'active-preview-listeners');ul.id='active-preview-listeners';
+    for(const [a,k,text] of lines){const li=node('li',`${a}: ${text}`);li.dataset.agent=k;ul.append(li);}
+    box.replaceChildren(node('p',TEXT.listenersTitle),ul);
   }
   function showPreview(task){
     const json=node('pre',JSON.stringify(previewDoc(task),null,2),'active-preview-json');json.id='active-preview-json';json.dir='ltr';
     const body=node('div',null,'active-payload-text');body.id='active-preview-payload';body.dir='auto';body.textContent=task.payload;
-    const lines=TARGET_AGENTS.filter(([,k])=>task.targets[k]==='EXECUTE').map(([a,k])=>[a,k,listenerLine(k)]).filter(x=>x[2]);
-    const parts=[node('p',TEXT.previewTitle),json];
-    if(lines.length){const ul=node('ul',null,'active-preview-listeners');ul.id='active-preview-listeners';
-      for(const [a,k,text] of lines){const li=node('li',`${a}: ${text}`);li.dataset.agent=k;ul.append(li);}
-      parts.push(node('p',TEXT.listenersTitle),ul);}
-    parts.push(node('p',TEXT.payloadTitle),body);
-    previewBox.replaceChildren(...parts);previewBox.hidden=false;
+    const listenersBox=node('div',null,'active-preview-listeners-box');listenersBox.setAttribute('aria-live','polite');
+    previewBox.replaceChildren(node('p',TEXT.previewTitle),json,listenersBox,node('p',TEXT.payloadTitle),body);previewBox.hidden=false;
+    previewLinesSig=null;renderPreviewListeners();
   }
   function hidePreview(){preview=null;previewBox.hidden=true;previewBox.replaceChildren();}
   function edited(){if(preview!==null){hidePreview();if(phase==='idle')say(TEXT.stalePreview);}render();}
@@ -231,9 +239,10 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
         const yes=button(TEXT.yes,'active-cancel-yes-'+r.id,'active-cancel-yes'),no=button(TEXT.no,'active-cancel-no-'+r.id,'active-cancel-no');
         yes.disabled=cancelPending.has(r.id);
         yes.onclick=async()=>{if(cancelPending.has(r.id))return;cancelPending.add(r.id);renderFeed();
+          rowNodes.get(r.id)?.focus({preventScroll:true});             // the disabled "yes" cannot keep focus while pending
           try{await withTimeout(api.cancel(r.id,sendTimeoutMs));if(!disposed)say(TEXT.cancelSent);}
           catch(e){if(!disposed)say(classifyFailure(e)==='denied'?TEXT.cancelDenied:TEXT.cancelUnconfirmed);}
-          finally{cancelPending.delete(r.id);confirming.delete(r.id);renderFeed();doc.getElementById('active-cancel-'+r.id)?.focus();}};
+          finally{cancelPending.delete(r.id);confirming.delete(r.id);renderFeed();focusAfterCancel(r.id);}};
         no.onclick=()=>{confirming.delete(r.id);renderFeed();doc.getElementById('active-cancel-'+r.id)?.focus();};
         box.append(node('p',TEXT.confirmCancel,'active-confirm-text'),yes,no);
       }else{const b=button(TEXT.cancel,'active-cancel-'+r.id,'active-cancel-btn');b.onclick=()=>{confirming.add(r.id);renderFeed();doc.getElementById('active-cancel-yes-'+r.id)?.focus();};
@@ -241,6 +250,8 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
       li.append(box);
     }
   }
+  // After a cancel attempt: the row's cancel button if it is still offered, else the row itself (tabindex -1), else the result line.
+  function focusAfterCancel(id){const target=doc.getElementById('active-cancel-'+id)??rowNodes.get(id)??result;target?.focus?.({preventScroll:true});}
   const sigOf=r=>JSON.stringify([r.status,r.dispatchedBy===uid,r.timestamp,r.payload,r.targets,r.progress,cancelPending.has(r.id),confirming.has(r.id)]);
   function rowFor(r){
     let li=rowNodes.get(r.id);if(!li){li=node('li',null,'active-row');li.dataset.id=r.id;li.tabIndex=-1;rowNodes.set(r.id,li);}
@@ -268,9 +279,10 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     feedList.querySelector('.active-empty')?.remove();
     list.forEach((r,i)=>{const li=rowFor(r);if(feedList.children[i]!==li)feedList.insertBefore(li,feedList.children[i]??null);});
     if(!list.length&&feedState==='live')feedList.replaceChildren(node('li',TEXT.none,'active-empty'));
+    else if(!list.length&&feedState==='idle'&&uid)feedList.replaceChildren(node('li',TEXT.loading,'active-empty active-loading'));   // before the first snapshot
     renderState();
   }
-  function refreshAll(){if(disposed)return;const list=orderTasks(rows);for(const r of list){const li=rowNodes.get(r.id);if(li)refreshLive(li,r);}renderState();}
+  function refreshAll(){if(disposed)return;const list=orderTasks(rows);for(const r of list){const li=rowNodes.get(r.id);if(li)refreshLive(li,r);}renderState();renderPreviewListeners();}
   const notify=()=>{for(const fn of changeFns){try{fn();}catch{}}};
   function startFeed(){
     if(stopFeed||!uid)return;
@@ -306,8 +318,9 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     // Agent card liveness line (Codex/Grok/Gemini): אין מאזין / מנותק / מאזין, or "לא ידוע (אין חיבור)" when the
     // listener stream failed — never "אין מאזין" for an unknown state.
     listenerStatus:{
-      text(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);return pair&&uid?TEXT.listenerPrefix+listenerText(seen[pair[1]],now(),listenersKnown()):null;},
-      state(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);return pair&&uid?listenerState(seen[pair[1]],now(),listenersKnown()):null;},
+      text(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;
+        return TEXT.listenerPrefix+(listenersState==='idle'?TEXT.loading:listenerText(seen[pair[1]],now(),listenersKnown()));},
+      state(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;return listenersState==='idle'?'loading':listenerState(seen[pair[1]],now(),listenersKnown());},
       onChange(fn){changeFns.add(fn);return()=>changeFns.delete(fn);}
     },
     setIdentity(user){
