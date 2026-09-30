@@ -32,5 +32,31 @@ const result = await new Promise(resolve => {
 // exits zero must not turn an escaped-network attempt into a passing suite.
 const poison = path.join(evidence, 'violations.log');
 const violations = fs.existsSync(poison) && fs.statSync(poison).size > 0;
+if (violations) {
+  // Bounded categories only: never broadcast ledger metadata, paths or argv.
+  const known = new Set(['implicit-child-shell', 'unapproved-child-executable',
+    'unapproved-posix-shell-command', 'unapproved-shell-command', 'child-stripped-containment',
+    'external-dns', 'external-dns-query', 'external-resolver-query', 'socket-path-not-authorized',
+    'git-command-not-readonly', 'browser-without-containment-proxy', 'unapproved-shell-exec']);
+  let fd;
+  try {
+    fd = fs.openSync(poison, 'r');
+    const buffer = Buffer.alloc(16384);
+    const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const lines = buffer.subarray(0, size).toString('utf8').split('\n');
+    lines.pop(); // Ignore an incomplete final line, including a truncated record.
+    const categories = new Set();
+    for (const line of lines.slice(0, 32)) {
+      try {
+        const reason = JSON.parse(line).reason;
+        const token = typeof reason === 'string' ? reason.split(' ')[0] : '';
+        categories.add(known.has(token) ? token : 'unknown');
+      } catch { categories.add('unknown'); }
+    }
+    console.log('Containment violation categories:', JSON.stringify([...categories]));
+    if (size === buffer.length || lines.length > 32) console.log('Containment diagnostics truncated');
+  } catch { console.log('Containment diagnostics unavailable'); }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
 console.log('Contained gate result:', JSON.stringify({ gate, ...result, violations }));
 process.exitCode = result.code || (violations ? 1 : 0);

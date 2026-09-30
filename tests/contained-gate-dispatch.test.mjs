@@ -21,6 +21,8 @@ fs.writeFileSync(process.env.RESQ_DISPATCH_CAPTURE,JSON.stringify({
 }));
 if(process.env.RESQ_DISPATCH_POISON==='yes'){
  fs.appendFileSync(path.join(process.env.RESQ_CONTAINMENT_DIR,'violations.log'),JSON.stringify({pid:process.pid,reason:'synthetic-dispatch-proof'})+'\\n');
+ fs.appendFileSync(path.join(process.env.RESQ_CONTAINMENT_DIR,'violations.log'),JSON.stringify({pid:process.pid,reason:'child-stripped-containment executable=PRIVATE_VALUE'})+'\\n');
+ fs.appendFileSync(path.join(process.env.RESQ_CONTAINMENT_DIR,'violations.log'),'x'.repeat(20000)+'PRIVATE_TAIL');
  // Bypass the child guard's own exit wrapper so only the real parent ledger
  // check can turn this otherwise successful process into a failed gate.
  process.reallyExit(0);
@@ -84,6 +86,9 @@ test('real supervisor rejects sticky poison even when child truly exits zero', (
   assert.equal(result.status,1,result.stderr);
   assert.match(result.stdout,/"code":0/);
   assert.match(result.stdout,/"violations":true/);
+  assert.match(result.stdout,/Containment violation categories: \["unknown","child-stripped-containment"\]/);
+  assert.match(result.stdout,/Containment diagnostics truncated/);
+  assert.doesNotMatch(result.stdout,/PRIVATE_VALUE|PRIVATE_TAIL|synthetic-dispatch-proof/);
   const ledger = fs.readFileSync(path.join(capture.evidence,'violations.log'),'utf8');
   assert.match(ledger,/synthetic-dispatch-proof/);
 });
