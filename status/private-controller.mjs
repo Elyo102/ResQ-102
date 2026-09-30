@@ -28,6 +28,22 @@ export function heartbeatLive(heartbeatAt, now, wasLive=false) {
   return age <= LIVE_ENTER_MS || (wasLive === true && age <= LIVE_EXIT_MS);
 }
 
+// Display order is NEWEST FIRST. The source query is already orderBy('createdAt','desc') + limit(50)
+// (firebase-adapter.mjs); the controller re-sorts a COPY so display never depends on arrival order.
+// Numeric comparison only: Number(new Date(at)) descending, then the UUID's numeric value descending as
+// a deterministic tiebreak (no string or locale-aware comparisons). Rows whose `at` is not finite are
+// dropped here; in practice batch() already refuses such a batch as a schema violation, so the
+// renderer's '—' stamp only appears on its per-row render-failure fallback.
+const timeOf=e=>Number(new Date(e?.at));
+const idKey=e=>typeof e?.id==='string'&&uuid.test(e.id)?BigInt('0x'+e.id.replaceAll('-','')):-1n;
+export function compareNewestFirst(a,b){
+  const x=timeOf(a),y=timeOf(b);if(x!==y)return y-x;
+  const i=idKey(a),j=idKey(b);return i===j?0:i>j?-1:1;
+}
+export function newestFirst(list){return (Array.isArray(list)?list:[]).filter(e=>Number.isFinite(timeOf(e))).sort(compareNewestFirst);}
+// Explicit maximum by time (same tiebreak): card state never depends on array position.
+export function latestEvent(list){let best;for(const e of list)if(Number.isFinite(timeOf(e))&&(best===undefined||compareNewestFirst(e,best)<0))best=e;return best;}
+
 export function createPrivateController({ subscribe, render, now=Date.now,
   schedule=fn=>setInterval(fn,1000), cancel=clearInterval }) {
   if (typeof subscribe!=='function' || typeof render!=='function') throw Error('INVALID_ADAPTER');
@@ -40,7 +56,7 @@ export function createPrivateController({ subscribe, render, now=Date.now,
     const agents=names.map(agent=>{
       const own=events.filter(e=>e.agent===agent);
       const heartbeats=own.filter(e=>e.kind==='heartbeat');
-      const heartbeat=heartbeats.at(-1);
+      const heartbeat=latestEvent(heartbeats);
       const live=phase==='connected' && t!==null && heartbeat!==undefined && heartbeatLive(heartbeat.at,t,wasLive.get(agent)===heartbeat.at);
       if(live)wasLive.set(agent,heartbeat.at);else wasLive.delete(agent);
       const prior=lastBeat.get(agent);
@@ -48,11 +64,11 @@ export function createPrivateController({ subscribe, render, now=Date.now,
         taskFloor.set(agent,Math.max(taskFloor.get(agent)||sessionStart,prior+90000));
       }
       if(heartbeat && (prior===undefined||heartbeat.at>prior))lastBeat.set(agent,heartbeat.at);
-      const lifecycle=own.filter(e=>['task_started','task_completed','task_failed'].includes(e.kind) && e.at>=Math.max(sessionStart,taskFloor.get(agent)||0)).at(-1);
+      const lifecycle=latestEvent(own.filter(e=>['task_started','task_completed','task_failed'].includes(e.kind) && e.at>=Math.max(sessionStart,taskFloor.get(agent)||0)));
       return {agent,status:!live?'DISCONNECTED':lifecycle?.kind==='task_started'?'RUNNING':'CONNECTED',
         task:live && lifecycle?.kind==='task_started'?lifecycle.task:null};
     });
-    render({phase,agents,events:events.map(e=>({...e})),refresh,clockSkew:skewDropped>0});
+    render({phase,agents,events:newestFirst(events).map(e=>({...e})),refresh,clockSkew:skewDropped>0});
   }
   function reset(next) {
     revision++;const unsubscribe=detach;detach=null;events=[];skewDropped=0;lastBeat.clear();taskFloor.clear();wasLive.clear();phase=next;
@@ -73,7 +89,7 @@ export function createPrivateController({ subscribe, render, now=Date.now,
     });
     // Timing-only violation: drop just the row whose stamp is beyond the future-skew bound.
     const kept=clean.filter(x=>!(x.at>t+MAX_FUTURE_SKEW_MS));
-    return {events:kept.sort((a,b)=>a.at-b.at||a.id.localeCompare(b.id)),dropped:clean.length-kept.length};
+    return {events:newestFirst(kept),dropped:clean.length-kept.length};
   }
   function connect() {
     if(disposed||!visible||!owner(identity))return;

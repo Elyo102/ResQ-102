@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch2';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch3';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
@@ -78,11 +78,57 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
   const controls=node('div',null,'controls');controls.append(login,logout,pause,clear);
   const cards=node('section',null,'agents');cards.setAttribute('aria-label','מצב הסוכנים');
   const log=node('div',null,'private-terminal');log.id='private-terminal';log.setAttribute('role','log');log.setAttribute('aria-live','off');log.tabIndex=0;
+  // The browser's own scroll anchoring is disabled so the manual correction below is the only mechanism
+  // (iOS Safari has no overflow-anchor); set via CSSOM, never a style attribute.
+  log.style.overflowAnchor='none';
   const hint=node('p','ניקוי והשהיה משפיעים על התצוגה בלבד. אין כאן שליטה מרחוק על הסוכנים.','hint');
+  // Announces only ids never seen before, once per data update, and never on the initial load.
+  // Visually hidden via CSSOM; lives outside the log (the log itself stays aria-live=off).
+  const eventsLive=node('p','','private-events-live');eventsLive.id='private-events-live';eventsLive.setAttribute('aria-live','polite');eventsLive.setAttribute('aria-atomic','true');
+  Object.assign(eventsLive.style,{position:'absolute',width:'1px',height:'1px',margin:'-1px',padding:'0',overflow:'hidden',clipPath:'inset(50%)',whiteSpace:'nowrap',border:'0'});
   const panel=dispatchPanel?.element??null;if(panel)panel.hidden=true;
-  root.replaceChildren(...[title,message,controls,panel,cards,log,hint].filter(Boolean));
+  root.replaceChildren(...[title,message,controls,panel,cards,log,eventsLive,hint].filter(Boolean));
   let state=null,paused=false,hidden=new Set(),disposed=false,actionVersion=0,actionNotice=null;
   const stamp=ms=>renderStamp(doc,ms);
+  // Keyed log: one element per event id; rows are inserted/removed individually, never a full replacement.
+  const rows=new Map(),seen=new Set();let primed=false,emptyNode=null;
+  const signature=e=>`${e.agent}|${e.kind}|${e.task}|${e.at}`;
+  function rowFor(e){
+    // One malformed row must never break the rest of the log.
+    let row;
+    try{row=node('div',null,'entry');row.dataset.agent=e.agent;
+      row.append(stamp(e.at),node('strong',e.agent),node('span',`${kindText[e.kind]??'אירוע'} · ${taskLabel(e.task)}`));}
+    catch{row=node('div',null,'entry');row.append(stamp(null),node('span','אירוע לא ניתן להצגה'));}
+    row.dataset.id=e.id;return row;
+  }
+  function clearLog(){log.replaceChildren();rows.clear();emptyNode=null;}
+  function renderLog(events,phase){
+    const visible=events.filter(e=>!hidden.has(e.id)),keep=new Map(visible.map(e=>[e.id,e]));
+    const scrollTop0=log.scrollTop;
+    for(const [id,r] of rows){const e=keep.get(id);
+      if(!e){r.el.remove();rows.delete(id);} // includes the oldest row dropping off the bottom at the cap
+      else if(r.sig!==signature(e)){const el=rowFor(e);r.el.replaceWith(el);rows.set(id,{el,sig:signature(e)});}}
+    if(visible.length&&emptyNode){emptyNode.remove();emptyNode=null;}
+    const k=visible.findIndex(e=>rows.has(e.id));
+    const add=e=>{const el=rowFor(e);rows.set(e.id,{el,sig:signature(e)});return el;};
+    if(k<0){for(const e of visible)log.append(add(e));}
+    else{
+      // Rows newer than the first kept row go on top. Measure scrollHeight around that insert and, when the
+      // reader is scrolled down (scrollTop>0), shift scrollTop by the delta so the visible rows stay put.
+      const h0=log.scrollHeight,first=rows.get(visible[k].id).el;
+      for(const e of visible.slice(0,k))first.before(add(e));
+      const delta=log.scrollHeight-h0;
+      if(scrollTop0>0&&delta!==0)log.scrollTop=scrollTop0+delta;
+      let ref=first;
+      for(const e of visible.slice(k+1)){const el=rows.get(e.id)?.el??add(e);if(ref.nextElementSibling!==el)ref.after(el);ref=el;}
+    }
+    if(!visible.length&&!emptyNode){emptyNode=node('p','אין אירועים להצגה');log.append(emptyNode);}
+    if(phase!=='connected')return;
+    const fresh=events.filter(e=>!seen.has(e.id));for(const e of events)seen.add(e.id);
+    if(!primed){primed=true;return;}
+    const shown=fresh.filter(e=>!hidden.has(e.id));
+    if(shown.length)eventsLive.textContent=shown.length===1?`אירוע חדש: ${shown[0].agent} · ${kindText[shown[0].kind]??'אירוע'}`:`${shown.length} אירועים חדשים`;
+  }
   const panelIdentity=user=>{try{dispatchPanel?.setIdentity(user);}catch{if(panel)panel.hidden=true;}};
   function renderCards(agents){
     cards.replaceChildren();
@@ -97,16 +143,11 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null}){
     login.hidden=allowed;logout.hidden=!allowed;pause.hidden=!allowed;clear.hidden=!allowed;
     // Periodic refresh re-renders the agent status cards only; the log is rebuilt only for new data.
     if(statusOnly){if(allowed)renderCards(next.agents);return;}
-    cards.replaceChildren();log.replaceChildren();
-    if(!allowed){hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
+    if(!allowed){cards.replaceChildren();clearLog();seen.clear();primed=false;eventsLive.textContent='';hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
     hidden=new Set([...hidden].filter(id=>next.events.some(e=>e.id===id)));
     renderCards(next.agents);
-    for(const e of next.events){if(hidden.has(e.id))continue;
-      // One malformed row must never break the rest of the log.
-      try{const row=node('div',null,'entry');row.dataset.agent=e.agent;
-        row.append(stamp(e.at),node('strong',e.agent),node('span',`${kindText[e.kind]??'אירוע'} · ${taskLabel(e.task)}`));log.append(row);}
-      catch{const row=node('div',null,'entry');row.append(stamp(null),node('span','אירוע לא ניתן להצגה'));log.append(row);}}
-    if(!log.childElementCount)log.append(node('p','אין אירועים להצגה'));
+    // next.events arrives newest first from the controller (explicit numeric sort on a copy).
+    renderLog(next.events,next.phase);
   }
   const controller=createPrivateController({subscribe,render});
   const visibility=()=>controller.setVisible(!doc.hidden&&!paused);
