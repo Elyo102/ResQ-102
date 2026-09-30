@@ -53,3 +53,25 @@ button:focus-visible{outline:3px solid #7fdad6;outline-offset:3px}button:disable
 .active-stale{border:1px dashed #ffb4a8;border-radius:999px;padding:2px 8px;font-size:.8rem;color:#ffb4a8}.active-feed-stale .active-row{opacity:.8}
 .active-preview-listeners{margin:4px 0;padding-inline-start:20px;color:#ffd48a}.active-limit-live{margin:2px 0;font-size:.9rem;color:#b8c7dc}
 @media(max-width:760px){.active-fields{grid-template-columns:1fr}}
+/* Push trigger (UI review C1-C12): ack lines in the feed, kill-switch banner, owner clicks, card "אחרון:" line. */
+.active-kind{max-width:28rem}.active-kind-note{margin:4px 0;color:#ffd48a}
+.active-ack-switch{border:1px solid #617797;border-radius:10px;padding:10px;margin:8px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:8px}
+.active-ack-switch>p{grid-column:1/-1;margin:2px 0}.active-ack-switch[data-state="off"],.active-ack-switch[data-state="missing"]{border-color:#ffb4a8;background:#2a1620}
+.active-ack-switch[data-state="off"] .active-ack-switch-text,.active-ack-switch[data-state="missing"] .active-ack-switch-text{color:#ffd0c8;font-weight:600}
+.active-ack-confirm{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px}.active-ack-confirm p{grid-column:1/-1;margin:2px 0}
+.active-acks{display:flex;flex-direction:column;gap:6px;margin:6px 0;min-width:0}
+.active-ack{border:1px solid #405371;border-inline-start:4px solid #617797;border-radius:8px;padding:6px 8px;min-width:0;max-width:100%}
+.active-ack[data-kind="understood"]{border-inline-start-color:#75e2d4}.active-ack[data-kind="unreadable"],.active-ack[data-kind="lit_no_answer"],.active-ack[data-kind="no_ack"]{border-inline-start-color:#ffb4a8}
+.active-ack[data-kind="lit"]{border-inline-start-color:#ffd48a}.active-ack[data-stale="true"]{opacity:.8;border-style:dashed}
+.active-ack-head{margin:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.active-ack-frame{margin:2px 0;font-size:.85rem;color:#ffd48a}
+.active-ack-summary{margin:4px 0;padding:4px 10px;border-inline-start:3px solid #617797;color:#dfe8f7;font-style:italic;min-width:0}
+.active-ack-summary .clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere;word-break:normal;white-space:normal}
+.active-ack-summary .clamp.clamp-open{display:block;-webkit-line-clamp:unset;line-clamp:none;overflow:visible}
+.active-tasks .active-ack-expand{width:auto;min-width:44px;min-height:44px;padding:6px 12px;font-size:.85rem}
+.active-ack-go{margin:2px 0;font-size:.85rem;color:#b8c7dc}
+.active-owner{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px;margin:6px 0}
+.active-chip[data-kind="notify"]{border-style:dotted;color:#b8c7dc}
+.agent-ack{margin:2px 0 0;font-size:.85rem}.agent-ack a{color:#9bbfff;overflow-wrap:anywhere}.agent-ack[data-stale="true"] a{color:#b8c7dc}
+@media (prefers-reduced-motion:no-preference){.active-ack.ack-changed{animation:ack-flash 1.2s ease-out 2}}
+@keyframes ack-flash{0%{box-shadow:0 0 0 3px #75e2d4}100%{box-shadow:0 0 0 0 transparent}}

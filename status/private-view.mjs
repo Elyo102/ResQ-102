@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch4';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch6';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
@@ -135,15 +135,29 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
   }
   const panelIdentity=user=>{try{dispatchPanel?.setIdentity(user);}catch{if(panel)panel.hidden=true;}
     try{activeTasksPanel?.setIdentity(user);}catch{if(tasksPanel)tasksPanel.hidden=true;}};
+  // UI 25572dc minor: the cards are rebuilt only when what they show changed (keeps focus on the "אחרון:" link).
+  let cardsSig=null;
   function renderCards(agents){
+    const safe=f=>{try{return f();}catch{return null;}};
+    const sig=JSON.stringify(agents.map(a=>[a.agent,a.status,detailText(a),safe(()=>listenerStatus?.text(a.agent)??null),safe(()=>listenerStatus?.state?.(a.agent)??null),safe(()=>listenerStatus?.ackLine?.(a.agent)??null)]));
+    if(sig===cardsSig&&cards.childElementCount)return;cardsSig=sig;
+    // UI delta 536d253 (LOW): if the "אחרון:" link had focus, give it back to the same agent's new link after the rebuild.
+    const act=doc.activeElement;const focusAgent=act&&cards.contains(act)&&act.closest('.agent-ack')?act.closest('.agent')?.dataset.agent??null:null;
     cards.replaceChildren();
-    for(const a of agents){const card=node('article',null,'agent');const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
+    for(const a of agents){const card=node('article',null,'agent');card.dataset.agent=a.agent;const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
       let line=null;try{line=listenerStatus?.text(a.agent)??null;}catch{line=null;}
       if(typeof line==='string'&&line){
         // With a task-listener line present, the telemetry status is labelled as CI so the two are not confused.
         const row=node('div',null,'agent-status-row');row.append(node('span','CI:','agent-source'),status);
         const p=node('p',line,'agent-listener');p.dataset.listener=listenerStatus.state?.(a.agent)??'';
         card.append(node('h2',a.agent),row,node('small',detailText(a)),p);
+        // C1: only the target card gets ONE more line (latest ack state + task time), linked to its feed row.
+        let ack=null;try{ack=listenerStatus.ackLine?.(a.agent)??null;}catch{ack=null;}
+        if(ack&&typeof ack.text==='string'&&typeof ack.href==='string'){
+          const l=node('p',null,'agent-ack');l.dataset.kind=ack.kind??'';l.dataset.stale=String(ack.stale===true);
+          const link=node('a',ack.text);link.href=ack.href;link.onclick=e=>{e.preventDefault();try{listenerStatus.focusRow?.(ack.rowId);}catch{}};
+          l.append(link);card.append(l);if(focusAgent===a.agent)queueMicrotask(()=>link.focus({preventScroll:true}));
+        }
       }else card.append(node('h2',a.agent),status,node('small',detailText(a)));
       cards.append(card);}
   }
@@ -155,7 +169,7 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
     login.hidden=allowed;logout.hidden=!allowed;pause.hidden=!allowed;clear.hidden=!allowed;
     // Periodic refresh re-renders the agent status cards only; the log is rebuilt only for new data.
     if(statusOnly){if(allowed)renderCards(next.agents);return;}
-    if(!allowed){cards.replaceChildren();clearLog();seen.clear();primed=false;eventsLive.textContent='';hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
+    if(!allowed){cards.replaceChildren();cardsSig=null;clearLog();seen.clear();primed=false;eventsLive.textContent='';hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
     hidden=new Set([...hidden].filter(id=>next.events.some(e=>e.id===id)));
     renderCards(next.agents);
     // next.events arrives newest first from the controller (explicit numeric sort on a copy).
