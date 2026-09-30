@@ -2,3 +2,5 @@
 control-plane/firestore.rules -text
 control-plane/deploy/firestore.dispatch.rules -text
 control-plane/deploy/firestore.control-plane.rules -text
+# Vendored googleapis protos are verified byte-for-byte (listener/protos/protos.sha256.json): never convert line endings.
+control-plane/listener/protos/** -text

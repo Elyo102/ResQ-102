@@ -18,6 +18,8 @@ import {createCredentialStore} from './listener/credential-store.mjs';
 import {PROJECT,SafeError,FATAL_AUTH} from './listener/listener-auth.mjs';
 import {FIRESTORE_URL} from './listener/firestore-rest.mjs';
 import {HEARTBEAT_MS} from './task-listener.mjs';
+// Source files are read LF-normalized: a Windows checkout (core.autocrlf=true) must pass the same static checks.
+const readSrc=u=>readFileSync(u,'utf8').replace(/\r\n/g,'\n');
 
 const ID='3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e';
 const DB=`projects/${PROJECT}/databases/(default)`;
@@ -309,13 +311,13 @@ test('summarizer: rate limit 6/min + 100/day; circuit breaker 3 failures -> 10 m
 test('protos: vendored at the pinned googleapis commit, every sha256 verified; production target is firestore.googleapis.com:443 with proxies disabled',()=>{
   const m=verifyProtos();assert.equal(m.commit,PROTO_COMMIT);assert.equal(Object.keys(m.files).length,18);
   assert.equal(PRODUCTION_TARGET,'firestore.googleapis.com:443');assert.equal(CHANNEL_OPTIONS['grpc.enable_http_proxy'],0);
-  const pkg=JSON.parse(readFileSync(new URL('./package.json',import.meta.url),'utf8'));
+  const pkg=JSON.parse(readSrc(new URL('./package.json',import.meta.url)));
   assert.deepEqual(pkg.dependencies,{'@grpc/grpc-js':'1.14.5','@grpc/proto-loader':'0.8.1'},'exact pins');
-  const lock=JSON.parse(readFileSync(new URL('./package-lock.json',import.meta.url),'utf8'));
+  const lock=JSON.parse(readSrc(new URL('./package-lock.json',import.meta.url)));
   assert.equal(lock.packages['node_modules/@grpc/grpc-js'].version,'1.14.5');assert.equal(lock.packages['node_modules/@grpc/proto-loader'].version,'0.8.1');
   // Only protobufjs declares an install script; it never runs: control-plane/.npmrc sets ignore-scripts=true and the
   // documented install is `npm ci --ignore-scripts`.
   assert.deepEqual(Object.entries(lock.packages).filter(([k,v])=>k&&v.hasInstallScript).map(([k])=>k),['node_modules/protobufjs']);
-  assert.match(readFileSync(new URL('./.npmrc',import.meta.url),'utf8'),/^ignore-scripts=true$/m);
+  assert.match(readSrc(new URL('./.npmrc',import.meta.url)),/^ignore-scripts=true$/m);
   for(const [k,v] of Object.entries(lock.packages))if(k){assert.match(v.resolved,/^https:\/\/registry\.npmjs\.org\//,k);assert.match(v.integrity,/^sha512-/,k);}
 });

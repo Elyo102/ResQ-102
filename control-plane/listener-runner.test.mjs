@@ -15,6 +15,8 @@ import {createIdentityAdmin} from './listener/identity-admin.mjs';
 import {provisionListener,parseProvisionArgs,listenerEmail} from './provision-listener.mjs';
 import {startRunner,parseRunnerArgs,EXIT,MAX_POLL_FAILURES} from './task-listener-run.mjs';
 import {HEARTBEAT_MS} from './task-listener.mjs';
+// Source files are read LF-normalized: a Windows checkout (core.autocrlf=true) must pass the same static checks.
+const readSrc=u=>readFileSync(u,'utf8').replace(/\r\n/g,'\n');
 
 const UID='listenerUid123';const NOW=1790000000000;const S=Math.floor(NOW/1000);
 const code=c=>e=>e instanceof SafeError&&e.code===c;
@@ -371,7 +373,7 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
   const HOSTS=['securetoken.googleapis.com','www.googleapis.com','firestore.googleapis.com','identitytoolkit.googleapis.com','securetoken.google.com'];
   const LLM_HOSTS=['api.x.ai','api.openai.com'];
   for(const [f,allow] of Object.entries(files)){
-    const src=readFileSync(new URL('./'+f,import.meta.url),'utf8');const code=src.replace(/^\s*\/\/.*$/gm,'');
+    const src=readSrc(new URL('./'+f,import.meta.url));const code=src.replace(/^\s*\/\/.*$/gm,'');
     assert.doesNotMatch(code,/\beval\s*\(|new Function|Function\s*\(|\bimport\s*\(|console\.|require\s*\(\s*['"]|marked|markdown/,f);
     if(!allow.spawn)assert.doesNotMatch(code,/child_process|\bspawn|\bexec(?:Sync|File)?\s*\(/,f);
     if(!allow.env)assert.doesNotMatch(code,/process\.env/,f);
@@ -384,28 +386,28 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
     if(!allow.llm&&!allow.llmName)for(const h of LLM_HOSTS)assert.ok(!code.includes(h),f+' never names '+h);
   }
   // one host per agent (key condition): Grok -> api.x.ai, Codex -> api.openai.com, nothing for Gemini
-  const summ=readFileSync(new URL('./listener/summarizer.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  const summ=readSrc(new URL('./listener/summarizer.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
   assert.match(summ,/Grok:Object\.freeze\(\{host:'api\.x\.ai',url:'https:\/\/api\.x\.ai\/v1\/chat\/completions'/);
   assert.match(summ,/Codex:Object\.freeze\(\{host:'api\.openai\.com',url:'https:\/\/api\.openai\.com\/v1\/responses'/);
   assert.doesNotMatch(summ,/Gemini:|generativelanguage/);
-  const store=readFileSync(new URL('./listener/credential-store.mjs',import.meta.url),'utf8');
+  const store=readSrc(new URL('./listener/credential-store.mjs',import.meta.url));
   assert.match(store,/LLM_HOSTS=Object\.freeze\(\{Grok:'api\.x\.ai',Codex:'api\.openai\.com'\}\)/);
   // gRPC transport: constant TLS target with default roots, no env proxy, insecure only in the emulator branch
-  const gt=readFileSync(new URL('./listener/grpc-transport.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  const gt=readSrc(new URL('./listener/grpc-transport.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
   assert.match(gt,/PRODUCTION_TARGET='firestore\.googleapis\.com:443'/);assert.match(gt,/grpc\.credentials\.createSsl\(\)/);
   assert.equal((gt.match(/createInsecure\(\)/g)||[]).length,1);assert.match(gt,/else if\(mode==='emulator'\)\{[^]*?if\(!EMULATOR_TARGETS\.includes\(emulatorHost\)\)fail\('EMULATOR_HOST_REJECTED'\);\s*target=emulatorHost;creds=grpc\.credentials\.createInsecure\(\);/);
   assert.match(gt,/'grpc\.enable_http_proxy':0/);assert.match(gt,/verifyProtos\(\);\s*const def=protoLoader\.loadSync/);
-  const ps=readFileSync(new URL('./listener/win-protect.mjs',import.meta.url),'utf8');
+  const ps=readSrc(new URL('./listener/win-protect.mjs',import.meta.url));
   assert.equal((ps.match(/spawnSync\(|spawn\(/g)||[]).length,1,'exactly one process start');assert.match(ps,/shell:false/);assert.doesNotMatch(ps,/shell:true/);
   assert.match(ps,/env:\{\.\.\.childEnv\}\}\);/,'the DPAPI helper always gets the minimal env');
-  const prov=readFileSync(new URL('./provision-listener.mjs',import.meta.url),'utf8');
+  const prov=readSrc(new URL('./provision-listener.mjs',import.meta.url));
   assert.deepEqual([...prov.matchAll(/process\.env\.([A-Z_]+)/g)].map(m=>m[1]),['APPDATA']);
   assert.match(prov,/minimalChildEnv\(process\.env\)/);assert.doesNotMatch(prov,/--llm-key[^\n]*argv|apiKey:args|args\.apiKey|args\.key\b/);
-  const scrub=readFileSync(new URL('./listener/env-scrub.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  const scrub=readSrc(new URL('./listener/env-scrub.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
   assert.doesNotMatch(scrub,/stdout|stderr|JSON\.stringify/,'never prints');
   assert.deepEqual([...scrub.matchAll(/(\S*)env\[name\]/g)].map(m=>m[0]),['env[name]'],'the only value access is delete env[name]');
   assert.match(scrub,/delete env\[name\]/);
-  const runnerSrc=readFileSync(new URL('./task-listener-run.mjs',import.meta.url),'utf8');
+  const runnerSrc=readSrc(new URL('./task-listener-run.mjs',import.meta.url));
   const runner=runnerSrc.replace(/^\s*\/\/.*$/gm,'');
   assert.match(runner,/async function main\(\)\{\n\s*const \{childEnv\}=scrubSecretEnv\(\);/,'CRITICAL: scrub is the FIRST statement of main');
   assert.match(runner,/createWindowsProtector\(\{baseEnv:childEnv\}\)/);
@@ -414,5 +416,5 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
   assert.doesNotMatch(runner,/fallback|listen=['"]poll['"]\s*;|listen='poll'(?!\?)/,'no automatic fallback to poll');
   assert.doesNotMatch(prov,/\.log\(|password['"]?\s*[:,]\s*password\b.*out|stdout\.write\([^)]*password/i);
   for(const f of ['task-listener-run.mjs','provision-listener.mjs','listener/firestore-rest.mjs','listener/firestore-listen.mjs','listener/summarizer.mjs','listener/grpc-transport.mjs'])
-    assert.doesNotMatch(readFileSync(new URL('./'+f,import.meta.url),'utf8'),/station-102|--force/,f);
+    assert.doesNotMatch(readSrc(new URL('./'+f,import.meta.url)),/station-102|--force/,f);
 });
