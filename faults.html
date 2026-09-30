@@ -15,7 +15,7 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h45">
+<link rel="stylesheet" href="./theme.css?v=42h46">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -445,13 +445,13 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h45';
-import { renderNav, renderStuckNav } from './nav.js?v=42h45';
-import { errorText, logError } from './error-text.js?v=42h45';
-import { MEMBER_ROLES } from './roles.js?v=42h45';
-import { initPWA } from './pwa.js?v=42h45';
-import { watchCallouts } from './callout.js?v=42h45';
-import { CREW_HE, plural } from './rotation.js?v=42h45';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h46';
+import { renderNav, renderStuckNav } from './nav.js?v=42h46';
+import { errorText, logError } from './error-text.js?v=42h46';
+import { MEMBER_ROLES } from './roles.js?v=42h46';
+import { initPWA } from './pwa.js?v=42h46';
+import { watchCallouts } from './callout.js?v=42h46';
+import { CREW_HE, plural } from './rotation.js?v=42h46';
 import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevColor,
          FAULT_STATES, stateHe, stateColor, isOpen, mergeFleet, vehicleState,
          UNSET, needsGrading, isDamage, damagesOf, hasDamage,
@@ -459,20 +459,20 @@ import { FAULT_KINDS, faultKind, kindHe, needsVehicle, SEVERITIES, sevHe, sevCol
          sortFaults, toKey, dmy, reportedLine, handoverFor, handoverBoard,
          vehicleReport, handoverId, acceptedLine, isTask, isNote,
          bySubject, subjectLog, subjectName, latestOf,
-         shrinkImage, createPhotoQueue } from './faults.js?v=42h45';
+         shrinkImage, createPhotoQueue } from './faults.js?v=42h46';
 import { managesFleet, vehicleEdit, deactivationPatch, reactivationPatch,
-         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h45';
+         applyToBoardVehicle, inactiveVehicles, atFor } from './fleet.js?v=42h46';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, addDoc,
          deleteDoc, serverTimestamp, runTransaction, query, orderBy, documentId, limit, startAfter }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h45';
+import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h46';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h45';
+import { initAppCheck } from './appcheck.js?v=42h46';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);

@@ -14,10 +14,17 @@ const text = value => typeof value === 'string' ? value : '';
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
   && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 
-function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestamp, clock = Date.now }) {
+function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestamp, clock = Date.now, readCourseMonth = null }) {
   if (!db || !auth || typeof auth.getUser !== 'function' || typeof HttpsError !== 'function') throw new TypeError('db, auth and HttpsError required');
   const identity = createOpsMemberIdentity({ db, HttpsError });
   const error = (code, message) => new HttpsError(code, message);
+  async function courseMonth(tx, ctx, p, month) {
+    return readCourseMonth ? readCourseMonth(tx, { sid: ctx.sid, uid: p.uid, emp: p.employee_number, month }) : null;
+  }
+  function courseRevision(base, course) {
+    return base && course && course.revision > 0
+      ? createHash('sha256').update(JSON.stringify(['hr-course-revision-v1', base, course.revision])).digest('hex') : base;
+  }
   function request(req, keys) {
     const ctx = identity.context(req);
     if (!ctx.super && ctx.role !== 'hr_coordinator') throw error('permission-denied', 'נדרשת הרשאת משאבי אנוש.');
@@ -170,7 +177,8 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
         ]);
         if (attendance.docs.length > 31) throw error('failed-precondition', 'נמצאו יותר מדי רשומות לחודש; נדרשת בדיקת הנתונים.');
         const value = projectEmployeeHours({ month: data.month, employee: p,
-          report: report.exists ? report.data() : null, attendance: attendance.docs.map(d => d.data()) });
+          report: report.exists ? report.data() : null, attendance: attendance.docs.map(d => d.data()),
+          course_month: await courseMonth(tx, ctx, p, data.month) });
         const tuple = snap => ({ id: snap.id, version: snap.updateTime
           ? { seconds: snap.updateTime.seconds, nanoseconds: snap.updateTime.nanoseconds } : null });
         let revision = null;
@@ -178,6 +186,7 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
           revision = createMonthRevision({ stationId: ctx.sid, uid: p.uid,
             employeeNumber: p.employee_number, month: data.month,
             report: report.exists ? tuple(report) : null, attendance: attendance.docs.map(tuple) });
+          revision = courseRevision(revision, value.course_month);
         } catch (e) {
           // Legacy noncanonical IDs remain readable, but cannot grant a revision.
           if (!(e instanceof TypeError)) throw e;
@@ -270,11 +279,13 @@ function createHrHoursService({ db, auth, HttpsError, hooks = {}, serverTimestam
         tx.get(root.collection('attendance').where('emp_number', '==', p.employee_number).where('month', '==', data.month).limit(32))
       ]);
       let revision = null;
+      const course = await courseMonth(tx, ctx, p, data.month);
       if (report.exists && rows.docs.length <= 31) {
         try {
-          projectEmployeeHours({ month: data.month, employee: p, report: report.data(), attendance: rows.docs.map(s => s.data()) });
+          projectEmployeeHours({ month: data.month, employee: p, report: report.data(), attendance: rows.docs.map(s => s.data()), course_month: course });
           const tuple = s => ({id:s.id,version:s.updateTime ? {seconds:s.updateTime.seconds,nanoseconds:s.updateTime.nanoseconds} : null});
           revision = createMonthRevision({stationId:ctx.sid,uid:p.uid,employeeNumber:p.employee_number,month:data.month,report:tuple(report),attendance:rows.docs.map(tuple)});
+          revision = courseRevision(revision, course);
         } catch (e) { if (!(e instanceof TypeError) && !(e instanceof HrHoursInputError)) throw e; }
       }
       // Replays retain live authorization but never read or charge the quota.

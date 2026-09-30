@@ -21,7 +21,7 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const { monthKey } = require('./hr-hours-model');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, stampReserveCalculationVersion, assertCourseDayCompatible } = require('./attendance-hours-calculator');
 const COLLECTIONS = Object.freeze({
   events: 'attendance_correction_events', receipts: 'attendance_correction_receipts',
   jobs: 'attendance_correction_notification_jobs'
@@ -41,7 +41,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const COMMON = ['target_uid', 'employee_number', 'month', 'reason', 'request_id'];
 
 function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
-  clock = Date.now, readConfig, calculate, monthAt, hooks = {} }) {
+  clock = Date.now, readConfig, calculate, monthAt, hooks = {}, readCourseMonth = null }) {
   if (!db || typeof db.runTransaction !== 'function' || !auth || typeof auth.getUser !== 'function'
     || [HttpsError, serverTimestamp, clock, readConfig, calculate, monthAt].some(v => typeof v !== 'function')) {
     throw new TypeError('Database, Auth, error/time and trusted calculation/config/month ports are required');
@@ -269,6 +269,10 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
           status: 'draft', shape: 'regular', start: '', end: '', end_day: 0, start2: '', end2: '', end_day2: 0,
           sub_station: '', notes: '', overtime_reason: '' }), ...(r.intent.rows[i].patch || {})
       });
+      const course = readCourseMonth ? await readCourseMonth(tx, { sid: r.ctx.sid, uid: r.intent.target_uid,
+        emp: r.intent.employee_number, month: r.intent.month }) : null;
+      try { prepared.forEach((v, i) => assertCourseDayCompatible(course, r.intent.rows[i].date, v)); }
+      catch (e) { fail('failed-precondition', e.message); }
       try { prepared.forEach((candidate, i) => assertReserveShiftTransition(candidate, before[i])); }
       catch (error) { fail('failed-precondition', error.message); }
       const config = r.intent.operation === 'delete' ? null : await readConfig(tx, {
@@ -279,8 +283,9 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
       // Calculators receive independent bounded values; mutation of their input
       // cannot alter the copied legacy record, request or the stored evidence.
       if (r.intent.operation === 'create' || r.intent.operation === 'update') {
-        try { prepared.forEach((v,i) => validateAttendanceEdit(v,before[i])); }
-        catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+        try { prepared.forEach((v,i) => { validateAttendanceEdit(v,before[i]); stampReserveCalculationVersion(v,before[i]); }); }
+        catch (e) { fail(e.code === 'failed-precondition' ? 'failed-precondition' : 'invalid-argument',
+          e.code === 'failed-precondition' ? e.message : 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
       }
       const outputs = prepared.map(v => v === null ? null : derived(structuredClone(v), structuredClone(config)));
       if (r.intent.operation === 'create' || r.intent.operation === 'update') {

@@ -13,6 +13,32 @@ const report = (patch = {}) => ({ uid: employee.uid, emp_number: '1001', month: 
   status: 'submitted', days: ['2026-09-01'], total_hours: 24, ...patch });
 const input = (patch = {}) => ({ month: '2026-09', employee, report: report(), attendance: [row()], ...patch });
 const rejects = (fn, code) => assert.throws(fn, e => e instanceof HrHoursInputError && e.code === code);
+test('HR course detail overlays full standard hours without doubling base attendance', () => {
+  const course = { month: '2026-09', owner_uid: employee.uid, revision: 3, periods: {}, days: {
+    '2026-09-01': { case_id: 'course_test', approval_revision: 2, credit_hours: 24.25 },
+    '2026-09-04': { case_id: 'course_test', approval_revision: 2, credit_hours: 24.25 }
+  } };
+  const base = row(), data = input({ attendance: [base], course_month: course,
+    report: report({ days: ['2026-09-01', '2026-09-04'], total_hours: 48.5 }) });
+  const result = project(data);
+  assert.equal(result.current_detail_total_hours, 48.5); assert.equal(result.rows.length, 2);
+  assert.equal(result.rows[0].day_type, 'course'); assert.equal(result.rows[0].course_overlay, true);
+  assert.equal(base.day_type, 'regular'); assert.equal(base.hours, 24);
+  for (const key of ['start', 'end', 'start2', 'end2', 'site_name', 'notes', 'overtime_reason', 'reason']) {
+    assert.equal(typeof result.rows[1][key], 'string', 'virtual course row remains export-compatible: ' + key);
+  }
+  assert.equal(result.rows[1].end_day, null); assert.equal(result.rows[1].end_day2, null);
+  assert.deepEqual(result.warnings, []);
+});
+test('HR course projection rejects an invalid month, missing credit or absence conflict', () => {
+  for (const [date, credit, day_type] of [
+    ['2026-10-01', 24, 'regular'], ['2026-09-01', NaN, 'regular'], ['2026-09-01', 24, 'reserve']
+  ]) {
+    rejects(() => project(input({ attendance: [row({ day_type })], course_month: {
+      month: '2026-09', owner_uid: employee.uid, revision: 1, days: { [date]: { case_id: 'course_test', approval_revision: 1, credit_hours: credit } }
+    } })), 'invalid-course-credit');
+  }
+});
 
 for (const status of ['draft', 'submitted', 'approved']) test('real status without exists: ' + status, () => {
   assert.equal(project(input({ report: report({ status }) })).state, status);
@@ -123,7 +149,9 @@ test('source contract keeps date keys and persisted status ownership on the serv
   assert.match(client, /callMutateMyAttendanceMonth/);
   assert.doesNotMatch(client, /days:\s*saved/);
   assert.match(selfService, /r\.intent\.days\.length !== byDate\.size/);
-  assert.match(selfService, /days: r\.intent\.days\.map\(v => v\.date\), total_hours: Math\.round\(total \* 100\) \/ 100/);
+  assert.match(selfService, /projectCourseHours\(calculated, course\)/);
+  assert.match(selfService, /days: projection\.days\.map\(v => v\.date\), total_hours: projection\.total_hours/);
+  assert.match(selfService, /base_days: r\.intent\.days\.map\(v => v\.date\), course_revision: courseRevision/);
   assert.match(selfService, /status: 'draft'/);
   assert.ok(approvalService.includes("status: 'approved'"), 'approved is persisted only by the atomic server service');
 });

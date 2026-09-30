@@ -56,6 +56,7 @@ const hrRequestsModule = require('./hr-requests');
 const hrDocumentsModule = require('./hr-documents');
 const hrAttachmentServiceModule = require('./hr-attachment-service');
 const hrAttachmentsStorageModule = require('./hr-attachments-storage');
+const attendanceAttachmentsModule = require('./attendance-attachments');
 const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
@@ -69,6 +70,7 @@ const attendanceHoursCalculator = require('./attendance-hours-calculator');
 const attendanceCorrectionConfigModule = require('./attendance-correction-config');
 const attendanceCorrectionSupportModule = require('./attendance-correction-support');
 const attendanceSelfServiceModule = require('./attendance-self-service');
+const courseCreditModule = require('./attendance-course-credit');
 const personalLiveLabModule = require('./personal-live-lab');
 const joinCampaignContract = require('./join-campaign');
 const joinCampaignServiceModule = require('./join-campaign-service');
@@ -267,7 +269,9 @@ exports.getMaintenanceDashboard = onCall(MAINTENANCE_OPTIONS, req => maintenance
 exports.setMaintenanceMode = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.setMode(req));
 exports.runMaintenanceAnalysis = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.runAnalysis(req));
 exports.prepareMaintenanceHandoff = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.prepareHandoff(req));
-const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp() });
+const courseCredits = courseCreditModule.createCourseCreditService({ db, auth: admin.auth(), HttpsError });
+const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(), readCourseMonth: courseCredits.readCourseMonth });
+exports.getAttendanceCourseMonth = onCall({ enforceAppCheck: true, region: 'europe-west1' }, async req => courseCredits.context(req));
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));
 exports.getHrEmployeeReport = onCall({ enforceAppCheck: true }, async (req) => hrHours.getEmployeeMonth(req));
 // Compatibility name for cached clients. The implementation is deliberately
@@ -305,6 +309,7 @@ function getAttendanceCorrections() {
     db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
     readConfig: readAttendanceCorrectionConfig,
     calculate: attendanceHoursCalculator.calculateAttendanceDerived,
+    readCourseMonth: courseCredits.readCourseMonth,
     monthAt: jerusalemMonth
   });
   return attendanceCorrections;
@@ -317,7 +322,7 @@ function getAttendanceCorrectionSupport() {
   if (!attendanceCorrectionSupport) attendanceCorrectionSupport = attendanceCorrectionSupportModule
     .createAttendanceCorrectionSupport({
       db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
-      monthAt: jerusalemMonth
+      monthAt: jerusalemMonth, readCourseMonth: courseCredits.readCourseMonth
     });
   return attendanceCorrectionSupport;
 }
@@ -335,7 +340,7 @@ function getAttendanceSelfService() {
   if (!attendanceSelfService) attendanceSelfService = attendanceSelfServiceModule.createAttendanceSelfService({
     db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(),
     monthAt: jerusalemMonth, readConfig: readAttendanceCorrectionConfig,
-    calculate: attendanceHoursCalculator.calculateAttendanceDerived
+    calculate: attendanceHoursCalculator.calculateAttendanceDerived, readCourseMonth: courseCredits.readCourseMonth
   });
   return attendanceSelfService;
 }
@@ -346,7 +351,7 @@ exports.getMyAttendanceMonth = onCall(
   async req => measuredCostUsageRead('getMyAttendanceMonth', req, () => getAttendanceSelfService().readMonth(req)));
 exports.mutateMyAttendanceMonth = onCall(ATTENDANCE_CORRECTION_OPTIONS,
   async req => getAttendanceSelfService().mutateMonth(req));
-const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError });
+const hrRequests = hrRequestsModule.createHrRequests({ db, auth: admin.auth(), HttpsError, courseCredits });
 exports.createHrRequest = onCall({ enforceAppCheck: true }, async (req) => hrRequests.create(req));
 exports.listMyHrRequests = onCall({ enforceAppCheck: true }, async (req) => hrRequests.list(req));
 exports.listHrRequestsInbox = onCall({ enforceAppCheck: true, secrets: [RESQ_COST_USAGE_HASH_KEY] },
@@ -395,13 +400,15 @@ const HR_ATTACHMENT_OPTIONS = Object.freeze({ enforceAppCheck: true, region: 'eu
   timeoutSeconds: 120, memory: '512MiB', concurrency: 1, maxInstances: 3,
   serviceAccount: 'resq-hr-attachments@station-102.iam.gserviceaccount.com' });
 let hrAttachmentService;
+const attendanceAttachments = attendanceAttachmentsModule.createAttendanceAttachments({ db, auth: admin.auth(), HttpsError, monthAt: jerusalemMonth });
+exports.getAttendanceOrderContext = onCall({ enforceAppCheck: true, region: 'europe-west1' }, async req => attendanceAttachments.context(req));
 function getHrAttachmentService() {
   if (!hrAttachmentService) {
     const storage = hrAttachmentsStorageModule.createHrAttachmentsStorage({
       bucket: admin.storage().bucket(HR_PRIVATE_BUCKET)
     });
     hrAttachmentService = hrAttachmentServiceModule.createHrAttachmentService({
-      db, auth: admin.auth(), storage, HttpsError, requests: hrRequests, documents: hrDocuments
+      db, auth: admin.auth(), storage, HttpsError, requests: hrRequests, documents: hrDocuments, attendance: attendanceAttachments
     });
   }
   return hrAttachmentService;

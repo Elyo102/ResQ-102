@@ -1,0 +1,5 @@
+{
+  "reserveV2Admission": true,
+  "courseApprovalAdmission": true,
+  "attendanceOrderAdmission": true
+}

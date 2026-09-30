@@ -61,10 +61,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h45';
-import { attachModeChip } from './mode-bar.js?v=42h45';
-import { assertPresentationOnly } from './role-view.js?v=42h45';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h45';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h46';
+import { attachModeChip } from './mode-bar.js?v=42h46';
+import { assertPresentationOnly } from './role-view.js?v=42h46';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h46';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -499,7 +499,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   const reminderAllowed=!assertPresentationOnly(presentation)&&!['alerts.html','device-readiness.html'].includes(current)
     &&(claims.super===true||!!(claims.emp&&claims.stationId&&claims.role));
   window.__resqReminderContext={allowed:reminderAllowed};
-  import('./notification-reminder-entry.js?v=42h45').then(module=>module.configureNotificationReminder(window.__resqReminderContext)).catch(()=>{});
+  import('./notification-reminder-entry.js?v=42h46').then(module=>module.configureNotificationReminder(window.__resqReminderContext)).catch(()=>{});
 
   const old = document.getElementById('appNav');
   if (old) old.remove();
@@ -694,7 +694,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h45')
+  import('./mode-controller.js?v=42h46')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -902,7 +902,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h45')
+  import('./mode-controller.js?v=42h46')
     .then(module => module.stopModeController())
     .catch(() => {});
 }

@@ -96,7 +96,7 @@ const RESERVE_TTL_MS = 15 * 60 * 1000;
 
 const STATES = Object.freeze(['reserved', 'stored_pending', 'stored', 'cleaning', 'ready', 'failed']);
 const TERMINAL = Object.freeze(['ready', 'failed']);
-const PARENT_KINDS = Object.freeze(['request', 'document']);
+const PARENT_KINDS = Object.freeze(['request', 'document', 'attendance']);
 
 const FAILURE_CODES = Object.freeze([
   'quota-exceeded', 'parent-forbidden', 'parent-closed', 'parent-revision-changed',
@@ -485,6 +485,10 @@ function createHrAttachments(deps) {
         parent_kind: i.parent_kind, parent_id: i.parent_id,
         base_revision: i.base_revision, attachment_id
       }, eventIdOf(i.station_id, attachment_id, 'reserve'));
+      if (i.parent_kind === 'attendance') {
+        try { require('./hours-rollout-policy').assertAdmission('attendanceOrderAdmission', deps.rolloutPolicy); }
+        catch (e) { throw error('failed-precondition', e.message); }
+      }
       const ledger = ledgerOf(await tx.get(lRef));
       const rateSnap = await tx.get(qRef);
       await beforeWrites('reserve');

@@ -40,6 +40,7 @@ for (const name of Object.keys(mapping)) {
 
 const db = Object.freeze({ synthetic: 'db' });
 const auth = Object.freeze({ synthetic: 'auth' });
+const courseCredits = Object.freeze({ prepareDecision() { throw new Error('wiring must not execute course decisions'); } });
 class HttpsError extends Error {}
 const exports = {}, registered = [], calls = [], dependencies = [], required = [], measured = [];
 let authCalls = 0, failure = null;
@@ -50,7 +51,7 @@ const service = Object.fromEntries(Object.values(mapping).map(method => [method,
 }]));
 const moduleStub = { createHrRequests(deps) { dependencies.push(deps); return service; } };
 vm.runInNewContext(imports[0][0] + '\n' + registrations[0][0], {
-  db, HttpsError, exports, RESQ_COST_USAGE_HASH_KEY: 'synthetic-secret-binding',
+  db, HttpsError, exports, courseCredits, RESQ_COST_USAGE_HASH_KEY: 'synthetic-secret-binding',
   measuredCostUsageRead(name, request, operation) {
     measured.push({ name, request });
     return operation();
@@ -60,12 +61,13 @@ vm.runInNewContext(imports[0][0] + '\n' + registrations[0][0], {
   onCall(options, handler) { registered.push({ options, handler }); return handler; }
 }, { filename: 'actual-hr-requests-registration.js', timeout: 1000 });
 
-await check('actual module require and one factory receive exactly db, live Auth and HttpsError', () => {
+await check('actual module require and one factory receive exact db, live Auth, HttpsError and course service', () => {
   assert.deepEqual(required, ['./hr-requests']);
   assert.equal(authCalls, 1); assert.equal(dependencies.length, 1);
   const deps = dependencies[0];
-  assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db']);
+  assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'courseCredits', 'db']);
   assert.equal(deps.db, db); assert.equal(deps.auth, auth); assert.equal(deps.HttpsError, HttpsError);
+  assert.equal(deps.courseCredits, courseCredits);
 });
 await check('exactly the seven approved exports are registered with enforced App Check', () => {
   assert.deepEqual(Object.keys(exports).sort(), Object.keys(mapping).sort());

@@ -156,6 +156,45 @@ async function main() {
       row.approved_vacation_days, row.approved_extended_absence_days], [2, 5, 1, 3]);
   });
 
+  await test('valid courses are not malformed or absence days and never add report hours twice', async () => {
+    const w = world(); employee(w, 'u1', { hours: 212.5 });
+    absence(w, 'sick', 'u1', 'sick', '2026-09-10', '2026-09-12', 'approved');
+    for (const decision of ['pending', 'approved', 'rejected']) {
+      absence(w, 'course-' + decision, 'u1', 'course', '2026-09-01', '2026-09-30', decision);
+    }
+    await w.summary.build({ station_id: SID, month: MONTH });
+    const row = await rowOf(w, 'u1');
+    assert.equal(row.total_hours, 212.5);
+    for (const kind of module_.ABSENCE_KINDS) {
+      assert.equal(row['approved_' + kind + '_days'], kind === 'sick' ? 3 : 0);
+      assert.equal(row['pending_' + kind + '_days'], 0);
+    }
+    assert.equal(Object.hasOwn(row, 'approved_course_days'), false);
+    const out = await w.summary.read({ station_id: SID, month: MONTH });
+    assert.equal(out.sources.hr_requests, 4);
+    assert.equal(out.sources.hr_requests_malformed, 0);
+  });
+
+  await test('foreign or malformed courses remain malformed before absence exclusion', async () => {
+    const w = world(); employee(w, 'u1', { hours: 180 });
+    for (const [id, change] of [
+      ['foreign', { station_id: OTHER }], ['missing-owner', { owner_uid: '' }],
+      ['bad-schema', { schema: 'other' }], ['bad-range', { to_date: '2026-08-01' }]
+    ]) {
+      absence(w, id, 'u1', 'course', '2026-09-01', '2026-09-30', 'approved');
+      const key = 'stations/' + SID + '/hr_requests/' + id;
+      w.db._put(key, { ...w.db._get(key), ...change });
+    }
+    await w.summary.build({ station_id: SID, month: MONTH });
+    const out = await w.summary.read({ station_id: SID, month: MONTH });
+    assert.equal(out.sources.hr_requests_malformed, 4);
+    assert.equal(out.rows[0].total_hours, 180);
+    for (const kind of module_.ABSENCE_KINDS) {
+      assert.equal(out.rows[0]['approved_' + kind + '_days'], 0);
+      assert.equal(out.rows[0]['pending_' + kind + '_days'], 0);
+    }
+  });
+
   await test('two overlapping approved reports of the same kind are not counted twice', async () => {
     const w = world(); employee(w, 'u1', { hours: 180 });
     absence(w, 'a1', 'u1', 'sick', '2026-09-10', '2026-09-12', 'approved');

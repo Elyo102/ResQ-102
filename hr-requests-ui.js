@@ -1,18 +1,19 @@
-import { MEMBER_ROLES } from './roles.js?v=42h45';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h45';
-import { retroLabel } from './hours.js?v=42h45';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h45';
+import { MEMBER_ROLES } from './roles.js?v=42h46';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h46';
+import { retroLabel } from './hours.js?v=42h46';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h46';
+import { validateCourseSnapshot, renderCourseTimeline } from './course-timeline.js?v=42h46';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 /* אוצר הסוגים זהה לזה שבשרת. המסך אינו ממציא סוג משלו
  * ואינו מקבל סוג שאינו מוכר. דוחות שעות אינם סוג כאן: הם אינם
  * חיים ב-`hr_requests` בכלל, ולכן אין להם תיבה במסך הזה. */
-const KINDS = ['general', 'sick', 'reserve', 'vacation', 'extended_absence'];
-const DATED_KINDS = ['sick', 'reserve', 'vacation', 'extended_absence'];
+const KINDS = ['general', 'sick', 'reserve', 'vacation', 'extended_absence', 'course'];
+const DATED_KINDS = ['sick', 'reserve', 'vacation', 'extended_absence', 'course'];
 const DECISIONS = ['pending', 'approved', 'rejected'];
 const FINAL_DECISIONS = ['approved', 'rejected'];
 const KIND_LABELS = { general: 'פנייה כללית', sick: 'מחלה', reserve: 'מילואים',
-  vacation: 'חופשה', extended_absence: 'היעדרות ממושכת' };
+  vacation: 'חופשה', extended_absence: 'היעדרות ממושכת', course:'קורס' };
 const DECISION_LABELS = { pending: 'ממתין להכרעה', approved: 'אושר', rejected: 'נדחה' };
 const SENDING_LABEL = 'שולח…';
 /* ⭐ משפט הקבלה, במקום אחד.
@@ -23,7 +24,7 @@ const SENDING_LABEL = 'שולח…';
  * כבאי הביתה בהנחה שהוא משובץ — והוא משובץ. */
 const REPORT_RECEIPT = 'הדיווח התקבל במשאבי אנוש וממתין לטיפול. אפשר לצרף אישור עכשיו או בהמשך.';
 const BOXES = [['box-sick', 'sick'], ['box-reserve', 'reserve'], ['box-vacation', 'vacation'],
-  ['box-extended', 'extended_absence']];
+  ['box-extended', 'extended_absence'], ['box-course','course']];
 const BOX_KINDS = BOXES.map(([, kind]) => kind);
 /* ⭐ כותרות המונים — ושני הצירים נשארים נפרדים.
  *
@@ -66,6 +67,11 @@ const validReport = c => {
   if (typeof c.from_date !== 'string' || !DATE.test(c.from_date)
     || typeof c.to_date !== 'string' || !DATE.test(c.to_date) || c.to_date < c.from_date) return false;
   if (!DECISIONS.includes(c.decision)) return false;
+  if(kind==='course'&&c.decision==='approved'){
+    try{const snapshot=validateCourseSnapshot(c.course_snapshot);
+      if(snapshot.owner_uid!==c.owner_uid||snapshot.from_date!==c.from_date||snapshot.to_date!==c.to_date)return false;
+    }catch(_){return false;}
+  }
   return FINAL_DECISIONS.includes(c.decision)
     ? typeof c.decided_by === 'string' && !!c.decided_by && Number.isSafeInteger(c.decided_at_ms) && c.decided_at_ms > 0
     : !Object.hasOwn(c, 'decided_by') && !Object.hasOwn(c, 'decided_at_ms');
@@ -408,6 +414,9 @@ export function createHrRequestsUI(root, adapter = disconnected) {
     if (DATED_KINDS.includes(kindOf(selected))) {
       target.append(decisionTag(selected.decision));
       target.append(...reportLines());
+      if(kindOf(selected)==='course')target.append(selected.decision==='approved'
+        ?renderCourseTimeline(selected.course_snapshot)
+        :node('p','זיכוי שעות קורס נקבע רק לאחר אישור משאבי אנוש, לפי המשמרות המקוריות ושעות התקן הרשמיות.','requests-note'));
     }
     if (selected.status === 'closed') target.append(node('p', 'הפנייה סגורה. משאבי אנוש יכולים לפתוח אותה מחדש; אפשר גם ליצור פנייה חדשה.', 'requests-note'));
     for (const event of events) {

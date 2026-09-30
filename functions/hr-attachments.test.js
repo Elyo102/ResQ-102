@@ -351,7 +351,7 @@ function build(opts = {}) {
 
   let t = 1_000_000;
   const api = A.createHrAttachments({
-    db, storage, HttpsError: FakeHttpsError, session, ports,
+    db, storage, HttpsError: FakeHttpsError, session, ports, rolloutPolicy: opts.rolloutPolicy,
     clock: () => (opts.clock ? opts.clock() : (t += 1000)),
     hooks: opts.hooks || {}
   });
@@ -382,6 +382,34 @@ const base = (bytes = PDF, patch = {}) => ({
   ...patch
 });
 const withBytes = (bytes = PDF, patch = {}) => ({ ...base(bytes, patch), content_base64: bytes.toString('base64') });
+
+test('rollback denies fresh attendance orders without writes and retains existing file lifecycle', async () => {
+  const policy = { reserveV2Admission: true, courseApprovalAdmission: true, attendanceOrderAdmission: true };
+  const h = build({ rolloutPolicy: policy });
+  const input = base(PDF, { parent_kind: 'attendance' });
+  const reserved = await h.api.reserve(req(input));
+  policy.attendanceOrderAdmission = false;
+  const snapshot = () => structuredClone({ docs: [...h.docs], storage: [...h.storage.objects], calls: h.storage.calls, commits: h.state.commits });
+  const before = snapshot();
+  await assert.rejects(() => h.api.reserve(req({ ...input, request_id: 'rollback_new_order_001' })), e => e.code === 'failed-precondition');
+  assert.deepEqual(snapshot(), before);
+  assert.equal((await h.api.reserve(req(input))).attachment_id, reserved.attachment_id);
+  assert.equal((await h.api.resume(req({ attachment_id: reserved.attachment_id }))).state, 'reserved');
+  const uploaded = await h.api.upload(req(withBytes(PDF, { parent_kind: 'attendance' })));
+  assert.equal(uploaded.state, 'ready');
+  assert.equal((await h.api.reserve(req(input))).attachment_id, reserved.attachment_id);
+  assert.equal((await h.api.list(req({ parent_kind: 'attendance', parent_id: PARENT, cursor: null }))).items.length, 1);
+  const file = await h.api.download(req({ attachment_id: reserved.attachment_id }));
+  assert.deepEqual(Buffer.from(file.content_base64, 'base64'), PDF);
+});
+
+test('rollback attendance switch does not block request or document reservations', async () => {
+  const policy = { reserveV2Admission: false, courseApprovalAdmission: false, attendanceOrderAdmission: false };
+  for (const parent_kind of ['request', 'document']) {
+    const h = build({ rolloutPolicy: policy });
+    assert.equal((await h.api.reserve(req(base(PDF, { parent_kind })))).state, 'reserved');
+  }
+});
 
 const idOfDoc = h => [...h.docs.keys()].filter(k => k.includes('/hr_attachments/'))[0].split('/').pop();
 

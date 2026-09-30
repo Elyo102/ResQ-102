@@ -47,6 +47,35 @@ function head(t) { console.log('\n--- ' + t); }
 // קריאה, וספירת סוגריים בהערה אינה מבנה.
 const CODE = RULES.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
+// Closed create-only exception, not a generic allowance for variable-path reads.
+const COURSE_HELPER = `function noApprovedCourseCredit(sid) {
+  let key = request.resource.data.emp_number + '_' + request.resource.data.month;
+  let path = /databases/$(database)/documents/stations/$(sid)/attendance_course_credits/$(key);
+  return !exists(path) || (get(path).data.days is map
+    && !get(path).data.days.keys().hasAny([request.resource.data.date]));
+}`;
+const COURSE_CREATE = `allow create: if (approvedLeaveAttendanceCreate(sid, docId)
+  || validHistoricalImportCreate(sid, docId)) && noApprovedCourseCredit(sid);`;
+const compact = value => value.replace(/\s+/g, '');
+function courseReadContract(code) {
+  const helpers = [...code.matchAll(/function noApprovedCourseCredit\(sid\)\s*\{[^}]*\}/g)];
+  const attendance = code.indexOf('match /attendance/{docId}');
+  const create = attendance < 0 ? null : code.slice(attendance).match(/allow create:[^;]*;/)?.[0];
+  return helpers.length === 1 && compact(helpers[0][0]) === compact(COURSE_HELPER)
+    && create !== null && compact(create) === compact(COURSE_CREATE)
+    && (code.match(/noApprovedCourseCredit\s*\(/g) || []).length === 2;
+}
+if (!courseReadContract(CODE)) fail('Course create-only read contract changed');
+for (const [from, to] of [
+  ['attendance_course_credits/$(key)', 'attendance_course_credits/$(sid)'],
+  ["emp_number + '_'", "uid + '_'"],
+  ['!get(path).data.days.keys()', 'get(path).data.days.keys()'],
+  ['&& noApprovedCourseCredit(sid);', '|| noApprovedCourseCredit(sid);'],
+  ['&& noApprovedCourseCredit(sid);', ';']
+]) {
+  if (!CODE.includes(from) || courseReadContract(CODE.replace(from, to))) fail('Course read boundary mutation was not rejected', from);
+}
+
 // ------------------------------------------------------------------
 head('מבנה');
 // ------------------------------------------------------------------
@@ -138,7 +167,8 @@ head('אילוץ ארכיטקטוני');
   const currentTermsReads = CODE.split(
     'get(/databases/$(database)/documents/registration_terms_active/$(request.auth.uid))'
   ).length - 1;
-  if (gets.length === 27 && consentReads === 13 && currentTermsReads === 1 &&
+  const courseReads = courseReadContract(CODE) ? 3 : 0;
+  if (gets.length === 27 + courseReads && courseReads === 3 && consentReads === 13 && currentTermsReads === 1 &&
       replyParentReads.length === 1 && shadowParentReads.length === 1 &&
       liveUserReads.length === 2 && identityOperationReads.length === 3 &&
       approvedLeaveReads.length === 1 && calloutParentReads.length === 1 && historicalUserReads === 2 &&
@@ -157,8 +187,10 @@ head('אילוץ ארכיטקטוני');
   const source = fs.readFileSync(path.join(ROOT, 'import.html'), 'utf8');
   const batch = source.match(/const\s+HISTORY_WRITE_BATCH\s*=\s*(\d+)\s*;/);
   if (!batch) fail('חסרה מגבלת אצווה מפורשת לייבוא היסטורי');
-  else if (Number(batch[1]) > 6) fail('אצוות ייבוא היסטורי חורגת מתקציב Rules',
-    batch[1] + ' רשומות; המקסימום הבטוח הוא 6');
+  // Six syntactic calls per row: user + report exists/get + course exists/get/get.
+  // Do not assume shared employee/month paths or emulator caching in mixed batches.
+  else if (Number(batch[1]) < 1 || Number(batch[1]) * 6 > 20) fail('אצוות ייבוא היסטורי חורגת מתקציב Rules',
+    batch[1] + ' רשומות; המקסימום השמרני הוא 3');
   else if (!source.includes('i += HISTORY_WRITE_BATCH') ||
            !source.includes('i + HISTORY_WRITE_BATCH')) {
     fail('קבוע אצוות הייבוא אינו מחובר לשתי נקודות החיתוך');

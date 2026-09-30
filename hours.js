@@ -83,6 +83,7 @@ export const SICK_HOURS = 0;
 export const YOTVATA_HOURS = 25;
 
 export function dayTypeHe(id) {
+  if (id === 'course') return 'קורס'; // Approved read-only overlay, not an editable day type.
   const t = DAY_TYPES.filter(function (x) { return x.id === id; })[0];
   return t ? t.he : id;
 }
@@ -193,6 +194,8 @@ export function isSplit(rec) {
 //            יטבתה = 25.
 export function calcHours(rec, siteHours) {
   const r = rec || {};
+  if (r.day_type === 'course') return r.course_overlay === true && typeof r.hours === 'number'
+    && Number.isFinite(r.hours) && r.hours > 0 && r.hours <= 48 ? r.hours : null;
 
   if (r.day_type === 'vacation') return VACATION_HOURS;
   if (r.day_type === 'sick')     return SICK_HOURS;
@@ -201,7 +204,10 @@ export function calcHours(rec, siteHours) {
     if (r.shape !== 'regular' || !Number.isInteger(r.end_day) || ![0, 1].includes(r.end_day)
         || r.start2 || r.end2 || (r.end_day2 != null && r.end_day2 !== 0)) return null;
     const hours = segmentHours(r.start, r.end, r.end_day);
-    return Number.isFinite(hours) && hours > 0 && hours <= 24 ? hours : null;
+    if (r.reserve_calculation_version !== undefined && ![1, 2].includes(r.reserve_calculation_version)) return null;
+    const v2 = r.reserve_calculation_version === 2;
+    if (!Number.isFinite(hours) || hours <= 0 || (v2 ? hours >= 48 : hours > 24)) return null;
+    return v2 ? Math.round((hours + RESERVE_HOURS) * 100) / 100 : hours;
   }
 
   // אורך קבוע של תחנת קצה גובר גם על פיצול. יטבתה היא 25 שעות
@@ -230,7 +236,7 @@ export function calcHours(rec, siteHours) {
 
 export function expectedHours(rec, siteHours, shiftHours) {
   const r = rec || {};
-  if (r.day_type === 'reserve_shift') return 24;
+  if (r.day_type === 'reserve_shift') return null;
   if (!needsTimes(r.day_type)) return null;
   // אורך קבוע של תחנת קצה הוא אורך המשמרת שם, ולא חריגה ממנה.
   const fixed = Number(siteHours || 0);

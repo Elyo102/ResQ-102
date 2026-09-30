@@ -1,0 +1,174 @@
+{
+  "version": "42H.46",
+  "server_version": "42H.44",
+  "telemetry_version": "42H.44",
+  "project": "station-102",
+  "region": "europe-west1",
+  "services": [
+    "functions",
+    "firestore:rules",
+    "hosting"
+  ],
+  "baseline_candidate": "dab2a5ddafc800215793776d87c86f28473740b0",
+  "targets": [
+    "mutateMyAttendanceDay",
+    "getMyAttendanceMonth",
+    "mutateMyAttendanceMonth",
+    "correctAttendanceDay",
+    "correctAttendanceMonth",
+    "getAttendanceCorrectionContext",
+    "reopenAttendanceMonthForCorrection",
+    "approveAttendanceMonth",
+    "listAttendanceCorrectionAudit",
+    "getAttendanceCorrectionAudit",
+    "getHrMonthReports",
+    "getHrEmployeeReport",
+    "saveHrEmployeeReview",
+    "getAttendanceCourseMonth",
+    "createHrRequest",
+    "listMyHrRequests",
+    "listHrRequestsInbox",
+    "getHrRequest",
+    "replyHrRequest",
+    "setHrRequestStatus",
+    "nudgeHrRequest",
+    "removeMyRequestFile",
+    "decideMyStationReport",
+    "countHrRequestBoxes",
+    "getAttendanceOrderContext",
+    "reserveHrAttachment",
+    "uploadHrAttachment",
+    "resumeHrAttachment",
+    "listHrAttachments",
+    "downloadHrAttachment",
+    "buildHrMonthlySummaryNow",
+    "hrMonthlySummaryMonthly",
+    "resumeHrMonthlySummaries",
+    "backfillHrRequestMonths",
+    "reportIncident"
+  ],
+  "batches": [
+    [
+      "mutateMyAttendanceDay",
+      "getMyAttendanceMonth"
+    ],
+    [
+      "mutateMyAttendanceMonth",
+      "correctAttendanceDay"
+    ],
+    [
+      "correctAttendanceMonth",
+      "getAttendanceCorrectionContext"
+    ],
+    [
+      "reopenAttendanceMonthForCorrection",
+      "approveAttendanceMonth"
+    ],
+    [
+      "listAttendanceCorrectionAudit",
+      "getAttendanceCorrectionAudit"
+    ],
+    [
+      "getHrMonthReports",
+      "getHrEmployeeReport"
+    ],
+    [
+      "saveHrEmployeeReview",
+      "getAttendanceCourseMonth"
+    ],
+    [
+      "createHrRequest",
+      "listMyHrRequests"
+    ],
+    [
+      "listHrRequestsInbox",
+      "getHrRequest"
+    ],
+    [
+      "replyHrRequest",
+      "setHrRequestStatus"
+    ],
+    [
+      "nudgeHrRequest",
+      "removeMyRequestFile"
+    ],
+    [
+      "decideMyStationReport",
+      "countHrRequestBoxes"
+    ],
+    [
+      "getAttendanceOrderContext",
+      "reserveHrAttachment"
+    ],
+    [
+      "uploadHrAttachment",
+      "resumeHrAttachment"
+    ],
+    [
+      "listHrAttachments",
+      "downloadHrAttachment"
+    ],
+    [
+      "buildHrMonthlySummaryNow",
+      "hrMonthlySummaryMonthly"
+    ],
+    [
+      "resumeHrMonthlySummaries",
+      "backfillHrRequestMonths"
+    ],
+    [
+      "reportIncident"
+    ]
+  ],
+  "new_targets": [
+    "getAttendanceCourseMonth",
+    "getAttendanceOrderContext"
+  ],
+  "activation_targets": [
+    "mutateMyAttendanceDay",
+    "mutateMyAttendanceMonth",
+    "correctAttendanceDay",
+    "decideMyStationReport",
+    "reserveHrAttachment"
+  ],
+  "scheduled_targets": [
+    "hrMonthlySummaryMonthly",
+    "resumeHrMonthlySummaries"
+  ],
+  "rollback": {
+    "kind": "compatible-forward-only",
+    "policy_file": "functions/hours-rollout-policy.json",
+    "disabled_policy": {
+      "reserveV2Admission": false,
+      "courseApprovalAdmission": false,
+      "attendanceOrderAdmission": false
+    },
+    "retain_compatible_readers": true,
+    "retain_course_rules": true,
+    "retain_hosting": true,
+    "allow_old_baseline_restore_after_new_data": false,
+    "in_flight_requests_may_finish": true
+  },
+  "backup": {
+    "required_before_mutation": true,
+    "encrypted": true,
+    "readback_verified_required": true,
+    "generation_pinned_sources": true,
+    "capture_config_iam_rules_hosting_schedulers": true,
+    "new_target_absence_proof_required": true
+  },
+  "excluded": [
+    "employee-data-writes",
+    "storage-rules",
+    "indexes",
+    "iam-expansion",
+    "status-dashboard",
+    "github-pages"
+  ],
+  "validation": {
+    "full_gate": "npm --prefix tests run release:validate",
+    "native_rules_project": "demo-resq",
+    "physical_iphone": "NOT_RUN",
+    "live_employee_writes": "FORBIDDEN"
+  }
+}

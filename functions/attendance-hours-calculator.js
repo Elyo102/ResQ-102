@@ -47,7 +47,10 @@ function calcHours(record, siteHours) {
     if (r.shape !== 'regular' || !Number.isInteger(r.end_day) || ![0, 1].includes(r.end_day)
         || r.start2 || r.end2 || (r.end_day2 != null && r.end_day2 !== 0)) return null;
     const hours = segmentHours(r.start, r.end, r.end_day);
-    return Number.isFinite(hours) && hours > 0 && hours <= 24 ? hours : null;
+    if (r.reserve_calculation_version !== undefined && ![1, 2].includes(r.reserve_calculation_version)) return null;
+    const v2 = r.reserve_calculation_version === 2;
+    if (!Number.isFinite(hours) || hours <= 0 || (v2 ? hours >= 48 : hours > 24)) return null;
+    return v2 ? Math.round((hours + 8.5) * 100) / 100 : hours;
   }
   const fixed = Number(siteHours || 0);
   if (fixed > 0) return fixed;
@@ -117,4 +120,59 @@ function validateAttendanceEdit(record, before) {
     }
   }
 }
-module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit });
+// Called only by trusted write paths, never on read, submit or month recalculate.
+function stampReserveCalculationVersion(record, before, rolloutPolicy) {
+  if (record.day_type !== 'reserve_shift') { delete record.reserve_calculation_version; return record; }
+  const comparable = (row, key) => row[key] === undefined
+    ? (key === 'end_day2' ? 0 : ['start2','end2'].includes(key) ? '' : undefined)
+    : row[key];
+  const changed = !before || before.day_type !== 'reserve_shift' ||
+    ['shape','start','end','end_day','start2','end2','end_day2'].some(k => comparable(record,k) !== comparable(before,k));
+  if (changed) {
+    if (!before || before.day_type !== 'reserve_shift' || before.reserve_calculation_version !== 2)
+      require('./hours-rollout-policy').assertAdmission('reserveV2Admission', rolloutPolicy);
+    record.reserve_calculation_version = 2;
+  }
+  else if (before.reserve_calculation_version !== undefined) record.reserve_calculation_version = before.reserve_calculation_version;
+  else delete record.reserve_calculation_version;
+  return record;
+}
+// An approved course is a payroll overlay, never a mutation of attendance or
+// schedule. Only the trusted course reader may supply this argument.
+function projectCourseHours(records, course) {
+  if (!Array.isArray(records)) throw new TypeError('Invalid attendance rows');
+  const credits = course == null ? {} : course.days;
+  if (!credits || typeof credits !== 'object' || Array.isArray(credits)
+      || (course && (!Number.isSafeInteger(course.revision) || course.revision < 0
+      || !/^\d{4}-\d{2}$/.test(course.month)))) throw new TypeError('Invalid trusted course month');
+  const rows = new Map();
+  for (const row of records) {
+    if (!row || typeof row.date !== 'string' || rows.has(row.date)) throw new TypeError('Invalid attendance date set');
+    rows.set(row.date, { ...row });
+  }
+  for (const [date, credit] of Object.entries(credits)) {
+    const parsed = new Date(date + 'T00:00:00Z');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime())
+        || parsed.toISOString().slice(0, 10) !== date || date.slice(0, 7) !== course.month
+        || !credit || typeof credit.credit_hours !== 'number' || !Number.isFinite(credit.credit_hours)
+        || credit.credit_hours <= 0 || credit.credit_hours > 48 || !credit.case_id
+        || !Number.isSafeInteger(credit.approval_revision) || credit.approval_revision < 1) throw new TypeError('Invalid trusted course credit');
+    const base = rows.get(date);
+    if (base && base.day_type !== 'regular') throw new TypeError('Course conflicts with an attendance absence or special shift');
+    rows.set(date, { ...(base || { start: '', end: '', start2: '', end2: '', end_day: null, end_day2: null,
+      site_name: '', sub_station: '', notes: '', overtime_reason: '', reason: '', status: '' }),
+      date, hours: credit.credit_hours, day_type: 'course', day_type_he: 'קורס',
+      course_overlay: true, base_day_type: base ? base.day_type : null,
+      course_case_id: credit.case_id, course_approval_revision: credit.approval_revision });
+  }
+  const days = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const total = days.some(row => typeof row.hours !== 'number' || !Number.isFinite(row.hours) || row.hours < 0)
+    ? null : Math.round(days.reduce((sum, row) => sum + row.hours, 0) * 100) / 100;
+  return { days, total_hours: total };
+}
+function assertCourseDayCompatible(course, date, candidate) {
+  if (course && course.days && Object.prototype.hasOwnProperty.call(course.days, date)
+      && candidate && candidate.day_type !== 'regular') throw new TypeError('Approved course must be revised by HR before changing this absence');
+}
+module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit,
+  stampReserveCalculationVersion, projectCourseHours, assertCourseDayCompatible });

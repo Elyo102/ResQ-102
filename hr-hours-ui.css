@@ -13,4 +13,5 @@
 .hr-hours-alert{padding:14px;border:2px solid #c0362c;border-radius:12px;background:#fff0ed;color:#6f130d;font-weight:700}
 .hr-legend{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.hr-legend span{padding:6px 12px;border-radius:999px;border:1px solid var(--line);font-weight:700}
 .hr-legend .reserve,.hr-day-reserve td{background:#dff5e5;color:#163d20}.hr-legend .sick,.hr-day-sick td{background:#fff2bd;color:#4e3500}.hr-legend .vacation,.hr-day-vacation td{background:#dcecff;color:#07376a}
+.hr-legend .course,.hr-day-course td{background:#ffe3e3;color:#692323}
 [data-hr="hours-anomalies"][aria-pressed="true"]{border-color:#c0362c;background:#fff0ed;color:#6f130d;font-weight:700}

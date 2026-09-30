@@ -277,7 +277,9 @@ async function main() {
     await w.requests.create(w.who.req(uid, report()));
     await w.requests.create(w.who.req(uid, report({ kind: 'vacation', request_id: 'req-vacation-one' })));
     const out = await w.requests.counts(w.who.req(hr, {}));
-    assert.deepEqual(Object.keys(out.boxes).sort(), ['extended_absence', 'reserve', 'sick', 'vacation']);
+    assert.deepEqual(Object.keys(out.boxes).sort(), ['course', 'extended_absence', 'reserve', 'sick', 'vacation']);
+    assert.deepEqual(out.boxes.course.status, { open: 0, in_progress: 0, waiting_employee: 0, closed: 0 });
+    assert.deepEqual(out.boxes.course.decision, { pending: 0, approved: 0, rejected: 0 });
     assert.deepEqual(out.boxes.sick.status, { open: 1, in_progress: 0, waiting_employee: 0, closed: 0 });
     assert.deepEqual(out.boxes.sick.decision, { pending: 1, approved: 0, rejected: 0 });
     assert.deepEqual(out.boxes.reserve.status, { open: 0, in_progress: 0, waiting_employee: 0, closed: 0 });

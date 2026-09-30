@@ -7,11 +7,12 @@ const { createOpsMemberIdentity } = require('./ops-member-identity');
 const plain = value => !!value && typeof value === 'object' && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 
-function createHrAttachmentService({ db, auth, storage, HttpsError, requests, documents, clock, hooks } = {}) {
+function createHrAttachmentService({ db, auth, storage, HttpsError, requests, documents, attendance, clock, hooks } = {}) {
   if (!db || !auth || typeof auth.getUser !== 'function' || typeof HttpsError !== 'function') {
     throw new TypeError('db, auth and HttpsError required');
   }
   const families = { request: requests?.attachmentPorts, document: documents?.attachmentPorts };
+  if (attendance !== undefined) families.attendance = attendance?.attachmentPorts;
   for (const ports of Object.values(families)) {
     for (const method of ['read', 'prepare', 'recheck', 'commit']) {
       if (typeof ports?.[method] !== 'function') throw new TypeError('Actual parent attachment ports required');
@@ -21,7 +22,7 @@ function createHrAttachmentService({ db, auth, storage, HttpsError, requests, do
   const error = (code, message) => new HttpsError(code, message);
   const handles = new WeakMap();
   function family(input) {
-    if (input?.parent_kind !== 'request' && input?.parent_kind !== 'document') {
+    if (typeof input?.parent_kind !== 'string' || !Object.prototype.hasOwnProperty.call(families, input.parent_kind)) {
       throw error('invalid-argument', 'Invalid attachment parent.');
     }
     return families[input.parent_kind];

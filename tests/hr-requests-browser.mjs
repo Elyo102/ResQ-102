@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:41995';
-const files = ['hr-requests.html', 'hr-requests-client.js', 'hr-requests-ui.js', 'hr-requests-ui.css', 'hr-attachments-ui.js', 'hr-attachments-ui.css'];
+const files = ['course-timeline.js', 'hr-requests.html', 'hr-requests-client.js', 'hr-requests-ui.js', 'hr-requests-ui.css', 'hr-attachments-ui.js', 'hr-attachments-ui.css'];
 const hashes = () => Object.fromEntries(files.map(f => [f, createHash('sha256').update(fs.readFileSync(path.join(root, f))).digest('hex')]));
 const before = hashes(), browser = await chromium.launch(), contexts = new Set();
 let passed = 0;
@@ -62,7 +62,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
         if (t.countsFailure) throw Object.assign(new Error('Synthetic counts failure'), { code: 'functions/' + t.countsFailure });
         if (t.countsOverride) { result = structuredClone(t.countsOverride); }
         else {
-          const kinds = ['sick', 'reserve', 'vacation', 'extended_absence'];
+          const kinds = ['sick', 'reserve', 'vacation', 'extended_absence', 'course'];
           const states = ['open', 'in_progress', 'waiting_employee', 'closed'];
           const decisions = ['pending', 'approved', 'rejected'];
           const boxes = {};
@@ -134,7 +134,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
         else {
           let c = t.cases.find(c => c.case_id === data.case_id);
           if (name === 'createHrRequest') {
-            const dated = ['sick', 'reserve', 'vacation', 'extended_absence'].includes(data.kind);
+            const dated = ['sick', 'reserve', 'vacation', 'extended_absence', 'course'].includes(data.kind);
             c = t.addCase(String(++t.committed + 2), data.subject, t.auth.currentUser.uid,
               dated ? { kind: data.kind, from_date: data.from_date, to_date: data.to_date,
                 decision: 'pending', created_at_ms: Date.parse('2026-09-19T08:00:00+03:00') }
@@ -510,6 +510,28 @@ try {
     await page.waitForFunction(() => __requests.calls.some(c => c.name === 'createHrRequest'));
   }
 
+  await check('course employee range remains pending with no client credit or approval fields',async()=>{
+    const f=await fixture();await openReport(f.page,{kind:'course',from:'2026-09-01',to:'2026-10-03'});
+    const call=await f.page.evaluate(()=>__requests.calls.find(c=>c.name==='createHrRequest'));
+    assert.equal(call.data.kind,'course');assert.equal(call.data.from_date,'2026-09-01');assert.equal(call.data.to_date,'2026-10-03');
+    for(const key of ['hours','total_hours','course_snapshot','decision','days'])assert.equal(Object.hasOwn(call.data,key),false);
+    await f.page.waitForFunction(()=>document.querySelector('[data-r="detail"]').textContent.includes('זיכוי שעות קורס נקבע רק לאחר אישור'));
+    assert.equal(await f.page.locator('.course-timeline').count(),0);await f.close();
+  });
+  await check('actual HR course box displays approved server snapshot timeline without replacing assignments',async()=>{
+    const f=await fixture({role:'hr_coordinator'});
+    await f.page.evaluate(()=>{
+      const days=Array.from({length:9},(_,i)=>({date:'2026-09-'+String(1+i*3).padStart(2,'0'),credit_hours:20}));
+      __requests.addCase('c','קורס מאושר','someone-else',{kind:'course',from_date:'2026-09-01',to_date:'2026-09-30',decision:'approved',decided_by:'hr',decided_at_ms:Date.parse('2026-09-19T12:00:00+03:00'),
+        course_snapshot:{schema:'course-credit-v1',approval_revision:1,from_date:'2026-09-01',to_date:'2026-09-30',owner_uid:'someone-else',employee_number:'E1',crew:'A',role:'firefighter',days,total_hours:180,source_label:'original-crew-cycle-at-hr-approval',source_digest:'d'.repeat(64)}});
+    });
+    await q(f.page,'box-course').click();await open(f.page,'c');
+    const timeline=f.page.locator('.course-timeline');await timeline.waitFor();
+    assert.match(await timeline.textContent(),/9 משמרות מקוריות · 180 שעות/);
+    assert.match(await timeline.textContent(),/השיבוץ המקורי נשמר/);assert.equal(await timeline.locator('li').count(),30);
+    assert.equal(await q(f.page,'approve').isDisabled(),true);await f.close();
+  });
+
   await check('the employee form sends the kind and the range, and nothing it was not given', async () => {
     const f = await fixture(); await openReport(f.page, REPORT, 'מצורף אישור.');
     const call = await f.page.evaluate(() => __requests.calls.find(c => c.name === 'createHrRequest'));
@@ -636,7 +658,7 @@ try {
     await open(f.page, 'c');
     assert.equal(await q(f.page, 'approve').isHidden(), true);
     assert.equal(await q(f.page, 'reject').isHidden(), true);
-    for (const key of ['inbox', 'box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-hours']) {
+    for (const key of ['inbox', 'box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-course', 'box-hours']) {
       assert.equal(await q(f.page, key).isHidden(), true, key + ' is not for a firefighter');
     }
     assert.equal(await f.page.evaluate(() => __requests.calls.some(c => c.name === 'countHrRequestBoxes')), false,
@@ -751,7 +773,7 @@ try {
     const f = await fixture({ role: 'hr_coordinator' });
     await f.page.evaluate(() => {
       __requests.countsOverride = { drift: true, updated_at_ms: 1, boxes: Object.fromEntries(
-        ['sick', 'reserve', 'vacation', 'extended_absence'].map(k => [k, {
+        ['sick', 'reserve', 'vacation', 'extended_absence', 'course'].map(k => [k, {
           status: { open: 4, in_progress: 0, waiting_employee: 0, closed: 0 },
           decision: { pending: 4, approved: 0, rejected: 0 } }])) };
     });
@@ -899,7 +921,7 @@ try {
       const overflow = await f.page.evaluate(() =>
         document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert.ok(overflow <= 1, 'horizontal overflow ' + overflow + ' at ' + width);
-      for (const key of ['box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-hours']) {
+      for (const key of ['box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-course', 'box-hours']) {
         const box = await q(f.page, key).boundingBox();
         assert.ok(box && box.height >= 44, key + ' is ' + JSON.stringify(box) + ' at ' + width);
         assert.ok(box.width >= 44, key + ' is narrower than 44 at ' + width);

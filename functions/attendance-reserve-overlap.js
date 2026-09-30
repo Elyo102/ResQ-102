@@ -36,7 +36,8 @@ function segment(row, startKey, endKey, offsetKey, strict) {
   }
   if (!Number.isInteger(offset) || offset < 0 || offset > (strict ? 1 : 2)) fail('Invalid attendance day offset');
   const duration = end + offset * 1440 - start;
-  if (duration <= 0 || (strict && duration > 1440)) fail('Invalid attendance interval duration');
+  if (strict && row.reserve_calculation_version !== undefined && ![1, 2].includes(row.reserve_calculation_version)) fail('Invalid reserve calculation version');
+  if (duration <= 0 || (strict && (row.reserve_calculation_version === 2 ? duration >= 2880 : duration > 1440))) fail('Invalid attendance interval duration');
   const origin = dayNumber(row.date) * 1440;
   return { start: origin + start, end: origin + end + offset * 1440 };
 }

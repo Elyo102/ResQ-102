@@ -15,7 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h45">
+<link rel="stylesheet" href="./theme.css?v=42h46">
+<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h46">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -92,6 +93,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   tr.sug td{ opacity:.55 }
   tr.run td{ background:var(--warn-bg) }
   tr.day-reserve td{ background:#dff5e5; color:#163d20 }
+  tr.day-course td{ background:#ffe3e3; color:#692323 }
   tr.day-sick td{ background:#fff2bd; color:#4e3500 }
   tr.day-vacation td{ background:#dcecff; color:#07376a }
   .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
@@ -386,6 +388,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
     </div>
 
+    <div class="card" id="courseTimelineCard" hidden><h2>קורסים מאושרים</h2><div id="courseTimelines"></div></div>
     <div class="card">
       <h2 id="attendanceDays" tabindex="-1">ימי החודש</h2>
       <div class="note">
@@ -396,7 +399,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <table>
           <caption class="sr-only">ימי הנוכחות בחודש הנבחר</caption>
           <thead>
-            <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנה</th>
+            <tr><th>תאריך</th><th>סוג</th><th>שעת כניסה</th><th>שעת יציאה</th><th>תחנה</th>
                 <th class="hh">סה״כ</th><th class="nt">הערות</th><th></th></tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -425,37 +428,38 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h45';
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h45';
-import { subStationAvailable } from './stations.js?v=42h45';
-import { renderNav, renderStuckNav } from './nav.js?v=42h45';
-import { MEMBER_ROLES } from './roles.js?v=42h45';
-import { initPWA } from './pwa.js?v=42h45';
-import { watchCallouts } from './callout.js?v=42h45';
-import { errorText, logError } from './error-text.js?v=42h45';
+import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h46';
+import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h46';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h46';
+import { subStationAvailable } from './stations.js?v=42h46';
+import { renderNav, renderStuckNav } from './nav.js?v=42h46';
+import { MEMBER_ROLES } from './roles.js?v=42h46';
+import { initPWA } from './pwa.js?v=42h46';
+import { watchCallouts } from './callout.js?v=42h46';
+import { errorText, logError } from './error-text.js?v=42h46';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h45';
+  from './rotation.js?v=42h46';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h45';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h46';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, configuredDayOffset, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe,
          reportedAtMs, retroDays, retroLabel }
-  from './hours.js?v=42h45';
+  from './hours.js?v=42h46';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged }
+import { getAuth, onAuthStateChanged, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDocsFromServer, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h45';
+  from './monitored-functions.js?v=42h46';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h45';
+import { initAppCheck } from './appcheck.js?v=42h46';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -528,6 +532,7 @@ let lifecycleGeneration = 0;
 let monthDataReady = false;
 let guardLoadGeneration = 0;
 let correctionContext = null;
+let courseMonth = null;
 let pendingCorrectionOperation = null;
 const pendingMonthApprovals = new Map();
 let correctionAuditCursor = null;
@@ -1108,6 +1113,8 @@ function releaseMonthAction(button){
 async function loadMonth(){
   const generation = ++monthLoadGeneration;
   monthDataReady = false;
+  courseMonth = null;
+  $('courseTimelines').replaceChildren(); $('courseTimelineCard').hidden = true;
   $('correctionAuditList').textContent = 'לחץ לרענון ההיסטוריה.';
   correctionAuditCursor = null;
   correctionAuditItems = [];
@@ -1127,6 +1134,7 @@ async function loadMonth(){
   const nextRecords = {};
   let nextReport = null;
   let nextCorrectionContext = null;
+  let nextCourseMonth = null;
   let attendanceError = null;
   let reportError = null;
   correctionContext = null;
@@ -1147,6 +1155,7 @@ async function loadMonth(){
           throw new Error('correction-context-mismatch');
         }
         nextCorrectionContext = context;
+        nextCourseMonth = validateCourseMonth(context.course_month, mk, snapshot.subjectUid);
         context.days.forEach(function (row) {
           nextRecords[row.date] = Object.assign({ id: row.record_id, _expected_version: row.expected_version,
             _can_correct: row.can_correct === true, emp_number: snapshot.emp, uid: snapshot.subjectUid,
@@ -1172,6 +1181,7 @@ async function loadMonth(){
           nextRecords[row.record.date] = Object.assign({ id: row.record_id,
             _expected_version: row.expected_version }, row.record);
         });
+        nextCourseMonth = validateCourseMonth(value.course_month, mk, snapshot.subjectUid);
         if (value.report) nextReport = Object.assign({ _expected_version: value.report.expected_version }, value.report.record || {});
       } catch (e) { attendanceError = e; reportError = e; }
     })(), Promise.resolve(), guardRequest
@@ -1186,6 +1196,8 @@ async function loadMonth(){
   if (!current) return false;
 
   if (attendanceError || reportError) {
+    courseMonth = null;
+    $('courseTimelines').replaceChildren(); $('courseTimelineCard').hidden = true;
     records = {};
     report = null;
     $('rows').replaceChildren();
@@ -1207,6 +1219,7 @@ async function loadMonth(){
     SUBJ.role = correctionContext.target.role;
   }
   records = nextRecords;
+  courseMonth = nextCourseMonth;
   report = nextReport;
   monthDataReady = true;
   if (guardResult.generation === guardLoadGeneration) myGuards = guardResult.guards;
@@ -1230,7 +1243,7 @@ function suggestedDays(){
     const key = dateKey(viewYear, viewMonth, d);
     // רק יום שידוע שעובדים בו. לא-ידוע אינו מוצע — ואינו „חופש".
     if (worksOn(effective, SUBJ.uid, key) !== true) continue;
-    if (records[key]) continue;
+    if (records[key] || courseMonth?.days[key]) continue;
     out.push(key);
   }
   return out;
@@ -1295,13 +1308,16 @@ function render(){
       : '');
 
   const list = Object.keys(records).sort();
-  const saved = list.map(k => records[k]);
+  const saved = projectCourseRows(list.map(k => records[k]), courseMonth);
   const total = onOther() ? correctedMonthHours(saved) : monthTotal(saved, siteHoursOf);
   const sug = suggestedDays();
 
   $('tHours').textContent = total == null ? '— · נתון שעות פגום' : total;
   $('tDays').textContent  = saved.length;
   $('tSug').textContent   = sug.length;
+  const timelines = $('courseTimelines'); timelines.replaceChildren();
+  for (const snapshot of Object.values(courseMonth.periods)) timelines.append(renderCourseTimeline(snapshot, monthKey(viewYear,viewMonth)));
+  $('courseTimelineCard').hidden = !Object.keys(courseMonth.periods).length;
 
   const st = (report && report.status) || 'draft';
   $('state').className = 'state ' + st;
@@ -1352,16 +1368,18 @@ function renderRows(sug){
   const body = $('rows');
   body.innerHTML = '';
 
-  const keys = Object.keys(records).concat(sug).sort();
+  const projected = Object.fromEntries(projectCourseRows(Object.values(records),courseMonth).map(row=>[row.date,row]));
+  const keys = [...new Set(Object.keys(projected).concat(sug))].sort();
   if (!keys.length) {
-    body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);' +
+    body.innerHTML = '<tr><td colspan="8" style="color:var(--muted);' +
       'text-align:center;padding:18px">אין ימים בחודש הזה.</td></tr>';
     return;
   }
 
   keys.forEach(function (key) {
     const rec = records[key];
-    const isSug = !rec;
+    const overlay = projected[key]?.course_overlay === true;
+    const isSug = !rec && !overlay;
     const p = key.split('-');
     const date = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
     const ov = overrideOn(overrides, date);
@@ -1369,16 +1387,16 @@ function renderRows(sug){
     const eff = swapEffect(swaps, SUBJ.uid, key);
     const bt = baseTimes();
 
-    const view = rec || { day_type: 'regular', start: bt.start, end: bt.end, end_day:bt.end_day,
+    const view = projected[key] || { day_type: 'regular', start: bt.start, end: bt.end, end_day:bt.end_day,
                           sub_station: mySite };
-    const hrs = onOther() && rec ? reportedHours(rec)
+    const hrs = overlay ? view.hours : onOther() && rec ? reportedHours(rec)
       : calcHours(view, siteHoursOf(view.sub_station));
     const why = reasonWhy(view, siteHoursOf(view.sub_station), shiftHoursFor());
-    const running = !!(rec && rec.start && !rec.end);
+    const running = !overlay && !!(rec && rec.start && !rec.end);
 
     const tr = document.createElement('tr');
     tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '') +
-      (view.day_type === 'reserve' ? ' day-reserve' : view.day_type === 'sick' ? ' day-sick' :
+      (['reserve','reserve_shift'].includes(view.day_type) ? ' day-reserve' : view.day_type === 'course' ? ' day-course' : view.day_type === 'sick' ? ' day-sick' :
        view.day_type === 'vacation' ? ' day-vacation' : '');
 
     // data-l הוא שם השדה. במסך רחב הוא לא מוצג — שורת הכותרת
@@ -1406,13 +1424,15 @@ function renderRows(sug){
         (view.overtime_reason
           ? ' <span class="tag" title="' + esc(view.overtime_reason) + '">נימוק</span>'
           : '') + '</td>' +
-      '<td class="hh' + (needsTimes(view.day_type) ? '' : ' dash') +
-        '" data-l="שעות">' + (needsTimes(view.day_type)
-          ? '<span class="rng">' + esc(view.start || '—') + '–' +
-              esc(running ? '…' : (view.end || '—')) + '</span>' +
-            (view.day_type === 'reserve_shift' && view.end_day === 1 ? ' למחרת' : '') +
-            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
-              esc(view.end2) + '</span>' : '')
+      '<td class="hh" data-l="שעת כניסה">' + (needsTimes(view.day_type)
+          ? '<span class="rng">' + esc(view.start || 'לא דווחה') + '</span>' +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '</span>' : '')
+          : '—') + '</td>' +
+      '<td class="hh" data-l="שעת יציאה">' + (needsTimes(view.day_type)
+          ? '<span class="rng">' + esc(running ? 'טרם דווחה' : (view.end || 'לא דווחה')) + '</span>' +
+            (view.end_day === 1 ? ' למחרת' : view.end_day === 2 ? ' מחרתיים' : '') +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.end2) + '</span>' +
+              (view.end_day2 === 1 ? ' למחרת' : view.end_day2 === 2 ? ' מחרתיים' : '') : '')
           : '—') + '</td>' +
       '<td class="' + dash(site).trim() + '" data-l="תחנה">' + site + '</td>' +
       '<td class="hh' + dash(tot) + '" data-l="סה״כ">' + tot + '</td>' +
@@ -1438,16 +1458,23 @@ function renderRows(sug){
     const mayCorrect = !onOther() ? !locked()
       : !!(correctionContext && ((rec && rec._can_correct === true)
         || (!rec && correctionContext.eligibility && correctionContext.eligibility.can_create)));
-    if (mayCorrect) {
+    if (mayCorrect && (!overlay || rec)) {
       const b = document.createElement('button');
       b.type = 'button';
       b.dataset.date = key;
       b.className = 'btn sm';
-      b.textContent = isSug ? 'שמור' : 'ערוך';
+      b.textContent = overlay ? 'עריכת הדיווח המקורי' : isSug ? 'שמור' : 'ערוך';
       b.setAttribute('aria-label', (isSug ? 'שמירת' : 'עריכת') +
         ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
       b.onclick = () => void editDay(key, rec);
       td.appendChild(b);
+    }
+    if (rec && ['reserve','reserve_shift'].includes(rec.day_type)) {
+      const order = document.createElement('button');
+      order.type = 'button'; order.className = 'btn sm'; order.textContent = 'צו מילואים';
+      order.setAttribute('aria-label', 'קבצים פרטיים לדיווח מילואים בתאריך ' + key);
+      order.onclick = () => { void showAttendanceOrder(key); };
+      td.appendChild(order);
     }
     tr.appendChild(td);
     body.appendChild(tr);
@@ -1455,6 +1482,20 @@ function renderRows(sug){
 }
 
 // ---------- שמירה ----------
+
+let attendanceOrderOpen = false;
+async function showAttendanceOrder(date) {
+  if (attendanceOrderOpen || !records[date] || !['reserve','reserve_shift'].includes(records[date].day_type)) return;
+  attendanceOrderOpen = true;
+  try {
+    const target = captureMonthWrite();
+    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h46');
+    if (!sameMonthWrite(target)) return;
+    await openAttendanceOrder({ auth, fns, httpsCallable, onIdTokenChanged,
+      target_uid:target.uid, date, isCurrent:()=>sameMonthWrite(target) });
+  } catch (_) { msg('לא ניתן לפתוח קבצים לדיווח הזה. נסו לרענן את הדוח.', 'err'); }
+  finally { attendanceOrderOpen = false; }
+}
 
 function captureMonthWrite(){
   if (!monthDataReady || !SUBJ || !ME) throw new Error('הדוח לא נטען במלואו.');
@@ -1940,7 +1981,7 @@ async function editDay(key, rec){
   //   split      שני קטעים באותו יום, והסך הוא הסכום.
   function current(){
     const sh = $('dShape').value;
-    return {
+    const value = {
       day_type: $('dType').value,
       shape: sh,
       start: $('dStart').value,
@@ -1957,6 +1998,16 @@ async function editDay(key, rec){
       sub_station: $('dSite').value,
       overtime_reason: $('dOtReason').value.trim()
     };
+    if (value.day_type === 'reserve_shift') {
+      const comparable = (row, key) => row[key] === undefined
+        ? (key === 'end_day2' ? 0 : ['start2','end2'].includes(key) ? '' : undefined)
+        : row[key];
+      const changed = !rec || rec.day_type !== 'reserve_shift' ||
+        ['shape','start','end','end_day','start2','end2','end_day2'].some(k => comparable(value,k) !== comparable(rec,k));
+      if (changed) value.reserve_calculation_version = 2;
+      else if (rec.reserve_calculation_version !== undefined) value.reserve_calculation_version = rec.reserve_calculation_version;
+    }
+    return value;
   }
 
   const NOTES = {
@@ -1982,7 +2033,7 @@ async function editDay(key, rec){
     if (!equalRegular) $('dFullDay').checked = false;
     $('dSeg2').classList.toggle('hide', sh !== 'split');
     $('dShapeNote').textContent = reserveShift
-      ? 'משמרת אחת עד 24 שעות לפי שעון מקומי. אפשר לערוך את השעות ואת יום הסיום.' : NOTES[sh] || '';
+      ? 'שעות העבודה לפי כניסה ויציאה, גם אחרי יממה, בתוספת 8.5 שעות מילואים לדיווח חדש או לשינוי שעות. בחרו במפורש את יום הסיום.' : NOTES[sh] || '';
     $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
     $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
                             : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');
@@ -2174,6 +2225,7 @@ async function writeReport(status){
     expected_report_version: report ? report._expected_version : 'absent' };
   if (operation === 'submit') intent.days = saved.map(key => ({ date: key,
     expected_version: records[key]._expected_version }));
+  if (operation === 'submit') intent.expected_course_revision = courseMonth.revision;
   requireMonthWrite(target);
   await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
   requireMonthWrite(target);
@@ -2189,12 +2241,12 @@ function submitPreview(){
   if (!monthDataReady) return;
   const previewTarget = captureMonthWrite();
   const st = (report && report.status) || 'draft';
-  const saved = Object.keys(records).sort().map(k => records[k]);
+  const saved = projectCourseRows(Object.keys(records).sort().map(k => records[k]),courseMonth);
   const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
   if (onOther()) s.hours = correctedMonthHours(saved);
   const sug = suggestedDays();
 
-  const typeLines = DAY_TYPES
+  const typeLines = DAY_TYPES.concat([{id:'course',he:'קורס'}])
     .filter(t => s.byType[t.id])
     .map(t => '<div class="sum-line"><span>' + t.he + '</span><b>' +
               s.byType[t.id] + ' ימים</b></div>').join('');

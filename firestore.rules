@@ -299,6 +299,15 @@ service cloud.firestore {
                 ]);
     }
 
+    // Create-only course exclusion: existing authorization/shape checks run first.
+    // One bounded month-document dependency; malformed existing indexes deny.
+    function noApprovedCourseCredit(sid) {
+      let key = request.resource.data.emp_number + '_' + request.resource.data.month;
+      let path = /databases/$(database)/documents/stations/$(sid)/attendance_course_credits/$(key);
+      return !exists(path) || (get(path).data.days is map
+             && !get(path).data.days.keys().hasAny([request.resource.data.date]));
+    }
+
     function validHistoricalImportCreate(sid, docId) {
       let emp = request.resource.data.get('emp_number', '');
       let uid = request.resource.data.get('uid', '');
@@ -704,6 +713,12 @@ service cloud.firestore {
     }
 
     match /stations/{sid} {
+      match /attendance_order_parents/{parentId} {
+        allow read, write: if false;
+      }
+      match /attendance_course_credits/{monthId} {
+        allow read, write: if false;
+      }
       match /hr_attachments/{attachmentId} {
         allow read, write: if false;
       }
@@ -1492,8 +1507,11 @@ service cloud.firestore {
         allow read: if (staff(sid) && seesCrewData(sid, resource.data.get('crew', '')))
                     || (member(sid) && resource.data.get('emp_number', '') == myEmp());
 
-        allow create: if approvedLeaveAttendanceCreate(sid, docId)
-                      || validHistoricalImportCreate(sid, docId);
+        // Unlike the status-only update lock, these legacy create exceptions
+        // also consult the server-owned course index to avoid conflicting rows.
+        allow create: if (approvedLeaveAttendanceCreate(sid, docId)
+                      || validHistoricalImportCreate(sid, docId))
+                      && noApprovedCourseCredit(sid);
 
         // ---------- עריכת נוכחות על ידי סגל ----------
         //

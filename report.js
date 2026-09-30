@@ -38,12 +38,19 @@ export const REPORT_CSS = [
   '.site{display:inline-block;border:1px solid #ddd;border-radius:6px;',
   '  padding:3px 12px;font-size:13px;color:#6a1b9a;font-weight:700;',
   '  margin-inline-end:6px}',
+  '.report-table-scroll{max-width:100%;overflow-x:auto}',
+  '.report-table-scroll:focus-visible{outline:2px solid #1565c0;outline-offset:2px}',
   'table{width:100%;border-collapse:collapse;font-size:13.5px}',
   'th{background:#f4f6f8;color:#1565c0;font-weight:700;font-size:13px;',
   '  padding:9px 8px;border:1px solid #dde3e8;white-space:nowrap}',
   'td{padding:9px 8px;border:1px solid #e6eaee;text-align:center}',
   'td.txt{text-align:right}',
   'tr:nth-child(even) td{background:#fafbfc}',
+  'tr.day-reserve td{background:#dff5e5;color:#163d20}',
+  'tr.day-sick td{background:#fff2bd;color:#4e3500}',
+  'tr.day-vacation td{background:#dcecff;color:#07376a}',
+  'tr.day-course td{background:#ffe3e3;color:#692323}',
+  '@media print{tr td{print-color-adjust:exact;-webkit-print-color-adjust:exact}}',
   'td.hrs{font-weight:800;font-variant-numeric:tabular-nums}',
   '.rng{direction:ltr;unicode-bidi:isolate;display:inline-block}',
   '.flag{color:#c62828;font-weight:700}',
@@ -55,7 +62,13 @@ export const REPORT_CSS = [
   '.total{border:2px solid #c62828;border-radius:8px;padding:17px;',
   '  margin-top:14px;text-align:center;font-size:22px;font-weight:800}',
   '.foot{margin-top:16px;text-align:center;color:#888;font-size:11.5px}',
-  '@media print{body{padding:0} .total,.warn{break-inside:avoid}}'
+  '@media screen and (max-width:600px){body{padding:12px}',
+  '  .nm,.sub,.site{overflow-wrap:anywhere}',
+  '  .report-table-scroll table{min-width:640px}',
+  '  .report-table-scroll td.txt{overflow-wrap:anywhere}}',
+  '@media print{body{padding:0} .total,.warn{break-inside:avoid}',
+  '  .report-table-scroll{overflow:visible;max-width:none}',
+  '  .report-table-scroll table{min-width:0}}'
 ].join('');
 
 // rows: [{date, day_type_he, start, end, end_day, start2, end2,
@@ -77,26 +90,29 @@ export function reportHtml(head, rows) {
       if (!a && !b) return '—';
       return '<span class="rng">' + esc(a || '—') + '</span>';
     };
-    const times = r.start
+    const times = r.start && r.course_overlay !== true
       ? '<td><span class="rng">' + esc(r.start) + '</span></td>' +
         '<td><span class="rng">' + esc(r.end || '—') + '</span>' +
-          (r.day_type === 'reserve_shift' && r.end_day === 1 ? ' למחרת' : '') + '</td>'
+          (r.end_day === 1 ? ' למחרת' : r.end_day === 2 ? ' מחרתיים' : '') + '</td>'
       : '<td>—</td><td>—</td>';
 
     // אין כאן סימון "לא צוינה סיבה". השמירה חסומה בלי נימוק
     // בימים שדורשים אותו, ולכן יום כזה לא יכול להגיע לדוח —
     // וכיתוב שלא יופיע לעולם הוא רעש.
-    const note = esc(r.reason || r.notes || '');
+    const note = esc(r.reason || r.notes || '') + (r.course_overlay === true
+      ? ' · קורס מאושר לפי הסבב המקורי; זיכוי תקן פעם אחת' + (r.base_day_type ? ' · הדיווח המקורי נשמר' : '') : '');
 
-    return '<tr>' +
+    const colorClass = ['reserve','reserve_shift'].includes(r.day_type) ? 'day-reserve'
+      : ['sick','vacation','course'].includes(r.day_type) ? 'day-' + r.day_type : '';
+    return '<tr class="' + colorClass + '">' +
       '<td class="' + (marked ? 'mark' : '') + '">' + esc(dmy(r.date)) + '</td>' +
       '<td class="' + (marked ? 'type-flag' : '') + '">' +
         (marked ? '◆ ' : '') + esc(r.day_type_he || '') + '</td>' +
       times +
-      '<td>' + esc(r.site_name || '') + '</td>' +
+      '<td>' + esc(r.site_name || 'לא צוינה') + '</td>' +
       '<td class="txt">' + note +
-        (r.start2 ? ' <span class="rng">(' + esc(r.start2) + '–' +
-                    esc(r.end2) + ')</span>' : '') + '</td>' +
+        (r.start2 && r.course_overlay !== true ? ' <span class="rng">(' + esc(r.start2) + '–' +
+                    esc(r.end2) + ')</span>' + (r.end_day2 === 1 ? ' למחרת' : r.end_day2 === 2 ? ' מחרתיים' : '') : '') + '</td>' +
       '<td class="hrs">' + (r.hours == null ? '—' : r.hours) + '</td>' +
     '</tr>';
   }).join('');
@@ -114,10 +130,10 @@ export function reportHtml(head, rows) {
           return '<span class="site">◆ ' + esc(s) + '</span>'; }).join('') + '</div>'
       : '',
 
-    '<table><thead><tr>',
-      '<th>תאריך</th><th>סוג יום</th><th>כניסה</th><th>יציאה</th>',
-      '<th>מקום</th><th>הערות</th><th>שעות</th>',
-    '</tr></thead><tbody>', body, '</tbody></table>',
+    '<div class="report-table-scroll" role="region" aria-label="טבלת דיווח נוכחות — גלילה אופקית" tabindex="0"><table><thead><tr>',
+      '<th>תאריך</th><th>סוג יום</th><th>שעת כניסה</th><th>שעת יציאה</th>',
+      '<th>תחנה</th><th>הערות</th><th>שעות</th>',
+    '</tr></thead><tbody>', body, '</tbody></table></div>',
 
     h.over_limit
       ? '<div class="warn">⚠ חריגה — סך השעות עובר את הסף שנקבע (' +
@@ -133,6 +149,7 @@ export function reportHtml(head, rows) {
 
 export function reportPage(head, rows) {
   return '<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
     '<title>' + esc((head || {}).full_name || '') + ' — דוח נוכחות</title>' +
     '<style>' + REPORT_CSS + '</style></head><body>' +
     reportHtml(head, rows) + '</body></html>';

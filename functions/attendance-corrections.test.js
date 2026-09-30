@@ -198,6 +198,30 @@ async function rejectsWithoutWrites(f, request, code, recalc = false) {
   assert.deepEqual(f.db.dump(), before); assert.equal(f.db.metrics.writes, writes);
 }
 
+test('rollback rejects stale-marker reserve admission with exact code and no service writes', async () => {
+  const policyPath = require.resolve('./hours-rollout-policy');
+  const original = require(policyPath);
+  const off = { reserveV2Admission: false, courseApprovalAdmission: false, attendanceOrderAdmission: false };
+  let gateCalls = 0, beforeWrites = 0;
+  const f = fixture();
+  f.row(f.month + '-01', { day_type: 'regular', reserve_calculation_version: 2 });
+  f.ports.hooks = { beforeWrites: () => { beforeWrites++; } };
+  require.cache[policyPath].exports = {
+    ...original,
+    assertAdmission(key) { gateCalls++; return original.assertAdmission(key, off); }
+  };
+  try {
+    await rejectsWithoutWrites(f, f.req({ patch: { day_type: 'reserve_shift', start: '07:00', end: '07:00', end_day: 1 } }), 'failed-precondition');
+    assert.equal(gateCalls, 1);
+    assert.equal(beforeWrites, 0);
+    assert.equal(f.events().length, 0);
+    assert.equal(f.jobs().length, 0);
+    assert.equal(f.receipts().length, 0);
+  } finally {
+    require.cache[policyPath].exports = original;
+  }
+});
+
 test('factory requires explicit trusted calculator, config and server-month ports', () => {
   const f = fixture();
   for (const key of ['calculate', 'readConfig', 'monthAt', 'serverTimestamp', 'auth', 'db']) assert.throws(() => createAttendanceCorrections({ ...f.ports, [key]: undefined }), TypeError);
