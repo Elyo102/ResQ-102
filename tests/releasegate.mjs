@@ -307,7 +307,7 @@ const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
 // Explicitly retain the retired-route protections for 43. Unknown future
 // releases must not inherit approval of either frozen target manifest.
-if (['42H.42', '42H.43', '42H.44', '42H.45'].includes(releaseVersion)) {
+if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -470,6 +470,64 @@ if (['42H.42', '42H.43', '42H.44', '42H.45'].includes(releaseVersion)) {
     checkPolicy();
     ok('6.45 browser projection matches the single canonical policy', true);
     ok('6.45 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h45.json') !== null);
+  }
+  if (releaseVersion === '42H.46') {
+    const manifest46 = JSON.parse(read('docs/release-targets-42h46.json'));
+    const stamp46 = JSON.parse(read('release-manifest.json'));
+    const policy46 = JSON.parse(read('functions/hours-rollout-policy.json'));
+    // Pin every approved manifest field, including exact ordered targets,
+    // batches, rollback, backup and the sole two-service IAM exception.
+    // This fingerprint is deliberately independent of the input being tested.
+    const approved46 = '27bdacb581dd0208c635efdab534087e701ce2a467d9ba620765d8dff7916a3b';
+    const valid46 = (value, stamp = stamp46, policy = policy46) => {
+      try {
+        return createHash('sha256').update(JSON.stringify(value)).digest('hex') === approved46 &&
+          stamp.scope === 'hosting' && stamp.version === '42H.46' &&
+          stamp.server_version === '42H.44' && stamp.telemetry_version === '42H.44' &&
+          stamp.asset_query === '42h46' && stamp.sw_cache_key === 'resq-v42h46-release1' &&
+          stamp.date === '30.9.2026' &&
+          JSON.stringify(Object.keys(policy).sort()) === JSON.stringify(['attendanceOrderAdmission','courseApprovalAdmission','reserveV2Admission']) &&
+          Object.values(policy).every(v => v === true);
+      } catch { return false; }
+    };
+    ok('6.46 exact approved manifest, stamp and three ON admission policies', valid46(manifest46));
+    for (const [name, mutate] of [
+      ['omitted target', x => x.targets.pop()],
+      ['extra target', x => x.targets.push('sendCallout')],
+      ['duplicate target', x => x.targets[1] = x.targets[0]],
+      ['reordered targets', x => x.targets.reverse()],
+      ['oversized batch', x => x.batches = [x.targets]],
+      ['reordered batches', x => x.batches.reverse()],
+      ['new target', x => x.new_targets.push('other')],
+      ['activation omission', x => x.activation_targets.pop()],
+      ['scheduler omission', x => x.scheduled_targets.pop()],
+      ['project', x => x.project = 'other'],
+      ['future version', x => x.version = '42H.47'],
+      ['Storage', x => x.services.push('storage')],
+      ['duplicate service', x => x.services.push('functions')],
+      ['missing Rules', x => x.services.splice(1, 1)],
+      ['old baseline rollback', x => x.rollback.allow_old_baseline_restore_after_new_data = true],
+      ['reader removal', x => x.rollback.retain_compatible_readers = false],
+      ['unencrypted backup', x => x.backup.encrypted = false],
+      ['unverified backup', x => x.backup.readback_verified_required = false],
+      ['exclusion removal', x => x.excluded = []],
+      ['missing IAM', x => delete x.new_service_invoker],
+      ['extra IAM service', x => x.new_service_invoker.services.push('other')],
+      ['project IAM', x => x.new_service_invoker.allow_project_iam = true],
+      ['service account IAM', x => x.new_service_invoker.allow_service_account_iam = true],
+      ['existing service IAM', x => x.new_service_invoker.allow_existing_service_iam = true],
+      ['wrong IAM role', x => x.new_service_invoker.role = 'roles/owner'],
+      ['wrong IAM member', x => x.new_service_invoker.member = 'allAuthenticatedUsers'],
+      ['rollback removes invoker', x => x.new_service_invoker.retain_on_admission_rollback = false],
+      ['extra property', x => x.extra = true],
+      ['missing property', x => delete x.region]
+    ]) { const bad = structuredClone(manifest46); mutate(bad); ok('6.46 rejects ' + name, !valid46(bad)); }
+    for (const key of ['scope','version','date','server_version','telemetry_version','asset_query','sw_cache_key'])
+      ok('6.46 rejects stamp drift ' + key, !valid46(manifest46, { ...stamp46, [key]: 'wrong' }));
+    for (const policy of [null, {}, { ...policy46, extra: true },
+      ...Object.keys(policy46).flatMap(k => [{ ...policy46, [k]: false }, { ...policy46, [k]: 'true' }])])
+      ok('6.46 rejects missing, malformed or disabled admission policy', !valid46(manifest46, stamp46, policy));
+    ok('6.46 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h46.json') !== null);
   }
 } else {
 
@@ -796,6 +854,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
-if (['42H.42', '42H.43', '42H.44', '42H.45'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
+if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');
