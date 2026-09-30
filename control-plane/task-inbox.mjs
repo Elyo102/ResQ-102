@@ -106,7 +106,10 @@ export function createInbox({root,agentKey,fs=nodeFs,platform=process.platform,a
     deliver(taskId,payload){
       if(typeof payload!=='string')throw Error('INBOX_PAYLOAD_TYPE');
       const file=target(taskId,TASK_SUFFIX);
-      if(aclCheck&&aclCheck(aclPaths()))throw Object.assign(Error('INBOX_ACL_WRITABLE'),{code:'INBOX_ACL_WRITABLE'});writeExclusive(file,fixedHeader(taskId,agentKey)+payload);return file;
+      // Security (INBOX_ACL_WRITABLE): the write-integrity check runs BEFORE anything is written; a finding writes nothing.
+      if(aclCheck&&aclCheck(aclPaths()))throw Object.assign(Error('INBOX_ACL_WRITABLE'),{code:'INBOX_ACL_WRITABLE'});
+      writeExclusive(file,fixedHeader(taskId,agentKey)+payload);
+      return file;
     },
     markCancelled(taskId){
       const file=target(taskId,CANCELLED_SUFFIX);

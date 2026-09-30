@@ -10,12 +10,13 @@ import {requestJson,decodeJwt,verifyListenerClaims,verifyIdToken,createTokenSour
   SECURETOKEN_URL,CERTS_URL,LISTENER_AGENTS,FATAL_AUTH} from './listener/listener-auth.mjs';
 import {firestoreBase,encodeValue,decodeFields,createListenerOps,createFirestoreClient,structuredListenerQuery,POLL_MS,FIRESTORE_URL} from './listener/firestore-rest.mjs';
 import {createCredentialStore,listenerPaths,assertHomeMatch,DIR_NAME,LEGACY_DIR_NAME} from './listener/credential-store.mjs';
-import {aclVerdict,aclFinding,inboxWriteFinding,validAclInfo,rightsName,WRITE_MASK,ACL_MANY_MAX,createWindowsProtector,SCRIPTS,POWERSHELL} from './listener/win-protect.mjs';
+import {aclVerdict,aclFinding,inboxWriteFinding,validAclInfo,rightsName,WRITE_MASK,ACL_MANY_MAX,ACL_MANY_TIMEOUT_MS,createWindowsProtector,SCRIPTS,POWERSHELL} from './listener/win-protect.mjs';
 import {createInbox} from './task-inbox.mjs';
 import {createIdentityAdmin} from './listener/identity-admin.mjs';
 import {provisionListener,parseProvisionArgs,listenerEmail,STREAM_THRESHOLD} from './provision-listener.mjs';
 import {startRunner,parseRunnerArgs,EXIT,MAX_POLL_FAILURES,MAX_ACL_CHECK_FAILURES,aclStopLine} from './task-listener-run.mjs';
 import {HEARTBEAT_MS} from './task-listener.mjs';
+import {HEARTBEAT_FRESH_MS as HEARTBEAT_FRESH_MS_UI} from './web/active-tasks-model.mjs';
 // Source files are read LF-normalized: a Windows checkout (core.autocrlf=true) must pass the same static checks.
 const readSrc=u=>readFileSync(u,'utf8').replace(/\r\n/g,'\n');
 
@@ -482,7 +483,7 @@ test('ACL store (a): %LOCALAPPDATA%\\resq-listeners; HOME_MISMATCH; lock down + 
   assert.equal(store.verify(),null);assert.equal(prot.manyCalls.length,1);
   assert.deepEqual(prot.manyCalls[0],[listenerPaths(home,'Grok').dir,listenerPaths(home,'Grok').credential,listenerPaths(home,'Grok').config]);
   prot.many=(p,i)=>i===1?withRule({sid:OTHER_SID,type:'Allow',inherited:true,mask:0x1200A9},{protected:false}):null;
-  assert.deepEqual({...store.verify()},{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9,path:listenerPaths(home,'Grok').credential});
+  assert.deepEqual({...store.verify()},{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9,type:'Allow',path:listenerPaths(home,'Grok').credential});
   prot.many=(p,i)=>i===0?{...CLEAN_ACL(),protected:false}:null;assert.equal(store.verify().code,'ACL_INHERITANCE');
   prot.many=(p,i)=>i===2?{...CLEAN_ACL(),owner:OTHER_SID}:null;assert.equal(store.verify().code,'ACL_OWNER');
   prot.many='THROW';assert.throws(()=>store.verify(),code('PROTECTOR_ACLMANY_FAILED'));prot.many=null;
@@ -512,13 +513,13 @@ test('ACL protector (aclMany): one spawn, paths as JSON on stdin, strict output 
   assert.doesNotMatch(SCRIPTS.aclMany,/"/);assert.match(SCRIPTS.aclMany,/\[Console\]::In\.ReadToEnd\(\)\|ConvertFrom-Json/);assert.doesNotMatch(SCRIPTS.aclMany,/Set-Acl|icacls/i,'read-only');
   // store policy with details
   assert.equal(aclFinding(ok,{directory:true}),null);
-  assert.deepEqual(aclFinding({...ok,rules:[...ok.rules,{sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}]},{directory:true}),{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9});
+  assert.deepEqual(aclFinding({...ok,rules:[...ok.rules,{sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}]},{directory:true}),{code:'ACL_OTHER_PRINCIPAL',sid:OTHER_SID,mask:0x1200A9,type:'Allow'});
   assert.equal(aclVerdict({...ok,protected:false},{directory:true}),'ACL_INHERITANCE');
   // inbox write integrity: RX for others OK; W/M/F/D/WD/AD (and generic write/all) for a non-owner, non-SYSTEM/Admins principal fails
   const inbox=x=>inboxWriteFinding({...ok,protected:false,rules:[...ok.rules,{sid:'S-1-5-18',type:'Allow',inherited:true,mask:0x1F01FF},{sid:'S-1-5-32-544',type:'Allow',inherited:true,mask:0x1F01FF},...x]});
   assert.equal(inbox([{sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9}]),null,'Codex sandbox RX is accepted');
   for(const m of [0x1F01FF,0x1301BF,0x116,0x2,0x4,0x10000,0x40,0x40000,0x80000,0x10000000,0x40000000])
-    assert.deepEqual(inbox([{sid:OTHER_SID,type:'Allow',inherited:false,mask:m}]),{code:'INBOX_ACL_WRITABLE',sid:OTHER_SID,mask:m},m.toString(16));
+    assert.deepEqual(inbox([{sid:OTHER_SID,type:'Allow',inherited:false,mask:m}]),{code:'INBOX_ACL_WRITABLE',sid:OTHER_SID,mask:m,type:'Allow'},m.toString(16));
   assert.equal(inbox([{sid:OTHER_SID,type:'Deny',inherited:false,mask:0x1F01FF}]),null,'a Deny rule grants nothing');
   assert.equal(inboxWriteFinding({...ok,owner:OTHER_SID}).code,'INBOX_ACL_WRITABLE');
   assert.equal(inbox([{sid:OTHER_SID,type:'Allow',inherited:false}]).code,'ACL_SCHEMA');
@@ -543,8 +544,9 @@ test('ACL runner (b) + UI 1/2/4: check BEFORE the first heartbeat; per tick exit
   let r=await startRunner({agent:'Grok',listen:'poll',deps:h.deps});
   assert.equal(await r.done,EXIT.LOCAL_ACL);assert.equal(EXIT.LOCAL_ACL,6);assert.deepEqual(h.ev,['acl'],'ACL check first; no token, no Firestore, no heartbeat');
   assert.deepEqual(JSON.parse(h.out.at(-1)),{agent:'Grok',stopped:'local_acl_violation',code:'ACL_OTHER_PRINCIPAL'});
-  assert.equal(h.err.length,1);assert.match(h.err[0],/exit 6/);assert.match(h.err[0],new RegExp(OTHER_SID));assert.match(h.err[0],/הרשאה: RX/);
-  assert.ok(h.err[0].includes(listenerPaths(home,'Grok').dir));assert.match(h.err[0],/icacls/);assert.match(h.err[0],/אין הפעלה מחדש אוטומטית/);
+  assert.equal(h.err.length,1);assert.match(h.err[0],/exit 6/);assert.match(h.err[0],/right=RX/);
+  assert.ok(h.err[0].startsWith(`ResQ listener stopped (exit 6) code=ACL_OTHER_PRINCIPAL path="${listenerPaths(home,'Grok').dir}" sid=${OTHER_SID} right=RX `),h.err[0]);
+  assert.ok(h.err[0].includes(`icacls "${listenerPaths(home,'Grok').dir}" /remove:g *${OTHER_SID} then --rotate`));assert.match(h.err[0],/אין הפעלה מחדש אוטומטית/);
   for(const l of h.out)assert.doesNotMatch(l,/S-1-5|resq-listeners|AppData/,'stdout: no SID, no path');
   h.restore();prot.many=null;
   // clean start: the ACL check precedes the first heartbeat
@@ -572,8 +574,6 @@ test('ACL runner (b) + UI 1/2/4: check BEFORE the first heartbeat; per tick exit
   assert.equal(h.ev.filter(e=>e==='heartbeat').length,before,'no heartbeat after the ACL stop');
   prot.many=null;h.restore();assert.ok(b0>=1);
   // UI 2 line shapes
-  assert.match(aclStopLine({code:'INBOX_ACL_WRITABLE',path:'C:\\Users\\User\\ResQ-Inbox',sid:OTHER_SID,mask:0x1301BF}),/הרשאה: M.*icacls "C:\\Users\\User\\ResQ-Inbox" \/remove:g \*S-1-5-21-9-9-9-1004/);
-  assert.match(aclStopLine({code:'ACL_INHERITANCE',path:'C:\\x',sid:null,mask:null}),/SID: — · הרשאה: \?/);
 });
 test('ACL inbox integrity (security 8): INBOX_ACL_WRITABLE on deliver (nothing written) and on the runner tick when delivery is on; RX alone is fine',async()=>{
   const home=tmp();const root=join(home,'ResQ-Inbox');mkdirSync(root);
@@ -595,10 +595,24 @@ test('ACL inbox integrity (security 8): INBOX_ACL_WRITABLE on deliver (nothing w
   assert.ok(prot.manyCalls.some(c=>c[0]===root),'inbox checked at startup');
   prot.many=(p)=>p===join(root,'grok')?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1301BF},{protected:false}):null;
   r.check();assert.equal(await r.done,EXIT.LOCAL_ACL);assert.equal(JSON.parse(out.at(-1)).stopped,'inbox_acl_writable');assert.equal(JSON.parse(out.at(-1)).code,'INBOX_ACL_WRITABLE');
-  assert.match(err[0],/INBOX_ACL_WRITABLE/);assert.match(err[0],/הרשאה: M/);
+  assert.match(err[0],/code=INBOX_ACL_WRITABLE /);assert.match(err[0],/right=M /);assert.match(err[0],/\/remove:g \*S-1-5-21-9-9-9-1004 then restart by hand/);
   prot.many=(p)=>p===root?withRule({sid:OTHER_SID,type:'Allow',inherited:false,mask:0x1200A9},{protected:false}):null;
   const r2=await startRunner({agent:'Grok',listen:'poll',deps:{...deps,out:()=>{}}});assert.equal(r2.listener.status().running,true,'RX (Codex sandbox) on the inbox is accepted');
+  // UI rec. 2: ONE aclMany call per tick covers the store AND the inbox (root + agent folder)
+  prot.manyCalls.length=0;r2.check();assert.equal(prot.manyCalls.length,1);
+  assert.ok(prot.manyCalls[0].includes(store.dir)&&prot.manyCalls[0].includes(root)&&prot.manyCalls[0].includes(join(root,'grok')));
   await r2.stop();
+  // security (non-blocking): a runtime failure of the INBOX part of the check counts in aclFailures like the store part:
+  // one failure tolerated, a success resets, two in a row -> exit 6 ACL_CHECK_FAILED
+  const out3=[],err3=[];const r3=await startRunner({agent:'Grok',listen:'poll',deps:{...deps,out:l=>out3.push(l),err:l=>err3.push(l)}});
+  prot.many=p=>{if(p===root)throw new Error('inbox acl read failed');return null;};
+  r3.check();assert.equal(r3.listener.status().running,true,'first inbox check failure tolerated');
+  prot.many=null;r3.check();assert.equal(r3.listener.status().running,true);
+  prot.many=p=>{if(p===root)throw new Error('inbox acl read failed');return null;};
+  r3.check();assert.equal(r3.listener.status().running,true);r3.check();
+  assert.equal(await r3.done,EXIT.LOCAL_ACL);assert.equal(JSON.parse(out3.at(-1)).code,'ACL_CHECK_FAILED');
+  assert.equal(err3.length,1);assert.match(err3[0],/^ResQ listener stopped \(exit 6\) code=ACL_CHECK_FAILED path="[^"]+" sid=- right=\? fix: run acl-watch\.ps1 -Path "[^"]+", then --status/);
+  prot.many=null;
 });
 test('ACL provisioning: rotate verifies the new store BEFORE revoking; migration writes delivery:false; status shows storeDir/legacyDir/aclFinding/credentialCurrent; delivery/ack/llm-key need a clean store',async()=>{
   const f=provisionFakes();const home=tmp();const prot=fakeProtector();const store=cs(home,prot);
@@ -654,4 +668,45 @@ test('static guard (t192u): acl-watch.ps1 is read-only, ASCII, and accepts an in
   assert.ok(/^[\x00-\x7F]*$/.test(ps),'ASCII only (Windows PowerShell 5.1 reads BOM-less scripts as ANSI)');
   assert.match(ps,/\$parentProblems = Check-Item \$parent \$true/,'file inheritance is judged by the parent folder rule');
   assert.match(ps,/exit 3/);assert.match(ps,/exit 2/);assert.match(ps,/exit 0/);
+});
+test('UI code review A + rec. 1: aclStopLine for EVERY code; ASCII facts first; icacls only for a real SID on an Allow/Deny rule; no middle dot, no bidi controls',()=>{
+  const P='C:\\Users\\User\\AppData\\Local\\resq-listeners',I='C:\\Users\\User\\ResQ-Inbox';
+  const BIDI=/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
+  const line=f=>{const l=aclStopLine(f);assert.doesNotMatch(l,BIDI,'no bidi control');assert.ok(!l.includes('\u00B7'),'no middle dot');
+    assert.ok(!l.includes('\n'));assert.match(l,/^ResQ listener stopped \(exit 6\) code=[A-Z_]+ /);assert.match(l,/אין הפעלה מחדש אוטומטית\.$/);
+    const ascii=l.slice(0,l.indexOf(' | '));assert.ok(/^[\x20-\x7E]+$/.test(ascii),'facts + fix are ASCII: '+ascii);return l;};
+  // commands: Allow -> /remove:g, Deny -> /remove:d, only with a real SID
+  let l=line({code:'ACL_OTHER_PRINCIPAL',path:P,sid:OTHER_SID,mask:0x1200A9,type:'Allow'});
+  assert.ok(l.includes(`code=ACL_OTHER_PRINCIPAL path="${P}" sid=${OTHER_SID} right=RX fix (after a manual check): icacls "${P}" /remove:g *${OTHER_SID} then --rotate | `));
+  l=line({code:'ACL_OTHER_PRINCIPAL',path:P,sid:'S-1-1-0',mask:0x1F01FF,type:'Deny'});assert.ok(l.includes(`icacls "${P}" /remove:d *S-1-1-0 then --rotate`));assert.match(l,/right=F /);
+  l=line({code:'INBOX_ACL_WRITABLE',path:I,sid:'S-1-5-32-545',mask:0x1301BF,type:'Allow'});assert.ok(l.includes(`icacls "${I}" /remove:g *S-1-5-32-545 then restart by hand`));
+  // no real SID / unknown rule type -> no command
+  for(const sid of [null,'Everyone','LD-COMPUTER\\Guest','S-1-','S-1-5-21-1 & calc','*S-1-1-0'])
+    assert.doesNotMatch(line({code:'ACL_OTHER_PRINCIPAL',path:P,sid,mask:0x1200A9,type:'Allow'}),/icacls/,String(sid));
+  assert.doesNotMatch(line({code:'ACL_OTHER_PRINCIPAL',path:P,sid:OTHER_SID,mask:0x1200A9,type:null}),/icacls/);
+  assert.match(line({code:'INBOX_ACL_WRITABLE',path:I,sid:OTHER_SID,mask:null,type:null}),/sid=S-1-5-21-9-9-9-1004 right=\? fix: check with acl-watch\.ps1 -Path "C:\\Users\\User\\ResQ-Inbox", fix by hand, then restart by hand \| /);
+  // OWNER, EMPTY, NO_ALLOW, UNKNOWN_USER, SCHEMA (and INHERITANCE): check with acl-watch.ps1, then --rotate; never a command
+  for(const code of ['ACL_OWNER','ACL_EMPTY','ACL_NO_ALLOW','ACL_UNKNOWN_USER','ACL_SCHEMA','ACL_INHERITANCE']){
+    const x=line({code,path:P,sid:code==='ACL_OWNER'?OTHER_SID:null,mask:null,type:code==='ACL_OWNER'?'Allow':null});
+    assert.match(x,new RegExp(`^ResQ listener stopped \\(exit 6\\) code=${code} path="[^"]+" sid=[^ ]+ right=\\? fix: check with acl-watch\\.ps1, then --rotate \\| `),x);
+    assert.doesNotMatch(x,/icacls|remove:/,code);}
+  // the check itself failed twice
+  l=line({code:'ACL_CHECK_FAILED',path:P});assert.ok(l.includes(`code=ACL_CHECK_FAILED path="${P}" sid=- right=? fix: run acl-watch.ps1 -Path "${P}", then --status, and send the output | `));
+  assert.match(line(null),/code=ACL_CHECK_FAILED sid=- right=\? fix: run acl-watch\.ps1 -Path "<folder>"/);
+  // unsafe path text is dropped, never echoed into a command
+  l=line({code:'ACL_OTHER_PRINCIPAL',path:'C:\\x" & calc "',sid:OTHER_SID,mask:0x1200A9,type:'Allow'});assert.doesNotMatch(l,/calc|icacls/);
+  l=line({code:'bad code; rm',path:P});assert.match(l,/code=ACL_CHECK_FAILED/);
+});
+test('UI rec. 2: aclMany is ONE capped spawn (20 s) so a tick cannot delay the 120 s heartbeat past 165 s',()=>{
+  const calls=[];const me='S-1-5-21-1-2-3-1001';const ok={me,owner:me,protected:true,rules:[{sid:me,type:'Allow',inherited:false,mask:0x1F01FF}]};
+  const p=createWindowsProtector({platform:'win32',exists:()=>true,spawn:(b,a,o)=>{calls.push(o);return {status:0,stdout:a[5]===SCRIPTS.aclMany?JSON.stringify(JSON.parse(o.input).map(()=>ok)):'eA=='};}});
+  p.aclMany(['C:\\x']);assert.equal(calls[0].timeout,ACL_MANY_TIMEOUT_MS);assert.equal(ACL_MANY_TIMEOUT_MS,20000);
+  assert.ok(HEARTBEAT_MS+ACL_MANY_TIMEOUT_MS<HEARTBEAT_FRESH_MS_UI,'120 s + 20 s < 165 s');
+  assert.ok(calls[0].maxBuffer>0);
+  p.protect(Buffer.from('x'));assert.equal(calls[1].timeout,30000,'DPAPI calls keep their own cap');
+  const ps=readSrc(new URL('./listener/win-protect.mjs',import.meta.url));
+  assert.equal((ps.match(/spawnSync\(|spawn\(/g)||[]).length,1,'still exactly one process start');
+  const runner=readSrc(new URL('./task-listener-run.mjs',import.meta.url)).replace(/^\s*\/\/.*$/gm,'');
+  const tick=runner.slice(runner.indexOf('const aclTick=()=>{'),runner.indexOf('const check=()=>{'));
+  assert.equal((tick.match(/store\.(verify|inboxFinding)\(/g)||[]).length,1,'one ACL call per tick');
 });

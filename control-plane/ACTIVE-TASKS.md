@@ -183,18 +183,26 @@ so the allowlist is unchanged; the UI names each blocked character with its line
 - **Per cycle (b):** `task-listener-run.mjs` checks the store BEFORE anything else (before config, token, Firestore and the
   first heartbeat) and again on every status tick (60 s), plus the inbox when delivery is on. A finding exits **6**
   (`EXIT.LOCAL_ACL`): no further heartbeat, no auto-restart (UI 1), stdout `{"agent","stopped":"local_acl_violation"|
-  "inbox_acl_writable","code"}` (no SID, no path), and ONE Hebrew stderr line with path, SID, right, the `icacls` fix and
-  "exit 6" (UI 2). One failed check is tolerated; two in a row stop with `ACL_CHECK_FAILED` (exit 6).
+  "inbox_acl_writable","code"}` (no SID, no path), and ONE stderr line (UI 2 + UI code review of 8a54571): ASCII facts
+  first, `ResQ listener stopped (exit 6) code=... path="..." sid=... right=...`, then the fix, then ` | ` and the Hebrew text.
+  No middle dot and no bidi control characters, so the command copies as is. An `icacls` command is printed only for a
+  real SID (`S-1-...`) on a known rule: `/remove:g` for Allow, `/remove:d` for Deny. OWNER, EMPTY, NO_ALLOW, UNKNOWN_USER,
+  SCHEMA and INHERITANCE print `check with acl-watch.ps1, then --rotate` with no command. One failed check (store OR inbox
+  part) is tolerated; two in a row stop with `ACL_CHECK_FAILED` (exit 6).
 - **`aclMany`:** one PowerShell spawn site; paths only from store constants, sent as JSON over stdin (max 16), validated
-  schema and exact count, maxBuffer + timeout. Access masks are compared numerically.
+  schema and exact count, maxBuffer + timeout. Access masks are compared numerically. Each tick makes ONE aclMany call (store
+  folder + files + inbox root/agent folder when delivery is on), capped at 20 s (`ACL_MANY_TIMEOUT_MS`), so a slow check
+  cannot hold the event loop long enough to push the 120 s heartbeat past 165 s (120 + 20 = 140 s).
 - **INBOX_ACL_WRITABLE (8):** W/M/F/D/WD/AD (Allow) on the inbox root or the agent folder for any principal other than the
   account, SYSTEM or Administrators fails closed on every deliver (nothing written) and on each cycle when delivery is on.
   Read/execute from others (the Codex RX grant on `ResQ-Inbox`) is allowed.
 - **Delivery/ack/LLM key** can be turned on only with a clean store (`requireCleanStore`). Migration writes `delivery:false`.
 - **UI (MUST_NOT):** no new heartbeat fields; the card never infers a cause. A stopped listener simply stops writing, so the
-  card shows "מנותק" by age alone: detection window ≈ 60 s (tick) + 165 s (`HEARTBEAT_FRESH_MS`) ≈ 4 min (UI 4).
+  card shows "מנותק" by age alone: detection window ≈ 60 s (tick) + 165 s (`HEARTBEAT_FRESH_MS`) ≈ 4 min for a finding
+  (UI 4), and up to ~5 min when the check itself fails (2 ticks = 120 s + 165 s = 285 s).
   Playwright "ACL UI 5 FRESH+1" pins the boundary (fresh at +165000 ms, "מנותק" at +165001 ms, server time via liveOffset).
-- **Watch (B):** run `powershell -NoProfile -File control-plane\listener\acl-watch.ps1 -Path %LOCALAPPDATA%\resq-listeners`
+- **Watch (B):** run `powershell -NoProfile -File control-plane\listener\acl-watch.ps1 -Path C:\Users\User\AppData\Local\resq-listeners`
+  (always an explicit `-Path`; security code verdict condition 2e)
   every 12 h and after every Codex update/reinstall (read-only; exit 0 clean, 2 violation, 3 missing). A file that inherits only
   the account from the locked folder is OK; a file under a parent with inheritance ON is a violation (fixed false positive).
 - **Residual risk (documented, accepted by the security review):** Codex commands that run OUTSIDE the sandbox or escalated

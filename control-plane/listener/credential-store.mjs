@@ -108,9 +108,12 @@ export function createCredentialStore({home,accountHome,platform=process.platfor
     },
     // Report-only (security E): whether the pre-migration folder still exists. Never opened, listed or read.
     legacyDirPresent(){try{fs.lstatSync(legacy);return true;}catch(e){if(e?.code==='ENOENT'||e?.code==='ENOTDIR')return false;throw e;}},
-    // ONE aclMany spawn over the folder and every present store file of every agent (paths only from store constants).
-    // Returns null (clean) or {code, path, sid, mask}; throws a safe code if the check itself cannot run.
-    verify(){
+    // ONE aclMany spawn over the folder and every present store file of every agent (paths only from store constants),
+    // plus, when given, the runner's validated inbox root + agent folder (task-inbox aclPaths()) in the SAME spawn
+    // (UI recommendation 2: one capped call per tick). Store findings first, then INBOX_ACL_WRITABLE.
+    // Returns null (clean) or {code, path, sid, mask, type}; throws a safe code if the check itself cannot run.
+    verify({inboxPaths=[]}={}){
+      if(!Array.isArray(inboxPaths)||inboxPaths.length>2||!inboxPaths.every(x=>typeof x==='string'))fail('ACL_MANY_INPUT');
       if(dir.toLowerCase().split(/[\\/]/).includes('work'))fail('CREDENTIAL_UNDER_WORK');
       rejectLinks(dir);if(!fs.lstatSync(dir).isDirectory())fail('CREDENTIAL_DIR_NOT_DIRECTORY');
       const entries=[{path:dir,directory:true}];
@@ -122,9 +125,11 @@ export function createCredentialStore({home,accountHome,platform=process.platfor
           entries.push({path:file,directory:false});
         }
       }
+      for(const path of inboxPaths)entries.push({path,inbox:true});
       const infos=protector.aclMany(entries.map(e=>e.path));
       if(!Array.isArray(infos)||infos.length!==entries.length)fail('ACL_SCHEMA');
-      for(let i=0;i<entries.length;i++){const f=aclFinding(infos[i],{directory:entries[i].directory});if(f)return Object.freeze({...f,path:entries[i].path});}
+      for(let i=0;i<entries.length;i++){if(entries[i].inbox)continue;const f=aclFinding(infos[i],{directory:entries[i].directory});if(f)return Object.freeze({...f,path:entries[i].path});}
+      for(let i=0;i<entries.length;i++){if(!entries[i].inbox)continue;const f=inboxWriteFinding(infos[i]);if(f)return Object.freeze({...f,path:entries[i].path});}
       return null;
     },
     // Security: inbox write integrity (INBOX_ACL_WRITABLE). paths = the validated inbox root and agent folder.

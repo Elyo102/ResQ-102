@@ -34,6 +34,9 @@ export const SCRIPTS=Object.freeze({
     +"[Console]::Out.Write((ConvertTo-Json -InputObject $o -Compress -Depth 5))"
 });
 export const ACL_MANY_MAX=16;
+// UI recommendation 2: ONE aclMany call per tick, capped at 20 s, so a slow check can never hold the event loop long enough
+// to push the 120 s heartbeat past HEARTBEAT_FRESH_MS (165 s): 120 + 20 = 140 s < 165 s.
+export const ACL_MANY_TIMEOUT_MS=20000;
 // Rights bits that let a principal change a folder's content or its security (W/M/F/D/WD/AD and generic write/all).
 export const WRITE_MASK=0x2|0x4|0x10|0x40|0x100|0x10000|0x40000|0x80000|0x10000000|0x40000000;
 export const TRUSTED_SYSTEM_SIDS=Object.freeze(['S-1-5-18','S-1-5-32-544']);   // LocalSystem, BUILTIN\Administrators
@@ -47,14 +50,14 @@ const rulesOf=info=>Array.isArray(info.rules)?info.rules:info.rules?[info.rules]
 // Pure policy (unit-tested on any OS): owner = me; every ACE belongs to me; a folder must not inherit.
 // aclFinding also names the offending SID and rights mask (for the local Hebrew log line only; never stdout/Firestore).
 export function aclFinding(info,{directory}){
-  if(!info||typeof info.me!=='string'||!/^S-1-5-21-[0-9-]+$/.test(info.me))return {code:'ACL_UNKNOWN_USER',sid:null,mask:null};
-  if(info.owner!==info.me)return {code:'ACL_OWNER',sid:typeof info.owner==='string'?info.owner:null,mask:null};
+  if(!info||typeof info.me!=='string'||!/^S-1-5-21-[0-9-]+$/.test(info.me))return {code:'ACL_UNKNOWN_USER',sid:null,mask:null,type:null};
+  if(info.owner!==info.me)return {code:'ACL_OWNER',sid:typeof info.owner==='string'?info.owner:null,mask:null,type:null};
   const rules=rulesOf(info);
-  if(rules.length===0)return {code:'ACL_EMPTY',sid:null,mask:null};
+  if(rules.length===0)return {code:'ACL_EMPTY',sid:null,mask:null,type:null};
   const other=rules.find(r=>!r||r.sid!==info.me);
-  if(other)return {code:'ACL_OTHER_PRINCIPAL',sid:typeof other?.sid==='string'?other.sid:null,mask:Number.isSafeInteger(other?.mask)?other.mask:null};
-  if(!rules.some(r=>r.type==='Allow'))return {code:'ACL_NO_ALLOW',sid:null,mask:null};
-  if(directory&&info.protected!==true)return {code:'ACL_INHERITANCE',sid:null,mask:null};
+  if(other)return {code:'ACL_OTHER_PRINCIPAL',sid:typeof other?.sid==='string'?other.sid:null,mask:Number.isSafeInteger(other?.mask)?other.mask:null,type:other?.type==='Allow'||other?.type==='Deny'?other.type:null};
+  if(!rules.some(r=>r.type==='Allow'))return {code:'ACL_NO_ALLOW',sid:null,mask:null,type:null};
+  if(directory&&info.protected!==true)return {code:'ACL_INHERITANCE',sid:null,mask:null,type:null};
   return null;
 }
 export function aclVerdict(info,opts){return aclFinding(info,opts)?.code??null;}
@@ -62,12 +65,12 @@ export function aclVerdict(info,opts){return aclFinding(info,opts)?.code??null;}
 // the inbox); any Allow rule with a write/delete/security bit for a principal other than me, SYSTEM or Administrators
 // fails closed. Owner must be me, SYSTEM or Administrators.
 export function inboxWriteFinding(info){
-  if(!info||typeof info.me!=='string'||!/^S-1-5-21-[0-9-]+$/.test(info.me))return {code:'ACL_UNKNOWN_USER',sid:null,mask:null};
+  if(!info||typeof info.me!=='string'||!/^S-1-5-21-[0-9-]+$/.test(info.me))return {code:'ACL_UNKNOWN_USER',sid:null,mask:null,type:null};
   const ok=sid=>sid===info.me||TRUSTED_SYSTEM_SIDS.includes(sid);
-  if(!ok(info.owner))return {code:'INBOX_ACL_WRITABLE',sid:typeof info.owner==='string'?info.owner:null,mask:null};
+  if(!ok(info.owner))return {code:'INBOX_ACL_WRITABLE',sid:typeof info.owner==='string'?info.owner:null,mask:null,type:null};
   for(const r of rulesOf(info)){
-    if(!r||typeof r.sid!=='string'||!Number.isSafeInteger(r.mask))return {code:'ACL_SCHEMA',sid:null,mask:null};
-    if(r.type==='Allow'&&!ok(r.sid)&&(r.mask&WRITE_MASK)!==0)return {code:'INBOX_ACL_WRITABLE',sid:r.sid,mask:r.mask};
+    if(!r||typeof r.sid!=='string'||!Number.isSafeInteger(r.mask))return {code:'ACL_SCHEMA',sid:null,mask:null,type:null};
+    if(r.type==='Allow'&&!ok(r.sid)&&(r.mask&WRITE_MASK)!==0)return {code:'INBOX_ACL_WRITABLE',sid:r.sid,mask:r.mask,type:'Allow'};
   }
   return null;
 }
@@ -87,11 +90,11 @@ export function minimalChildEnv(source){
 }
 export function createWindowsProtector({platform=process.platform,spawn=spawnSync,exists=existsSync,baseEnv={}}={}){
   const childEnv=Object.freeze(minimalChildEnv(baseEnv));
-  const run=(name,input)=>{
+  const run=(name,input,timeout=30000)=>{
     if(platform!=='win32')fail('DPAPI_WINDOWS_ONLY');
     if(!exists(POWERSHELL))fail('POWERSHELL_MISSING');
     const r=spawn(POWERSHELL,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',SCRIPTS[name]],
-      {input,encoding:'utf8',windowsHide:true,shell:false,timeout:30000,maxBuffer:1<<20,env:{...childEnv}});
+      {input,encoding:'utf8',windowsHide:true,shell:false,timeout,maxBuffer:1<<20,env:{...childEnv}});
     if(r.error||r.status!==0||typeof r.stdout!=='string')fail('PROTECTOR_'+name.toUpperCase()+'_FAILED');   // stderr never surfaced
     return r.stdout;
   };
@@ -107,7 +110,7 @@ export function createWindowsProtector({platform=process.platform,spawn=spawnSyn
     // One spawn for many paths. Returns the parsed infos (same order, exact count) or throws a safe code.
     aclMany(paths){
       if(!Array.isArray(paths)||paths.length<1||paths.length>ACL_MANY_MAX||!paths.every(p=>typeof p==='string'&&/^[A-Za-z]:\\/.test(p)&&!p.includes('\n')))fail('ACL_MANY_INPUT');
-      let out;try{out=JSON.parse(run('aclMany',JSON.stringify(paths)));}catch(e){fail(e?.code?.startsWith?.('PROTECTOR_')?e.code:'ACL_READ_FAILED');}
+      let out;try{out=JSON.parse(run('aclMany',JSON.stringify(paths),ACL_MANY_TIMEOUT_MS));}catch(e){fail(e?.code?.startsWith?.('PROTECTOR_')?e.code:'ACL_READ_FAILED');}
       const list=Array.isArray(out)?out:[out];
       if(list.length!==paths.length||!list.every(validAclInfo))fail('ACL_SCHEMA');
       return list;

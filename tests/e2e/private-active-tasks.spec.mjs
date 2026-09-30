@@ -1,5 +1,6 @@
 import {test,expect} from '../lib/contained-test.mjs';
 import {readFileSync} from 'node:fs';
+import {HEARTBEAT_FRESH_MS} from '../../control-plane/web/active-tasks-model.mjs';   // FRESH+1 uses the real constant (UI review)
 // Synthetic harness for the active-tasks panel and the agent-card liveness line: real view/model/private-view code,
 // mocked API (no cloud). UI review conditions 1-11 (control-plane/ACTIVE-TASKS.md).
 const source=new URL('../../control-plane/web/',import.meta.url);
@@ -610,7 +611,7 @@ test('536d253 LOW: focus stays on the card\'s "אחרון:" link when the card r
  await expect(card(page,'Grok').locator('.agent-ack a')).toBeFocused();expect(errors).toEqual([]);
 });
 test('ACL UI 5 FRESH+1: after the last forward-moving heartbeat the card says "מאזין" through HEARTBEAT_FRESH_MS and "מנותק" at +1 ms, against SERVER time (liveOffset, client clock 1 h ahead); a stopped listener (exit 6) writes nothing, so the card goes מנותק by age alone',async({page})=>{
- const FRESH=165000,H=3600000;
+ const FRESH=HEARTBEAT_FRESH_MS,H=3600000;expect(FRESH).toBe(165000);
  await page.clock.install({time:new Date('2026-09-30T20:00:00Z')});
  const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);
  const line=card(page,'Grok').locator('.agent-listener');

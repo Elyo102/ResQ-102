@@ -63,6 +63,8 @@ test('Windows listener credential: DPAPI CurrentUser round trip, ACL lock-down, 
       assert.equal(store.inboxFinding([inbox]),null);
       icacls([inbox,'/grant','*S-1-5-32-545:(OI)(CI)(M)']);
       const f=store.inboxFinding([inbox]);assert.equal(f.code,'INBOX_ACL_WRITABLE');assert.equal(f.sid,'S-1-5-32-545');assert.equal(f.path,inbox);
+      // the runner tick: ONE aclMany call over store + inbox (real PowerShell, 20 s cap)
+      const g=store.verify({inboxPaths:[inbox]});assert.equal(g.code,'INBOX_ACL_WRITABLE');assert.equal(g.type,'Allow');assert.equal(g.path,inbox);
     });
     await t.test('acl-watch.ps1 (read-only): locked folder 0; a file inheriting from the locked folder 0; extra principal on the file 2; file under an unlocked parent 2; missing 3',()=>{
       const store=createCredentialStore({home:top,accountHome:top,protector:p});

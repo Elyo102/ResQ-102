@@ -40,17 +40,39 @@ export const MAX_HEARTBEAT_DENIALS=2;
 export const STATUS_MS=60000;
 export const EXIT=Object.freeze({OK:0,STARTUP:1,CREDENTIAL_DEAD:2,POLL_FAILURES:3,STREAM_RESTARTS:4,ACL_DENIED:5,LOCAL_ACL:6});
 export const MAX_ACL_CHECK_FAILURES=2;   // security: one transient failure of the check itself is tolerated, two in a row stop
-// UI condition 2: ONE local Hebrew line (stderr / the runner log). Path, SID and right are local facts for the owner;
-// they never reach stdout counters or Firestore. Never a secret or file content.
+// UI condition 2 (+ UI code review of 8a54571, A and recommendation 1): ONE local line on stderr / the runner log.
+// ASCII facts first (code=... path="..." sid=... right=...), then the copyable fix, then the Hebrew text. No middle dot and
+// no bidi control characters, so the command can be copied as is. A command is printed only for a real SID (^S-1-) on a
+// known Allow/Deny rule: /remove:g for Allow, /remove:d for Deny. Path, SID and right are local facts for the owner; they
+// never reach stdout counters or Firestore. Never a secret or file content.
+const STOP_SID=/^S-1-[0-9]+(-[0-9]+)+$/;
+const STOP_PATH=/^(?:[A-Za-z]:\\|\/)[^"\r\n]*$/;   // absolute (Windows drive or POSIX for tests), no quote or line break
+const NO_COMMAND_CODES=Object.freeze(['ACL_OWNER','ACL_EMPTY','ACL_NO_ALLOW','ACL_UNKNOWN_USER','ACL_SCHEMA','ACL_INHERITANCE']);
 export function aclStopLine(f){
-  if(!f||f.code==='ACL_CHECK_FAILED')return 'ResQ מאזין נעצר (exit 6): בדיקת ההרשאות של תיקיית המאזין נכשלה פעמיים ברציפות. אין הפעלה מחדש אוטומטית. '
-    +'הרץ acl-watch.ps1 ואת --status בסקריפט ההקצאה ושלח את הפלט.';
-  const where=typeof f.path==='string'?f.path:'—',sid=typeof f.sid==='string'?f.sid:'—',right=rightsName(f.mask);
-  const fix=f.code==='INBOX_ACL_WRITABLE'
-    ?`icacls "${where}" /remove:g *${sid} (רק אחרי בדיקה ידנית), ואז הפעלה ידנית מחדש`
-    :f.code==='ACL_INHERITANCE'?'אל תתקן אוטומטית: בדוק עם acl-watch.ps1, ואז --rotate בסקריפט ההקצאה'
-    :`אל תתקן אוטומטית: בדוק עם acl-watch.ps1, הסר את ה-ACE (icacls "${where}" /remove:g *${sid}) ואז --rotate בסקריפט ההקצאה`;
-  return `ResQ מאזין נעצר (exit 6): הרשאה לא מורשית (${f.code}). נתיב: ${where} · SID: ${sid} · הרשאה: ${right} · תיקון: ${fix}. אין הפעלה מחדש אוטומטית.`;
+  const code=typeof f?.code==='string'&&/^[A-Z_]{1,40}$/.test(f.code)?f.code:'ACL_CHECK_FAILED';
+  const path=typeof f?.path==='string'&&STOP_PATH.test(f.path)?f.path:null;
+  const sid=typeof f?.sid==='string'&&STOP_SID.test(f.sid)?f.sid:null;
+  const type=f?.type==='Allow'||f?.type==='Deny'?f.type:null;
+  const facts=`code=${code}${path?` path="${path}"`:''} sid=${sid??'-'} right=${rightsName(f?.mask)}`;
+  const watch=`acl-watch.ps1 -Path "${path??'<folder>'}"`;
+  let fix,he;
+  if(code==='ACL_CHECK_FAILED'){
+    fix=`fix: run ${watch}, then --status, and send the output`;
+    he='בדיקת ההרשאות של תיקיית המאזין נכשלה פעמיים ברציפות. מריצים את acl-watch.ps1 ואת --status ושולחים את הפלט.';
+  }else if(sid&&type&&path&&!NO_COMMAND_CODES.includes(code)){
+    const cmd=`icacls "${path}" ${type==='Deny'?'/remove:d':'/remove:g'} *${sid}`;
+    if(code==='INBOX_ACL_WRITABLE'){fix=`fix (after a manual check): ${cmd} then restart by hand`;
+      he='הרשאת כתיבה זרה על תיבת הדואר. לא מתקנים אוטומטית: בודקים ידנית, מסירים אותה בפקודה שבשורה ומפעילים מחדש ידנית.';}
+    else{fix=`fix (after a manual check): ${cmd} then --rotate`;
+      he='הרשאה זרה על תיקיית המאזין. לא מתקנים אוטומטית: בודקים עם acl-watch.ps1, מסירים אותה בפקודה שבשורה ואז --rotate.';}
+  }else if(code==='INBOX_ACL_WRITABLE'){
+    fix=`fix: check with ${watch}, fix by hand, then restart by hand`;
+    he='הבעלות או ההרשאות של תיבת הדואר לא תקינות. בודקים עם acl-watch.ps1, מתקנים ידנית ומפעילים מחדש ידנית.';
+  }else{
+    fix='fix: check with acl-watch.ps1, then --rotate';
+    he='הרשאות תיקיית המאזין לא תקינות. בודקים עם acl-watch.ps1 ואז --rotate.';
+  }
+  return `ResQ listener stopped (exit 6) ${facts} ${fix} | המאזין נעצר (exit 6). ${he} אין הפעלה מחדש אוטומטית.`;
 }
 const MODES=['push','poll'];
 
@@ -125,13 +147,14 @@ export async function startRunner({agent,listen='push',deps}){
     if(finished)return;finished=true;clearT(statusTimer);await listener.stop();saveStreamStats();try{grpc?.close?.();}catch{}line({stopped:reason,...extra});resolveDone(code);
   }
   stopFn=stop;
-  // Per status tick (60 s): store folder + files, and the inbox when delivery is on. true = the runner is stopping.
+  // Per status tick (60 s): store folder + files, and the inbox when delivery is on, in ONE capped aclMany call.
+  // A failed check (store OR inbox part) counts in aclFailures. true = the runner is stopping.
   let aclFailures=0;
   const aclTick=()=>{
     let f;
-    try{f=store.verify();if(!f&&inbox)f=store.inboxFinding(inbox.aclPaths());aclFailures=0;}
+    try{f=store.verify({inboxPaths:inbox?inbox.aclPaths():[]});aclFailures=0;}   // ONE aclMany call (<= 20 s) per tick
     catch(e){aclFailures++;lastCode=safeCode(e);
-      if(aclFailures>=MAX_ACL_CHECK_FAILURES){err(aclStopLine({code:'ACL_CHECK_FAILED'}));void stop(EXIT.LOCAL_ACL,'local_acl_check_failed',{code:'ACL_CHECK_FAILED'});return true;}
+      if(aclFailures>=MAX_ACL_CHECK_FAILURES){err(aclStopLine({code:'ACL_CHECK_FAILED',path:store.dir}));void stop(EXIT.LOCAL_ACL,'local_acl_check_failed',{code:'ACL_CHECK_FAILED'});return true;}
       return false;}
     if(!f)return false;
     err(aclStopLine(f));
