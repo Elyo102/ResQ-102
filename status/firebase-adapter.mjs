@@ -1,5 +1,7 @@
 // SDK and Google Identity Services are injected for local regression tests.
 // This adapter never writes events and never persists or logs OAuth access tokens.
+// Its only writes are owner dispatch requests (create queued / cancel own queued), enforced by Firestore Rules.
+// No GitHub token, no CI trigger and no executor call exists in the browser.
 export const PROJECT = 'resq-agent-control-20260928';
 export const APP_ID = '1:802712493259:web:5634c433be7c020b7c4f4e';
 
@@ -113,6 +115,58 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
           signingOut=false;
         }).finally(()=>{signOutPromise=null;});
         return signOutPromise;
+      }
+    },
+    dispatch:{
+      uid(){return authorized()?authorizedUid:null;},
+      // auth_time from the ID token (getIdToken(true) refreshes the token but NOT auth_time).
+      async authTime(){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const result=await auth.currentUser.getIdTokenResult();
+        const ms=Date.parse(result?.authTime);return Number.isSafeInteger(ms)?ms:null;
+      },
+      // Two bounded listeners (queued pins + latest 50); never a listener on all of history.
+      watch({next,error}){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const col=sdk.collection(db,'dispatchRequests');
+        const parts={active:null,latest:null};let stopped=false;
+        const map=d=>{const x=d.data();const keys=Object.keys(x);
+          const base=['agent','taskType','note','status','batchId','createdAt','createdBy'];
+          if(!base.every(k=>keys.includes(k))||!keys.every(k=>base.includes(k)||k==='cancelledAt')||typeof x.createdAt?.toMillis!=='function')throw Error('INVALID_DISPATCH');
+          return {id:d.id,agent:x.agent,taskType:x.taskType,note:x.note,status:x.status,batchId:x.batchId,createdBy:x.createdBy,
+            createdAt:x.createdAt.toMillis(),cancelledAt:typeof x.cancelledAt?.toMillis==='function'?x.cancelledAt.toMillis():null};};
+        const listen=(name,q)=>sdk.onSnapshot(q,{includeMetadataChanges:true},snapshot=>{
+          if(stopped)return;if(!authorized()){error();return;}
+          // No optimistic rows: ignore cache and pending-write snapshots, show server-confirmed state only.
+          if(snapshot.metadata.fromCache!==false||snapshot.metadata.hasPendingWrites!==false)return;
+          try{parts[name]=snapshot.docs.map(map);}catch{error();return;}
+          if(parts.active&&parts.latest)next([...parts.active,...parts.latest]);
+        },()=>{if(!stopped)error();});
+        const stops=[listen('active',sdk.query(col,sdk.where('status','==','queued'),sdk.limit(50))),
+          listen('latest',sdk.query(col,sdk.orderBy('createdAt','desc'),sdk.limit(50)))];
+        return()=>{stopped=true;for(const stop of stops){try{stop();}catch{}}};
+      },
+      // Atomic batch of creates with client-generated v4 ids; retries reuse the same ids.
+      async create(payload,timeoutMs=12000){
+        if(!authorized()||payload?.rows?.some(r=>r.data.createdBy!==authorizedUid))throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        const batch=sdk.writeBatch(db);
+        for(const {id,data} of payload.rows)batch.set(sdk.doc(db,'dispatchRequests',id),{...data,createdAt:sdk.serverTimestamp()});
+        let timer;
+        try{await Promise.race([batch.commit(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('DISPATCH_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
+      },
+      async verify(ids){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        return Promise.all(ids.map(async id=>{const snap=await sdk.getDocFromServer(sdk.doc(db,'dispatchRequests',id));
+          if(!snap.exists())return {id,exists:false};const x=snap.data();
+          return {id,exists:true,batchId:x.batchId,agent:x.agent,taskType:x.taskType,createdBy:x.createdBy,status:x.status};}));
+      },
+      async cancel(id,timeoutMs=12000){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        let timer;
+        try{await Promise.race([sdk.updateDoc(sdk.doc(db,'dispatchRequests',id),{status:'cancelled',cancelledAt:sdk.serverTimestamp()}),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('DISPATCH_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
       }
     },
     subscribe({limit,next,error}){
