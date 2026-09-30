@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { isCleanText, eolProblems } from './eol-guard.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repo = process.env.RESQ_REPO ? path.resolve(process.env.RESQ_REPO) : '/tmp/resq-join';

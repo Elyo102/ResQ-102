@@ -30,7 +30,7 @@
     "performance": "node performance.mjs && node board-performance.mjs && node schedule-performance.mjs && node scale-3000-employees.mjs",
     "perf:pilot": "node perf-regression-fixes.mjs && node perf-failure-paths.mjs",
     "live:headers": "node live-header-smoke.mjs",
-    "release:validate": "npm run all && node ../release-attestation.mjs write",
+    "release:validate": "node run-hours46-release.mjs",
     "all": "npm run test:inventory && npm run pages:source && npm run bulletin:receipts && npm run pwa:coordinator && npm run home:command && npm run forms:submit && npm run schedule:roster && npm run schedule:contract && npm run schedule:trial && npm run schedule:month-authority && npm run attendance:corrections && npm run perf:pilot && npm run hr:attachments:core && npm run hr:month:boundaries && npm run file-import && npm run static && npm run hr:requests:wiring && npm run hr:release:wiring && npm run browser && npm run fleet:history && npm run faults:building && npm run browser:mobile && npm run hr:archive && npm run hr:ui && npm run maintenance && npm run saas:capacity && npm run saas:test && npm run security:test && npm run dr:test && npm run metrics:test && npm run cost-usage:test && npm run mobile:test",
     "schedule:roster": "node ../functions/schedule-roster-candidates.test.js",
     "home:command": "node role-view.mjs && node role-view-mutations.mjs && node role-view-page-contract.mjs && node role-view-cross-screen-source.mjs && node role-view-schedule-write-source.mjs && node ../functions/home-command-center.test.js && node home-command-wiring.mjs && node home-command-dashboard-browser.mjs && node role-view-mobile-browser.mjs && node role-view-schedule-browser.mjs",

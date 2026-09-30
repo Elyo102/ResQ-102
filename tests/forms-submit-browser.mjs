@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const { chromium } = createRequire(import.meta.url)('playwright');
+const { chromium } = createRequire(import.meta.url)('./lib/contained-playwright.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const original = fs.readFileSync(path.join(root, 'forms.html'), 'utf8');
 const origin = 'http://127.0.0.1:42017';

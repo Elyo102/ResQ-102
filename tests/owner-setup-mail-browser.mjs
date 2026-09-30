@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {chromium} from './lib/contained-playwright.cjs';
 const source=fs.readFileSync(new URL('../owner-setup-mail-ui.js',import.meta.url),'utf8').replace('export function','function');
 const browser=await chromium.launch();
 try{

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const between=(text,start,end)=>{const a=text.indexOf(start),b=text.indexOf(end,a);assert(a>=0&&b>a,`source anchors ${start}`);return text.slice(a,b);};
 const browser=await chromium.launch({headless:true});

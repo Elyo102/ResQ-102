@@ -8,15 +8,39 @@
  * רץ על Chromium דרך Playwright. רוחבי חובה: 1440, 390, 360.
  */
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
+import http from 'node:http';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // מסכי החבילה הם אב-טיפוס לבדיקות בלבד. הם נשמרים מתחת tests
 // כדי שלא ייכנסו בטעות ל-Firebase Hosting שמפרסם את שורש הריפו.
-const PAGE = 'file://' + join(here, 'fixtures', 'schedule-planner', 'schedule-planner.html');
-const EXEC = '/opt/pw-browsers/chromium';
+const fixtureRoot = join(here, 'fixtures', 'schedule-planner');
+let fixtureHtml = fs.readFileSync(join(fixtureRoot, 'schedule-planner.html'), 'utf8');
+for (const [from, to] of [
+  ['<link rel="preconnect" href="https://fonts.googleapis.com">', ''],
+  ['<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>', ''],
+  ['https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap', '/fixture-font.css']
+]) {
+  if (fixtureHtml.split(from).length !== 2) throw Error('Planner fixture dependency changed');
+  fixtureHtml = fixtureHtml.replace(from, to);
+}
+const server = http.createServer((req, res) => {
+  const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+  if (pathname === '/schedule-planner.html') {
+    res.writeHead(200, { 'Content-Type':'text/html; charset=utf-8' }); res.end(fixtureHtml);
+  } else if (pathname === '/schedule-planner.js') {
+    res.writeHead(200, { 'Content-Type':'text/javascript; charset=utf-8' });
+    res.end(fs.readFileSync(join(fixtureRoot, 'schedule-planner.js')));
+  } else if (pathname === '/fixture-font.css') {
+    res.writeHead(200, { 'Content-Type':'text/css' }); res.end('');
+  } else if (pathname === '/favicon.ico') { res.writeHead(204); res.end(); }
+  else { res.writeHead(404); res.end('not found'); }
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const PAGE = 'http://127.0.0.1:' + server.address().port + '/schedule-planner.html';
 
 let pass = 0;
 const fails = [];
@@ -26,12 +50,9 @@ async function t(name, fn) {
 }
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
 
-async function launch() {
-  try { return await chromium.launch({ executablePath: EXEC }); }
-  catch (e) { return await chromium.launch(); }
-}
-
-const browser = await launch();
+let browser;
+try {
+browser = await chromium.launch();
 
 async function open(width, height) {
   const page = await browser.newPage({ viewport: { width, height } });
@@ -39,14 +60,10 @@ async function open(width, height) {
   const fontOnly = [];
   page.on('pageerror', (e) => errors.push(String(e && e.message)));
   page.on('requestfailed', (r) => {
-    // הגופן נטען מ-CDN. בסביבת הבדיקה אין יציאה לרשת, וזו תקלת סביבה
-    // ולא באג בדף — יש מחסנית גופנים חלופית. נרשם ומדווח בנפרד.
-    if (/fonts\.(googleapis|gstatic)\.com/.test(r.url())) { fontOnly.push(r.url()); return; }
     errors.push('request failed: ' + r.url());
   });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
-    if (/ERR_TUNNEL_CONNECTION_FAILED|Failed to load resource/.test(m.text()) && fontOnly.length) return;
     errors.push('console: ' + m.text());
   });
   await page.goto(PAGE);
@@ -288,7 +305,7 @@ for (const width of [390, 360]) {
   await m.page.close();
 }
 
-await t('תלות הגופן החיצוני מדווחת ואינה שוברת את הדף', async () => {
+await t('מחסנית גופן חלופי נשמרת עם CSS גופן מקומי ריק', async () => {
   const p = await open(1280, 900);
   const font = await p.page.evaluate(() => getComputedStyle(document.body).fontFamily);
   ok(/Heebo/.test(font), 'מחסנית הגופנים אינה כוללת Heebo');
@@ -296,7 +313,10 @@ await t('תלות הגופן החיצוני מדווחת ואינה שוברת �
   await p.page.close();
 });
 
-await browser.close();
+} finally {
+  try { if (browser) await browser.close(); }
+  finally { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+}
 
 console.log((fails.length ? '✗' : '✓') + ' schedule-planner-browser: ' + pass + '/' + (pass + fails.length));
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

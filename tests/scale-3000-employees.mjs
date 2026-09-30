@@ -25,7 +25,8 @@
 // חסום ע"י ה-allowlist). מה שכן ידוע בוודאות מקריאת המקור: קוד הלקוח
 // (people.html) בונה את השאילתה עם limit(25) קשיח בקוד, לא כפרמטר
 // שאפשר לעקוף מהצד הזה — ראה ההערה ב-run().
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,7 +36,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/people.html');
   const file = path.join(root, urlPath === '/' ? 'people.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -119,9 +120,10 @@ function check(cond, label, detail) {
   else { bad++; console.log('✗ ' + label + (detail ? '\n    ' + detail : '')); }
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' }).catch(() => chromium.launch());
+const browser = await chromium.launch();
+let context;
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'he-IL' });
+  context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'he-IL' });
   await prepare(context);
   const page = await context.newPage();
   await page.goto('http://127.0.0.1:' + port + '/people.html', { waitUntil: 'load' });
@@ -150,8 +152,23 @@ try {
   console.log('');
   console.log('זמן חיפוש בפועל מול 3,000 רשומות: ' + elapsed + 'ms');
 } finally {
-  await browser.close();
-  server.close();
+  const teardownErrors = [];
+  let phase = 'context';
+  const watchdog = setTimeout(() => {
+    console.error('SCALE_TEARDOWN_TIMEOUT', phase, 'owned test resources may need cleanup');
+    process.exit(1);
+  }, 30000);
+  const finish = async (name, action) => {
+    phase = name; console.log('SCALE_TEARDOWN_START', name);
+    try { await action(); console.log('SCALE_TEARDOWN_DONE', name); }
+    catch (error) { teardownErrors.push(error); }
+  };
+  try {
+    await finish('context', async () => { if (context) await context.close(); });
+    await finish('browser', () => browser.close());
+    await finish('server', () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  } finally { clearTimeout(watchdog); }
+  if (teardownErrors.length) throw new AggregateError(teardownErrors, 'Scale fixture teardown failed');
 }
 
 console.log('');

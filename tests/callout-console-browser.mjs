@@ -1,6 +1,7 @@
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,7 +71,7 @@ assert.ok(sendSource.indexOf('if (rehearsal) {') < sendSource.indexOf('pushToUse
 assert.match(consoleSource, /לא נשלחה התראה לאף עובד/);
 assert.match(consoleSource, /where\('by_uid', '==', session\.uid\)/);
 const types = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.png':'image/png', '.ico':'image/x-icon' };
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   let pathname = decodeURIComponent(request.url.split('?')[0]);
   const file = path.join(root, pathname === '/' ? 'callout.html' : pathname);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { response.writeHead(404); response.end('missing'); return; }

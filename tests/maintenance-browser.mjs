@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { chromium } = require('playwright');
+const { chromium } = require('./lib/contained-playwright.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let source = fs.readFileSync(path.join(root, 'maintenance-client.js'), 'utf8')
   .replace(/export function createMaintenanceUi/, 'function createMaintenanceUi')

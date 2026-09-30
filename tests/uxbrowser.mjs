@@ -1,5 +1,6 @@
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/login.html');
   const file = path.join(root, urlPath === '/' ? 'login.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end('no'); return; }

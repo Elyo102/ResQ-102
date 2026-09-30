@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 const root=new URL('../',import.meta.url);
 const link=fs.readFileSync(new URL('invitation-link.js',root),'utf8').replaceAll('export function','function');
 const ui=fs.readFileSync(new URL('hr-invitation-ui.js',root),'utf8').replace(/^import[^\n]+\n/,'').replace('export function','function');

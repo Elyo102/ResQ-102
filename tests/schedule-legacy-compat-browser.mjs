@@ -2,8 +2,9 @@
 // Firebase is replaced with local stubs; this test cannot reach production.
 
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,7 @@ const types = {
   '.css':'text/css; charset=utf-8', '.json':'application/json'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   const file = path.join(root, urlPath);

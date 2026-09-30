@@ -1,5 +1,5 @@
 // Responsive layout regression: local HTML/CSS only, no Firebase or production.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';

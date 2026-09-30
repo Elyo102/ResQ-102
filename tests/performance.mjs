@@ -1,8 +1,9 @@
 // מדידת זמן עד שמסך הנוכחות נהיה שימושי בחיבור איטי מדומה.
 // הנתונים מקומיים וסינתטיים; כל קריאת Firestore מקבלת השהיה
 // קבועה כדי לחשוף waterfall של בקשות סדרתיות.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,7 @@ const stub = path.join(here, 'stub');
 const lagMs = 180;
 const maxInteractiveMs = 1900;
 const maxDataSpanMs = 1500;
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/attendance.html');
   const file = path.join(root, urlPath === '/' ? 'attendance.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

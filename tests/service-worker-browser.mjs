@@ -22,7 +22,7 @@
 // הכתובת הוא הדרך היחידה שנמצאה בזמן הזמין; שאר הקובץ — כל לוגיקת
 // המטמון, activate, fetch ו-offline — נשאר בדיוק כפי שהוא בייצור.
 // לוגיקת ה-messaging עצמה אינה הנושא של הבדיקה הזו.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { MANIFEST } from './version-release.mjs';
 // 42H.20 · ביקורת Codex, חוסם 4 · מפתח המטמון נגזר מהמניפסט, לא מקובע.
 const CURRENT_CACHE = MANIFEST.sw_cache_key;
@@ -113,7 +113,7 @@ function check(cond, label, detail) {
   else { bad++; console.log('✗ ' + label + (detail ? '\n    ' + detail : '')); }
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--headless=new'] }).catch(() => chromium.launch());
+const browser = await chromium.launch();
 
 try {
   // ---------- 1) cold load: התקנה ראשונה, מטמון נבנה, אתחול מוצלח ----------

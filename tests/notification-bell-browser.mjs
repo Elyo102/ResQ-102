@@ -7,8 +7,9 @@
 // הרוחבים 320/360/390, אין מונה שלא נבדק שהוא אמיתי, נגיש במקלדת,
 // ונחסם נכון בזמן תצוגת-תפקיד בדיוק כמו קישורי ניווט אחרים.
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,8 +38,19 @@ renderNav(claims, params.get('current') || 'attendance.html', 'בדיקה', pres
 window.__navReady = true;
 </script></body></html>`;
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+  // Navigation-only fixture: real mode/reminder behavior has dedicated suites.
+  if (pathname === '/mode-controller.js') {
+    res.writeHead(200, { 'Content-Type': mime['.js'] });
+    res.end('export function startModeController(){} export function stopModeController(){}');
+    return;
+  }
+  if (pathname === '/notification-reminder-entry.js') {
+    res.writeHead(200, { 'Content-Type': mime['.js'] });
+    res.end('export function configureNotificationReminder(){}');
+    return;
+  }
   if (pathname === '/__bell-test.html') {
     res.writeHead(200, { 'Content-Type': mime['.html'] });
     res.end(fixture);

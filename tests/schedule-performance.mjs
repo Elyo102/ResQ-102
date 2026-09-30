@@ -2,8 +2,9 @@
 // הביצועים והאבטחה הרלוונטית: URL/PWA ישן מעביר במהירות למנוע החדש,
 // שמציג את הסידור הישן רק דרך שני קוראי השרת המאובטחים.
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,7 @@ const types = {
   '.js':'text/javascript; charset=utf-8', '.json':'application/json'
 };
 
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.join(root, pathname === '/' ? 'schedule.html' : pathname.replace(/^\/+/, ''));
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

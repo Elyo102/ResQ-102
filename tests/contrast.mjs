@@ -29,8 +29,9 @@
 // בגלל שזה הסף שמתחתיו טקסט מפסיק להיקרא במסך טלפון
 // באור יום, וזה בדיוק תנאי העבודה של כבאי בחצר התחנה
 // באילת.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { createContainedServer } from './lib/localize-worker.mjs';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
 // (תיקיית העבודה/...), ולכן הבדיקות רצו רק במחשב אחד.
@@ -45,7 +46,7 @@ const ROOT = __APP, STUB = __j(__TESTS, "stub");
 let PORT = 0;
 const T = { '.html':'text/html; charset=utf-8', '.js':'text/javascript',
             '.css':'text/css', '.json':'application/json' };
-const srv = http.createServer((q, r) => {
+const srv = createContainedServer((q, r) => {
   let p = decodeURIComponent(q.url.split('?')[0]);
   if (p === '/') p = '/index.html';
   const f = path.join(ROOT, p);

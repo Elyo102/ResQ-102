@@ -14,18 +14,44 @@
  * (--manager-heading / --callout-heading) שהיו כפופים לאותו באג.
  */
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
+import http from 'node:http';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
-const EXEC = '/opt/pw-browsers/chromium';
-
-async function launch() {
-  try { return await chromium.launch({ executablePath: EXEC }); }
-  catch (e) { return await chromium.launch(); }
+// Explicit CSS-only fixture: real markup/styles, no app/Auth/PWA execution.
+// Script removal applies only to these served copies, never product files.
+const pages = new Map();
+for (const [file, scriptCount] of [['login.html',4], ['schedule-management.html',1], ['callout.html',1]]) {
+  const original = fs.readFileSync(join(root, file), 'utf8');
+  const scripts = original.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) || [];
+  assert.equal(scripts.length, scriptCount, file + ': explicit CSS-only script boundary');
+  const served = original.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+  assert.equal(/<script\b/i.test(served), false);
+  const styles = html => html.match(/<style\b[^>]*>[\s\S]*?<\/style>|<link\b[^>]*rel="stylesheet"[^>]*>/gi) || [];
+  assert.deepEqual(styles(served), styles(original), file + ': real styles unchanged');
+  pages.set('/'+file, served);
 }
+const assets = new Map([
+  ['theme.css','text/css'], ['bulletin.css','text/css'], ['favicon.ico','image/x-icon'],
+  ['resq-banner.jpg','image/jpeg'], ['resq-180.png','image/png'], ['resq-192.png','image/png'],
+  ['resq-512.png','image/png'], ['manifest.json','application/manifest+json']
+]);
+const server = http.createServer((req, res) => {
+  const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+  if (pages.has(pathname)) {
+    res.writeHead(200, { 'Content-Type':'text/html; charset=utf-8' }); res.end(pages.get(pathname));
+  } else if (assets.has(pathname.slice(1))) {
+    res.writeHead(200, { 'Content-Type':assets.get(pathname.slice(1)) });
+    res.end(fs.readFileSync(join(root, pathname.slice(1))));
+  } else { res.writeHead(404); res.end('not found'); }
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const base = 'http://127.0.0.1:' + server.address().port + '/';
 
 let pass = 0;
 const fails = [];
@@ -35,7 +61,9 @@ async function t(name, fn) {
 }
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
 
-const browser = await launch();
+let browser;
+try {
+browser = await chromium.launch();
 
 async function computedVar(page, name) {
   return page.evaluate((v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim(), name);
@@ -46,8 +74,8 @@ await t('a plain page with only theme.css ignores device dark/light with no expl
   const ctxDark = await browser.newContext({ colorScheme: 'dark' });
   const pageLight = await ctxLight.newPage();
   const pageDark = await ctxDark.newPage();
-  await pageLight.goto('file://' + join(root, 'login.html'));
-  await pageDark.goto('file://' + join(root, 'login.html'));
+  await pageLight.goto(base + 'login.html');
+  await pageDark.goto(base + 'login.html');
   const bgLight = await computedVar(pageLight, '--bg');
   const bgDark = await computedVar(pageDark, '--bg');
   ok(bgLight === bgDark, 'device scheme changed --bg with no explicit choice: ' + bgLight + ' vs ' + bgDark);
@@ -61,7 +89,7 @@ await t('a plain page with only theme.css ignores device dark/light with no expl
 
 await t('explicit data-theme="dark" still produces the original dark palette', async () => {
   const page = await browser.newPage();
-  await page.goto('file://' + join(root, 'login.html'));
+  await page.goto(base + 'login.html');
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   const bg = await computedVar(page, '--bg');
   ok(bg === '#15171a', 'explicit dark did not restore the original dark background: ' + bg);
@@ -77,8 +105,8 @@ for (const { file, headingVar } of [
     const ctxDark = await browser.newContext({ colorScheme: 'dark' });
     const pageLight = await ctxLight.newPage();
     const pageDark = await ctxDark.newPage();
-    await pageLight.goto('file://' + join(root, file));
-    await pageDark.goto('file://' + join(root, file));
+    await pageLight.goto(base + file);
+    await pageDark.goto(base + file);
     const bgLight = await computedVar(pageLight, '--bg');
     const bgDark = await computedVar(pageDark, '--bg');
     const headLight = await computedVar(pageLight, headingVar);
@@ -91,7 +119,7 @@ for (const { file, headingVar } of [
 
   await t(file + ': explicit data-theme="dark" restores the original heading color', async () => {
     const page = await browser.newPage();
-    await page.goto('file://' + join(root, file));
+    await page.goto(base + file);
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
     const head = await computedVar(page, headingVar);
     ok(head === '#e8eaed', file + ': ' + headingVar + ' under explicit dark is not var(--txt): ' + head);
@@ -99,6 +127,9 @@ for (const { file, headingVar } of [
   });
 }
 
-await browser.close();
+} finally {
+  try { if (browser) await browser.close(); }
+  finally { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+}
 if (fails.length) { console.error(fails.length + ' failed'); process.exitCode = 1; }
 else console.log(pass + '/' + pass + ' theme default-light checks passed');

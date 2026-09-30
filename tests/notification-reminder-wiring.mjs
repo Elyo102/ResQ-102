@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {chromium} from './lib/contained-playwright.cjs';
 const read=n=>fs.readFileSync(new URL('../'+n,import.meta.url),'utf8');
 const core=read('notification-reminder.js').replaceAll('export async function','async function').replaceAll('export function','function');
 const entry=read('notification-reminder-entry.js').replace(/^import .*;\r?\n/gm,'').replace('export function','function');

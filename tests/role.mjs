@@ -1,6 +1,7 @@
 // בדיקת תפקידים: מוודאת שכל תפקיד רואה בדיוק את מה שמותר לו.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { createContainedServer } from './lib/localize-worker.mjs';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
 // (תיקיית העבודה/...), ולכן הבדיקות רצו רק במחשב אחד.
@@ -13,7 +14,7 @@ const __APP   = __j(__TESTS, '..');
 const ROOT=process.env.ROLE_ROOT||__APP, STUB=__j(__TESTS, "stub");
 let PORT=0;
 const T={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
-const srv=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
+const srv=createContainedServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
   if(p==='/')p='/index.html';const f=path.join(ROOT,p);
   if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){r.writeHead(404);r.end('no');return;}
   r.writeHead(200,{'Content-Type':T[path.extname(f)]||'text/plain'});r.end(fs.readFileSync(f));});

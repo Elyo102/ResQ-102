@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { createContainedServer } from './lib/localize-worker.mjs';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
@@ -15,7 +16,7 @@ const faults = [{id:'history',vehicle_id:'retired',vehicle_name:'Retired test ve
   {id:'open-history',vehicle_id:'retired',kind:'vehicle',title:'Historical open fault',status:'open',severity:'minor',by_uid:'stub-uid',created_key:'2026-09-01T00:00:00Z'},
   {id:'orphan-history',vehicle_id:'missing',kind:'damage',title:'Orphan historical fault',status:'open',severity:'minor',created_key:'2026-09-01T00:00:00Z'}];
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json'};
-const server = http.createServer((request,response) => {
+const server = createContainedServer((request,response) => {
   const file = path.resolve(root, '.' + decodeURIComponent(new URL(request.url,'http://127.0.0.1').pathname));
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     response.writeHead(404); response.end(); return;
