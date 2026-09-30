@@ -44,7 +44,8 @@ test('Windows inbox paths: junction component, \\\\?\\ prefix, 8.3 short names, 
     });
     await t.test('8.3 short names are not canonical: rejected (as root and as a component)',t2=>{
       const longName=join(top,'long-directory-name-for-short-name-test');fs.mkdirSync(join(longName,'inner'),{recursive:true});
-      const short=execFileSync('cmd.exe',['/d','/c',`for %I in ("${longName}") do @echo %~sI`],{encoding:'utf8'}).trim();
+      // /s + verbatim arguments: cmd strips only the outer quotes, the path stays quoted (node would escape inner quotes).
+      const short=execFileSync('cmd.exe',['/d','/s','/c',`"for %I in ("${longName}") do @echo %~sI"`],{encoding:'utf8',windowsVerbatimArguments:true}).trim();
       t2.diagnostic('short form: '+short);
       if(!short||short.toLowerCase()===longName.toLowerCase()){t2.skip('8.3 short names are disabled on this volume');return;}
       assert.equal(fs.existsSync(short),true);
