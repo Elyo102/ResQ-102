@@ -236,11 +236,12 @@ test('CLIs: strict arguments (explicit project, Grok|Codex only, one operation);
 });
 
 // Provisioning flow with in-memory fakes (the emulator e2e runs the same code against the Rules).
-function provisionFakes({emailEnabled=true,collide=null}={}){
+function provisionFakes(opts={}){
+  const {emailEnabled=true,collide=null}=opts;const signupBlocked=Object.hasOwn(opts,'signupBlocked')?opts.signupBlocked:true;
   const users=new Map();const docs=new Map([['private_access/owner',{uid:'ownerUid001'}]]);if(collide)docs.set(collide+'/'+'newUid00001',{agent:'Grok'});
   const log=[];let at=S-100;
   const idtk={
-    providerStatus:async()=>({emailPasswordEnabled:emailEnabled,disabledUserSignup:true,subtype:'FIREBASE_AUTH'}),
+    providerStatus:async()=>({emailPasswordEnabled:emailEnabled,disabledUserSignup:signupBlocked,subtype:'FIREBASE_AUTH'}),
     lookupEmail:async e=>{const u=[...users.values()].find(x=>x.email===e);return u?{...u}:null;},
     createUser:async({email,password})=>{log.push('createUser');assert.ok(password.length>=40);users.set('newUid00001',{uid:'newUid00001',email,password,claims:{},disabled:false});return 'newUid00001';},
     setClaims:async(uid,c)=>{log.push('setClaims');users.get(uid).claims=c;},
@@ -252,11 +253,17 @@ function provisionFakes({emailEnabled=true,collide=null}={}){
     commit:async w=>{log.push('commit');docs.set(w[0].update.name.split('/documents/')[1],decodeFields(w[0].update.fields));return {writeResults:[{}]};}};
   return {idtk,ownerDb,users,docs,log};
 }
-test('provisioning: provider must be enabled; uid collision disables the new user before claims/doc; revokedAfter = auth_time of the fresh token',async()=>{
+test('provisioning: provider must be enabled and client sign-up blocked (PROVIDER_SIGNUP_OPEN); uid collision disables the new user before claims/doc; revokedAfter = auth_time of the fresh token',async()=>{
   const base=()=>({mode:'production',projectId:PROJECT,getCerts,now:()=>NOW,sleep:async()=>{},home:tmp()});
   const f0=provisionFakes({emailEnabled:false});
   await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_EMAIL_PASSWORD_DISABLED'));
   assert.deepEqual(f0.log,[]);
+  for(const open of [false,undefined,null,'true']){
+    const fs0=provisionFakes({signupBlocked:open});
+    await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...fs0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_SIGNUP_OPEN'),String(open));
+    await assert.rejects(provisionListener({op:'rotate',agent:'Grok',deps:{...base(),...fs0,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),code('PROVIDER_SIGNUP_OPEN'));
+    assert.deepEqual(fs0.log,[],'nothing created when sign-up is open');
+  }
   for(const col of ['private_publishers','private_budget_publishers','private_listeners']){
     const f=provisionFakes({collide:col});
     await assert.rejects(provisionListener({op:'create',agent:'Grok',deps:{...base(),...f,store:createCredentialStore({home:tmp(),protector:fakeProtector()})}}),SafeError);

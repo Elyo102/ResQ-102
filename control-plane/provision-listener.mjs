@@ -3,7 +3,7 @@
 // - Uses the owner's existing firebase-tools admin session token (in memory, never printed). No service account.
 // - Only Grok and Codex (LISTENER_AGENTS). Gemini/Claude get no identity.
 // - create: Email/Password provider must already be enabled (read-only check; this script never changes project
-//   config) -> admin-create user listener-<key>@<project>.invalid with a random in-memory password -> uid checks
+//   config) and client sign-up must stay blocked (disabledUserSignup===true, else PROVIDER_SIGNUP_OPEN) -> admin-create user listener-<key>@<project>.invalid with a random in-memory password -> uid checks
 //   (not the owner uid, not in private_publishers / private_budget_publishers, no existing private_listeners doc;
 //   on a collision the new user is disabled and the script stops) -> custom claims {control_plane_role:'listener',
 //   control_plane_agent} -> ONE password sign-in -> verify the ID token -> private_listeners/<uid> =
@@ -95,6 +95,7 @@ export async function provisionListener({op,agent,deps}){
   }
   const provider=await idtk.providerStatus();
   if(!provider.emailPasswordEnabled)fail('PROVIDER_EMAIL_PASSWORD_DISABLED');
+  if(provider.disabledUserSignup!==true)fail('PROVIDER_SIGNUP_OPEN');   // security run verdict condition 1: client sign-up must stay blocked
   const owner=await ownerUid();
   if(op==='create'){
     if(await idtk.lookupEmail(email))fail('ALREADY_PROVISIONED');
