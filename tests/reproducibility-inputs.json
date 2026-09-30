@@ -69,6 +69,7 @@
     "tests/playwright.config.mjs",
     "tests/package.json",
     "tests/package-lock.json",
+    ".firebase.rules-ci.json",
     "rules-test/package.json",
     "rules-test/package-lock.json",
     "functions/package.json",

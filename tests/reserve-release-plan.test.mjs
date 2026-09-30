@@ -4,6 +4,13 @@ import fs from 'node:fs';
 import {buildReserveReleasePlan as reserveReleasePlan,NATIVE_OPS_SUITES,assertSplitReleaseWorkflow,SPLIT_WORKFLOW_STEPS} from './reserve-release-plan.mjs';
 import {nativeOpsEnvironment,assertNativeOpsResult} from './run-native-ops.mjs';
 const fixture=()=>({all:'node run-contained.mjs all','all:inner':'npm run test:reproducibility && npm run test:inventory && npm run pages:source && npm run static && npm run browser',static:'node before.mjs && node ops-backup-test.mjs && node middle.mjs && node ops-restore-drill-test.mjs && node after.mjs'});
+test('Rules CI uses isolated loopback 8191 and the unchanged repository Rules',()=>{
+ const config=JSON.parse(fs.readFileSync(new URL('../.firebase.rules-ci.json',import.meta.url),'utf8'));
+ assert.deepEqual(config,{firestore:{rules:'firestore.rules'},emulators:{firestore:{host:'127.0.0.1',port:8191},ui:{enabled:false},singleProjectMode:true}});
+ assert.equal(fs.realpathSync(new URL('../'+config.firestore.rules,import.meta.url)),fs.realpathSync(new URL('../firestore.rules',import.meta.url)));
+ const workflow=fs.readFileSync(new URL('../.github/workflows/tests.yml',import.meta.url),'utf8');
+ assert.match(workflow,/name: כללי האבטחה מול Firestore מקומי\r?\n        env:\r?\n          GCLOUD_PROJECT: demo-resq\r?\n        run: firebase emulators:exec --config \.firebase.rules-ci.json --only firestore --project demo-resq "cd rules-test && npm test"/);
+});
 test('plan removes only the exact two separately executed suites and retains all ordering',()=>{
  const input=fixture(),original=JSON.stringify(input),plan=reserveReleasePlan(input);
  assert.deepEqual(plan.steps,[{kind:'npm',name:'test:reproducibility'},{kind:'npm',name:'test:inventory'},{kind:'npm',name:'pages:source'},...['before.mjs','middle.mjs','after.mjs'].map(file=>({kind:'node',file})),{kind:'npm',name:'browser'}]);

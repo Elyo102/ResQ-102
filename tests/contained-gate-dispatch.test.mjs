@@ -17,7 +17,7 @@ require(process.env.RESQ_DISPATCH_GUARD).assertActive();
 fs.writeFileSync(process.env.RESQ_DISPATCH_CAPTURE,JSON.stringify({
  argv:process.argv.slice(2),project:process.env.GCLOUD_PROJECT,
  googleProject:process.env.GOOGLE_CLOUD_PROJECT,emulator:process.env.FIRESTORE_EMULATOR_HOST,
- evidence:process.env.RESQ_CONTAINMENT_DIR
+ evidence:process.env.RESQ_CONTAINMENT_DIR,scriptShell:process.env.npm_config_script_shell
 }));
 if(process.env.RESQ_DISPATCH_POISON==='yes'){
  fs.appendFileSync(path.join(process.env.RESQ_CONTAINMENT_DIR,'violations.log'),JSON.stringify({pid:process.pid,reason:'synthetic-dispatch-proof'})+'\\n');
@@ -60,6 +60,7 @@ for (const [gate, inner] of [['all','all:inner'],['test:all','test:all:inner'],[
     assert.equal(capture.googleProject,'demo-resq');
     assert.equal(capture.emulator,'127.0.0.1:8191');
     assert.ok(path.isAbsolute(capture.evidence));
+    if (process.platform === 'linux') assert.equal(capture.scriptShell,'/bin/sh');
     assert.match(result.stdout,/"violations":false/);
   });
 }

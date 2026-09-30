@@ -22,6 +22,7 @@ const env = { ...process.env, RESQ_CONTAINMENT_DIR: evidence,
   NODE_OPTIONS: `--require ${JSON.stringify(guard)}`,
   GCLOUD_PROJECT: 'demo-resq', GOOGLE_CLOUD_PROJECT: 'demo-resq', FIREBASE_CONFIG: '{"projectId":"demo-resq"}', METADATA_SERVER_DETECTION: 'none' };
 for (const key of ['GOOGLE_APPLICATION_CREDENTIALS', 'FIREBASE_TOKEN', 'ANTHROPIC_API_KEY', 'XAI_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY']) delete env[key];
+if (process.platform === 'linux') env.npm_config_script_shell = '/bin/sh';
 console.log('Local containment evidence:', evidence);
 const child = spawn(process.execPath, [process.env.npm_execpath, 'run', innerGate], { cwd: here, env, stdio: 'inherit', windowsHide: true });
 const result = await new Promise(resolve => {
