@@ -1,4 +1,5 @@
 'use strict';
+const { projectCourseHours } = require('./attendance-hours-calculator');
 
 // Inert projection only: callers must authorize and successfully read each
 // station-scoped source before invoking this module. It does not grant access,
@@ -69,7 +70,7 @@ function projectEmployeeHours(input) {
     storedTotal = hoursValue(report.total_hours);
   }
   const seen = new Set();
-  const rows = input.attendance.map(record => {
+  const baseRows = input.attendance.map(record => {
     if (!plain(record) || record.month !== month || employeeNumber(record.emp_number) !== emp
         || (own(record, 'uid') && record.uid !== person.uid)) fail('attendance-identity-mismatch');
     const date = dayKey(record.date, month);
@@ -84,6 +85,13 @@ function projectEmployeeHours(input) {
     }
     return Object.freeze(out);
   }).sort((a, b) => a.date.localeCompare(b.date));
+  let rows = baseRows;
+  if (input.course_month) {
+    if (input.course_month.month !== month || input.course_month.owner_uid !== person.uid) fail('invalid-course-credit');
+    try { rows = projectCourseHours(baseRows, input.course_month).days; }
+    catch (_) { fail('invalid-course-credit'); }
+    for (const row of rows) seen.add(row.date);
+  }
   const warnings = [];
   const detailTotal = rows.some(row => row.hours === null) ? null
     : Math.round(rows.reduce((sum, row) => sum + row.hours, 0) * 100) / 100;
@@ -105,6 +113,7 @@ function projectEmployeeHours(input) {
     declared_day_keys: declaredDays === null ? null : Object.freeze(declaredDays),
     detail_provenance: 'current_attendance_not_historical_snapshot',
     rows: Object.freeze(rows), warnings: Object.freeze(warnings),
+    ...(input.course_month ? { course_month: input.course_month } : {}),
     next_action: state === 'approved' ? 'none' : state === 'submitted' ? 'command_approval'
       : state === 'missing' ? 'employee_submit' : 'employee_confirm'
   });

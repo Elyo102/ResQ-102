@@ -206,9 +206,12 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {}, 
         const value = snap.data();
         if (!plain(value) || value.schema !== 'hr-request-v1' || value.station_id !== sid
           || typeof value.owner_uid !== 'string' || !value.owner_uid
-          || !ABSENCE_KINDS.includes(value.kind)) { malformed += 1; continue; }
+          || (!ABSENCE_KINDS.includes(value.kind) && value.kind !== 'course')) { malformed += 1; continue; }
         const days = daysInMonth(value.from_date, value.to_date, month);
         if (!days.length) { malformed += 1; continue; }
+        // Course credit belongs to the approved monthly report, not absence counters.
+        // Keep validating its identity and dates before excluding this known kind.
+        if (value.kind === 'course') continue;
         if (value.decision !== 'approved' && value.decision !== 'pending') continue;
         const bucket = byUid.get(value.owner_uid) || { approved: new Map(), pending: new Map() };
         const side = value.decision === 'approved' ? bucket.approved : bucket.pending;

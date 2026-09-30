@@ -197,10 +197,10 @@ if (!globalThis[STATE]) {
       if (process.env.GCLOUD_PROJECT !== 'demo-resq' || process.env.GOOGLE_CLOUD_PROJECT !== 'demo-resq'
         || process.env.FIREBASE_CONFIG !== '{"projectId":"demo-resq"}' || !ownedCapability()) deny('unsafe-owned-emulator-environment');
     } else {
-      if (!/^(127\.0\.0\.1|localhost):8191$/.test(process.env.FIRESTORE_EMULATOR_HOST)
+      if (!['127.0.0.1:8191', 'localhost:8191', '127.0.0.1:8199'].includes(process.env.FIRESTORE_EMULATOR_HOST)
       || process.env.GCLOUD_PROJECT !== 'demo-resq'
       || (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_PROJECT !== 'demo-resq')) deny('unsafe-emulator-environment');
-      registerLoopbackPort(8191);
+      registerLoopbackPort(Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]));
     }
   }
   function assertChildEnvironment(options, file) {

@@ -4,7 +4,7 @@ import { assertHrQueryTarget } from './hr-query-target.mjs';
 
 const valid = { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8191', GCLOUD_PROJECT: 'demo-resq' };
 test('both repository emulator configurations accept only exact loopback endpoints', () => {
-  for (const host of ['127.0.0.1:8080', 'localhost:8080', '127.0.0.1:8191', 'localhost:8191']) {
+  for (const host of ['127.0.0.1:8080', 'localhost:8080', '127.0.0.1:8191', 'localhost:8191', '127.0.0.1:8199']) {
     assert.doesNotThrow(() => assertHrQueryTarget({ ...valid, FIRESTORE_EMULATOR_HOST: host }));
     assert.doesNotThrow(() => assertHrQueryTarget({ ...valid, FIRESTORE_EMULATOR_HOST: host,
       GOOGLE_CLOUD_PROJECT: 'demo-resq' }));
@@ -12,7 +12,7 @@ test('both repository emulator configurations accept only exact loopback endpoin
 });
 test('remote, ambiguous, malformed and unconfigured emulator endpoints fail closed', () => {
   for (const host of [undefined, '', 'firestore.googleapis.com:443', '0.0.0.0:8080',
-    '127.1:8080', '[::1]:8080', 'localhost:443', 'localhost:8081', 'localhost:08191',
+    '127.1:8080', '[::1]:8080', 'localhost:443', 'localhost:8081', 'localhost:08191', 'localhost:8199', '127.0.0.1:8198',
     'http://localhost:8080', 'user@localhost:8080', 'localhost:8080/path',
     'localhost:8080?x=1', 'localhost:8080#x', 'localhost:8080\n',
     '127.0.0.1:8191\r\n', ' localhost:8080', 'localhost:8080 ', 'LOCALHOST:8080']) {

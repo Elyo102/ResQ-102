@@ -82,7 +82,7 @@ export function reportHtml(head, rows) {
       if (!a && !b) return '—';
       return '<span class="rng">' + esc(a || '—') + '</span>';
     };
-    const times = r.start
+    const times = r.start && r.course_overlay !== true
       ? '<td><span class="rng">' + esc(r.start) + '</span></td>' +
         '<td><span class="rng">' + esc(r.end || '—') + '</span>' +
           (r.end_day === 1 ? ' למחרת' : r.end_day === 2 ? ' מחרתיים' : '') + '</td>'
@@ -91,7 +91,8 @@ export function reportHtml(head, rows) {
     // אין כאן סימון "לא צוינה סיבה". השמירה חסומה בלי נימוק
     // בימים שדורשים אותו, ולכן יום כזה לא יכול להגיע לדוח —
     // וכיתוב שלא יופיע לעולם הוא רעש.
-    const note = esc(r.reason || r.notes || '');
+    const note = esc(r.reason || r.notes || '') + (r.course_overlay === true
+      ? ' · קורס מאושר לפי הסבב המקורי; זיכוי תקן פעם אחת' + (r.base_day_type ? ' · הדיווח המקורי נשמר' : '') : '');
 
     const colorClass = ['reserve','reserve_shift'].includes(r.day_type) ? 'day-reserve'
       : ['sick','vacation','course'].includes(r.day_type) ? 'day-' + r.day_type : '';
@@ -102,7 +103,7 @@ export function reportHtml(head, rows) {
       times +
       '<td>' + esc(r.site_name || 'לא צוינה') + '</td>' +
       '<td class="txt">' + note +
-        (r.start2 ? ' <span class="rng">(' + esc(r.start2) + '–' +
+        (r.start2 && r.course_overlay !== true ? ' <span class="rng">(' + esc(r.start2) + '–' +
                     esc(r.end2) + ')</span>' + (r.end_day2 === 1 ? ' למחרת' : r.end_day2 === 2 ? ' מחרתיים' : '') : '') + '</td>' +
       '<td class="hrs">' + (r.hours == null ? '—' : r.hours) + '</td>' +
     '</tr>';

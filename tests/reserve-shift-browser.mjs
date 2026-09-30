@@ -19,13 +19,15 @@ const style = source.match(/<style[^>]*>([\s\S]*?)<\/style>/)[1];
 const origin = 'http://127.0.0.1:41993';
 const harness = `
 import { DAY_TYPES, REASON_TYPES, SHAPES, shapeOf, needsTimes, calcHours, reasonWhy,
-  guessDayOffset, dayTypeHe, isSplit, retroLabel } from '/hours.js';
+  guessDayOffset, dayTypeHe, isSplit, retroLabel, monthTotal } from '/hours.js';
 import { reportHtml } from '/report.js';
+import { projectCourseRows, renderCourseTimeline } from '/course-timeline.js';
 import { canSelectReserveShift } from '/reserve-shift-policy.js';
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 const key='2026-09-29', mySite='', sites=[{id:'fixed',name:'תחנה קבועה',fixed_hours:25}], SUBJ={uid:'fixture'},
   overrides=[], rotations=[], swaps=[], DOWS=['א','ב','ג','ד','ה','ו','ש'], CREW_HE={}, CREW_SHORT={};
 let records={}, pendingCorrectionOperation=null;
+let courseMonth={schema:'attendance-course-month-v1',employee_number:'1',month:'2026-09',owner_uid:'fixture',revision:0,days:{},periods:{}};
 const locked=()=>false, captureMonthWrite=()=>({month:'2026-09',viewer:'fixture',auth:1,lifecycle:1}), sameMonthWrite=()=>true,
   baseTimes=()=>({start:'08:00',end:'16:00'}), myGuardOn=()=>null, workingOn=()=>true,
   onOther=()=>false, localToday=()=>key, siteHoursOf=id=>id==='fixed'?25:0,
@@ -43,6 +45,10 @@ window.callActualCorrection=callCorrection;
 window.retryPending=()=>structuredClone(pendingCorrectionOperation);
 window.openRecord=record=>{window.originalRecord=record;return editDay(key,record);};
 window.showRecord=record=>{records={[key]:record};renderRows([]);$('report').innerHTML=reportHtml({month:'2026-09',total:calcHours(record,25)},[{...record,date:key,day_type_he:dayTypeHe(record.day_type),hours:calcHours(record,25)}]);};
+window.showCourse=month=>{courseMonth=month;records={'2026-09-01':{date:'2026-09-01',day_type:'regular',shape:'regular',start:'07:00',end:'07:00',end_day:1,hours:24}};renderRows([]);
+ const rows=projectCourseRows(Object.values(records),courseMonth);$('report').innerHTML=reportHtml({month:month.month,total:monthTotal(rows,()=>25)},rows);
+ let timeline=document.getElementById('courseTestTimeline');if(timeline)timeline.remove();timeline=document.createElement('div');timeline.id='courseTestTimeline';timeline.append(renderCourseTimeline(Object.values(month.periods)[0],month.month));document.body.append(timeline);
+ return {total:monthTotal(rows,()=>25),base:structuredClone(records)};};
 window.ready=true;
 `;
 const browser = await chromium.launch();
@@ -56,7 +62,7 @@ try {
       if (url.pathname === '/') return route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><style>${style}</style><div id="dlg"></div><table><tbody id="rows"></tbody></table><div id="report"></div><script type="module" src="/harness.js"></script></html>`});
       if (url.pathname === '/harness.js') return route.fulfill({contentType:'text/javascript',body:harness});
       if (url.pathname === '/reserve-shift-policy.js') return route.fulfill({contentType:'text/javascript',body:browserPolicy({creationEnabled})});
-      if (['/hours.js','/report.js','/reserve-shift-policy.js'].includes(url.pathname)) return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(new URL('..'+url.pathname,import.meta.url),'utf8')});
+      if (['/hours.js','/report.js','/reserve-shift-policy.js','/course-timeline.js'].includes(url.pathname)) return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(new URL('..'+url.pathname,import.meta.url),'utf8')});
       return route.abort();
     });
     const page = await context.newPage();
@@ -197,6 +203,16 @@ try {
       });
       assert.deepEqual(result.error,{code:'correction-uncertain',uncertain:true});
       assert.deepEqual(result.calls[0],result.calls[1]);assert.equal(result.after,null);
+    });
+    for(const count of [9,10,11])await check('approved course '+count+' original shifts red timeline and exact single credit',async()=>{
+      const id='d'.repeat(64),days=Array.from({length:count},(_,i)=>({date:'2026-09-'+String(i+1).padStart(2,'0'),credit_hours:20}));
+      const snapshot={schema:'course-credit-v1',approval_revision:1,from_date:'2026-09-01',to_date:'2026-09-30',owner_uid:'fixture',employee_number:'1',crew:'A',role:'firefighter',days,total_hours:count*20,source_label:'original-crew-cycle-at-hr-approval',source_digest:'e'.repeat(64)};
+      const month={schema:'attendance-course-month-v1',employee_number:'1',month:'2026-09',owner_uid:'fixture',revision:1,periods:{[id]:snapshot},days:Object.fromEntries(days.map(day=>[day.date,{case_id:id,approval_revision:1,credit_hours:20}]))};
+      const result=await page.evaluate(m=>showCourse(m),month);assert.equal(result.total,count*20);assert.equal(result.base['2026-09-01'].hours,24);
+      assert.equal(await page.locator('#rows tr.day-course').count(),count);assert.equal(await page.locator('#report tr.day-course').count(),count);
+      assert.match(await page.locator('#courseTestTimeline').textContent(),new RegExp(count+' משמרות מקוריות'));
+      assert.equal(await page.locator('#rows button').count(),1);assert.match(await page.locator('#rows button').textContent(),/המקורי/);
+      assert.doesNotMatch(await page.locator('#report').textContent(),/07:00/);
     });
     assert.deepEqual(errors,[]); await context.close();
   }

@@ -10,9 +10,10 @@ if (Number(process.versions.node.split('.')[0]) !== 22) throw Error('Node22 requ
 const gate = process.argv[2];
 const innerGate = resolveContainedGate(gate);
 if ([process.env.GCLOUD_PROJECT, process.env.GOOGLE_CLOUD_PROJECT].some(value => value && value !== 'demo-resq')) throw Error('Non-demo project refused');
-if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8191') throw Error('Non-loopback or unexpected emulator refused');
+const emulatorEndpoints = ['127.0.0.1:8191', '127.0.0.1:8199'];
+if (process.env.FIRESTORE_EMULATOR_HOST && !emulatorEndpoints.includes(process.env.FIRESTORE_EMULATOR_HOST)) throw Error('Non-loopback or unexpected emulator refused');
 if (process.env.FIREBASE_CONFIG && JSON.parse(process.env.FIREBASE_CONFIG).projectId !== 'demo-resq') throw Error('Non-demo Firebase configuration refused');
-if (gate === 'test:all' && (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8191' || process.env.GCLOUD_PROJECT !== 'demo-resq')) throw Error('Explicit demo-resq loopback emulator required');
+if (gate === 'test:all' && (!emulatorEndpoints.includes(process.env.FIRESTORE_EMULATOR_HOST) || process.env.GCLOUD_PROJECT !== 'demo-resq')) throw Error('Explicit demo-resq loopback emulator required');
 if (!process.env.npm_execpath || !fs.existsSync(process.env.npm_execpath)) throw Error('Invoke through the registered npm script');
 console.log('Containment inventory:', JSON.stringify(checkInventory()));
 const here = fileURLToPath(new URL('.', import.meta.url));

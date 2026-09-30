@@ -6,15 +6,16 @@ import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/ru
 import {doc,setDoc,getDoc,getDocs,updateDoc,deleteDoc,deleteField,collection,query,limit,serverTimestamp,Timestamp} from 'firebase/firestore';
 import {createAtomicBudget,BUDGET_ROOT,PRINCIPAL,operationId,TASK_BINDINGS} from '../control-plane/atomic-budget.mjs';
 import {budgetFixture} from '../control-plane/budget-fixture.mjs';
-if(process.env.FIRESTORE_EMULATOR_HOST!=='127.0.0.1:8191'||process.env.GCLOUD_PROJECT!=='demo-resq')throw Error('LOCAL_EMULATOR_REQUIRED');
+if(!['127.0.0.1:8191','127.0.0.1:8199'].includes(process.env.FIRESTORE_EMULATOR_HOST)||process.env.GCLOUD_PROJECT!=='demo-resq')throw Error('LOCAL_EMULATOR_REQUIRED');
+const emulatorPort=Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]);
 const projectId='demo-resq-budget-'+process.pid;
 const fragment=readFileSync(new URL('../control-plane/firestore-budget.rules.fragment',import.meta.url),'utf8');
 assert.doesNotMatch(fragment,/rules_version\s*=|service cloud\.firestore/);
 const rules=readFileSync(new URL('../control-plane/firestore.rules',import.meta.url),'utf8');
 assert.ok(rules.replace(/\r\n/g,'\n').includes(fragment.replace(/\r\n/g,'\n').trimEnd()));
-let environment=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8191,rules}});
+let environment=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:emulatorPort,rules}});
 const prefix='projects/'+projectId+'/databases/(default)/documents/';
-const root='http://127.0.0.1:8191/v1/'+prefix.slice(0,-1);
+const root='http://127.0.0.1:'+emulatorPort+'/v1/'+prefix.slice(0,-1);
 const decode=v=>{
  if('stringValue'in v)return v.stringValue;if('integerValue'in v)return Number(v.integerValue);
  if('booleanValue'in v)return v.booleanValue;if('timestampValue'in v)return Timestamp.fromDate(new Date(v.timestampValue));
@@ -264,7 +265,7 @@ try{
    const expression=`(timestamp.date(${year}, ${month}, 1) - duration.value(${seconds}, 's'))`;
    const derived=rules.replace(body[0],body[0].replaceAll('request.time',expression));
    await environment.cleanup();
-   const clockEnv=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8191,rules:derived}});
+   const clockEnv=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:emulatorPort,rules:derived}});
    // Same project and transport; update environment handle for seed/cleanup.
    environment=clockEnv;await seed();const w=await candidate();
    if(allowed)await transport.commit(w);

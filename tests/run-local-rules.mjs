@@ -6,9 +6,9 @@ import path from 'node:path';
 // An explicit local emulator must already be running. Never start cloud tools
 // or reuse an arbitrary ambient host/project when this gate is invoked.
 if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('Node22 required');
-if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8191' ||
+if (!['127.0.0.1:8191', '127.0.0.1:8199'].includes(process.env.FIRESTORE_EMULATOR_HOST) ||
     process.env.GCLOUD_PROJECT !== 'demo-resq') {
-  throw new Error('Start the local emulator: FIRESTORE_EMULATOR_HOST=127.0.0.1:8191, GCLOUD_PROJECT=demo-resq required');
+  throw new Error('Owned loopback emulator on 8191 or 8199, GCLOUD_PROJECT=demo-resq required');
 }
 const cwd = fileURLToPath(new URL('../rules-test/', import.meta.url));
 const scripts = JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts;

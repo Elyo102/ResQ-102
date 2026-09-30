@@ -11,6 +11,76 @@ const { calculateAttendanceDerived } = require('./attendance-hours-calculator');
 const { projectEmployeeHours } = require('./hr-hours-model');
 const reservePatch = (extra = {}) => ({ day_type:'reserve_shift', shape:'regular', start:'07:00', end:'07:00',
   end_day:1, start2:'', end2:'', end_day2:0, sub_station:'', ...extra });
+function courseFixture() {
+  const f = reserveFixture();
+  f.row(f.month + '-01', { status: 'draft' });
+  const course = { month: f.month, owner_uid: f.uid, revision: 1, periods: {}, days: {
+    [f.month + '-01']: { case_id: 'course_case', approval_revision: 1, credit_hours: 24.25 },
+    [f.month + '-04']: { case_id: 'course_case', approval_revision: 1, credit_hours: 24.25 }
+  } };
+  f.ports.readCourseMonth = async () => structuredClone(course);
+  return { ...f, course };
+}
+async function courseSubmit(f, extra = {}) {
+  const read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  return f.selfApi().mutateMonth(f.selfReq({ month: f.month, operation: 'submit', request_id: 'course_submit_001',
+    expected_report_version: read.report.expected_version, expected_course_revision: f.course.revision,
+    days: read.days.map(row => ({ date: row.record.date, expected_version: row.expected_version })), ...extra }));
+}
+test('course read preserves base rows and submission overlays full standard hours exactly once', async () => {
+  const f = courseFixture(), before = f.db.value(f.path(f.month + '-01'));
+  const read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  assert.equal(read.days.length, 1); assert.equal(read.days[0].record.hours, 8);
+  assert.equal(read.course_month.days[f.month + '-01'].credit_hours, 24.25);
+  await courseSubmit(f);
+  const report = f.db.value(f.reportPath);
+  assert.equal(report.total_hours, 48.5); assert.deepEqual(report.base_days, [f.month + '-01']);
+  assert.deepEqual(report.days, [f.month + '-01', f.month + '-04']); assert.equal(report.course_revision, 1);
+  assert.deepEqual(f.db.value(f.path(f.month + '-01')), before);
+  assert.equal(f.db.value(f.path(f.month + '-04')), null);
+});
+test('course-only month submits without fabricated attendance rows and HR can approve', async () => {
+  const f = courseFixture(); f.db.seed(f.path(f.month + '-01'), undefined);
+  await courseSubmit(f);
+  assert.equal(f.db.value(f.reportPath).total_hours, 48.5);
+  const result = await f.api().approve(f.req({ request_id: 'course_approve_001' }));
+  assert.equal(result.attendance_changed_count, 0); assert.equal(f.db.value(f.reportPath).status, 'approved');
+});
+test('course changes reject stale submission and stale HR approval without writes', async () => {
+  const f = courseFixture();
+  await noWrites(f, () => courseSubmit(f, { expected_course_revision: 0 }), 'aborted');
+  await courseSubmit(f); f.course.revision = 2;
+  await noWrites(f, () => f.api().approve(f.req({ request_id: 'course_approve_002' })), 'failed-precondition');
+});
+test('course overlap guards reject employee, fill and HR absence conversions', async () => {
+  for (const type of ['sick', 'vacation', 'reserve', 'reserve_shift']) {
+    const f = courseFixture(), day = f.month + '-01';
+    await noWrites(f, () => f.selfApi().mutateDay(f.selfReq({ date: day, operation: 'save',
+      expected_version: f.db.version(f.path(day)), patch: { day_type: type }, request_id: 'course_conflict_1' })), 'failed-precondition');
+    await noWrites(f, () => f.correctionApi().correctOneDay(f.req({ operation: 'update', date: day,
+      expected_version: f.db.version(f.path(day)), patch: { day_type: type },
+      reason: 'Authorized course overlap test reason', request_id: 'course_conflict_2' })), 'failed-precondition');
+    await noWrites(f, () => f.selfApi().mutateMonth(f.selfReq({ operation: 'fill', month: f.month,
+      entries: [{ date: f.month + '-04', patch: { day_type: type } }], request_id: 'course_conflict_3' })), 'failed-precondition');
+  }
+});
+test('course total is not added twice on retries; invalid credit cannot be submitted', async () => {
+  const f = courseFixture(); const read = await f.selfApi().readMonth(f.selfReq({ month: f.month }));
+  const data = { month: f.month, operation: 'submit', request_id: 'course_retry_001', expected_course_revision: 1,
+    expected_report_version: read.report.expected_version, days: read.days.map(x => ({ date: x.record.date, expected_version: x.expected_version })) };
+  await f.selfApi().mutateMonth(f.selfReq(data)); const writes = f.db.metrics.writes;
+  assert.equal((await f.selfApi().mutateMonth(f.selfReq(data))).duplicate, true); assert.equal(f.db.metrics.writes, writes);
+  const g = courseFixture(); g.course.days[g.month + '-01'].credit_hours = NaN;
+  await noWrites(g, () => courseSubmit(g), 'failed-precondition');
+});
+test('course HR context supplies credits separately and recalculation leaves base type intact', async () => {
+  const f = courseFixture(), context = await f.api().getContext(f.req());
+  assert.equal(context.days[0].record.day_type, 'regular'); assert.equal(context.course_month.revision, 1);
+  assert.ok(!context.missing_dates.includes(f.month + '-04'));
+  await f.selfApi().mutateMonth(f.selfReq({ operation: 'recalculate', month: f.month, request_id: 'course_recalc_001',
+    days: [{ date: f.month + '-01', expected_version: f.db.version(f.path(f.month + '-01')) }] }));
+  assert.equal(f.db.value(f.path(f.month + '-01')).hours, 8); assert.equal(f.db.value(f.path(f.month + '-01')).day_type, 'regular');
+});
 function reserveFixture() {
   const f=fixture();f.db.seed(f.reportPath,{...f.db.value(f.reportPath),status:'draft'});return f;
 }

@@ -25,8 +25,8 @@ const STATES = Object.freeze(['open', 'in_progress', 'waiting_employee', 'closed
  * דוחות שעות אינם סוג כאן ולעולם לא יהיו: הם חיים ב-`attendance`
  * וב-`monthly_reports`, באוסף אחר לגמרי. זו ההפרדה החזקה ביותר
  * שיש — היא מבנית, ולא מסנן במסך. */
-const KINDS = Object.freeze(['general', 'sick', 'reserve', 'vacation', 'extended_absence']);
-const DATED_KINDS = Object.freeze(['sick', 'reserve', 'vacation', 'extended_absence']);
+const KINDS = Object.freeze(['general', 'sick', 'reserve', 'vacation', 'extended_absence', 'course']);
+const DATED_KINDS = Object.freeze(['sick', 'reserve', 'vacation', 'extended_absence', 'course']);
 /* ההכרעה נפרדת מ-`status` בכוונה. `status` הוא מצב הטיפול
  * (פתוח/בטיפול/ממתין לעובד/סגור); ההכרעה היא התשובה עצמה. פנייה
  * יכולה להיסגר בלי שאושרה, ואישור אינו אומר שהטיפול הסתיים. */
@@ -114,7 +114,7 @@ const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 
-function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }) {
+function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, courseCredits } = {}) {
   if (!db || !auth || typeof auth.getUser !== 'function' || typeof HttpsError !== 'function') throw new TypeError('db, auth and HttpsError required');
   const identity = createOpsMemberIdentity({ db, HttpsError });
   const error = (code, message) => new HttpsError(code, message);
@@ -195,6 +195,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
        קובץ מעולם אינה נושאת `attachment_ids` בכלל. */
     has_attachment: Array.isArray(c.attachment_ids) && c.attachment_ids.length > 0,
     kind: own(c, 'kind') ? c.kind : 'general',
+    ...(c.kind === 'course' && c.decision === 'approved' ? { course_snapshot: c.course_snapshot } : {}),
     ...(DATED_KINDS.includes(own(c, 'kind') ? c.kind : 'general')
       ? { from_date: c.from_date, to_date: c.to_date, decision: c.decision,
           ...(FINAL_DECISIONS.includes(c.decision)
@@ -293,7 +294,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
         if (!DATED_KINDS.includes(kind)) throw error('failed-precondition', 'Only a sickness or reserve report carries a decision.');
         // הכרעה על עצמך אינה אפשרית גם למי שהוא משאבי אנוש.
         if (current.owner_uid === ctx.uid) throw error('permission-denied', 'You cannot decide your own report.');
-        decisionPlan = { decision: p.decision, noChange: current.decision === p.decision };
+        decisionPlan = { decision: p.decision, noChange: current.decision === p.decision && current.kind !== 'course' };
       }
       if (op === 'reply' && current.status === 'closed') throw error('failed-precondition', 'The request is closed.');
       if (op === 'nudge' && !(ownerSide ? ['open', 'in_progress'].includes(current.status) : current.status === 'waiting_employee')) throw error('failed-precondition', 'No outstanding action for the other side.');
@@ -328,6 +329,11 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
       // Business text/status survives quiet/silent and receives durable pending
       // notification work. Standalone nudges need immediate policy evaluation.
       const rt = op === 'nudge' ? await runtime(tx) : null;
+      let coursePlan = null;
+      if (decisionPlan && current.kind === 'course') {
+        if (typeof courseCredits?.prepareDecision !== 'function') throw error('failed-precondition', 'Course approval service unavailable.');
+        coursePlan = await courseCredits.prepareDecision(tx, {ctx, caseBefore:current, decision:p.decision, nextRevision:current.revision+1});
+      }
       await beforeWrites(op); await live(tx, r);
       const at = now(), old = quota.exists ? quota.data().requests_at_ms : [];
       if (!Array.isArray(old) || old.some(v => !Number.isSafeInteger(v) || v > at)) throw error('failed-precondition', 'Quota data is invalid.');
@@ -360,10 +366,12 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
           ...(DATED_KINDS.includes(p.kind)
             ? { from_date: p.from_date, to_date: p.to_date, months: p.months, decision: 'pending' } : {})
         };
+        if (coursePlan) next.course_snapshot = coursePlan.snapshot;
         const eventId = hash(['hr-request-event-v1', operationId]);
         const event = { schema: 'hr-request-event-v1', event_id: eventId, case_id: ref.id, station_id: ctx.sid,
           actor_uid: ctx.uid, kind: op, revision, created_at_ms: at,
           ...(decisionPlan ? { decision: decisionPlan.decision, from_decision: current.decision } : {}),
+          ...(coursePlan ? { course_snapshot: coursePlan.snapshot, previous_course_snapshot: current.course_snapshot || null } : {}),
           ...(op === 'create' && DATED_KINDS.includes(p.kind)
             ? { request_kind: p.kind, from_date: p.from_date, to_date: p.to_date } : {}),
           ...(own(p, 'text') ? { text: p.text } : {}),
@@ -391,6 +399,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {} }
             routine_after_quiet: op !== 'nudge', exclude_actor: true };
           tx.create(root(ctx.sid).collection('hr_request_notification_jobs').doc(eventId), job);
         }
+        if (coursePlan) coursePlan.commit(tx, at);
         tx.create(ref.collection('events').doc(eventId), event);
         tx.set(ref, next);
         const delta = counterDelta(current, next);

@@ -1,4 +1,5 @@
 import { registerPwaUpdateGuard } from './pwa.js?v=42h30';
+import { validateCourseMonth, renderCourseTimeline } from './course-timeline.js?v=42h30';
 
 // DOM-only controller. The injected adapter owns authenticated transport;
 // no personal data is persisted or embedded into URLs.
@@ -349,11 +350,17 @@ export function createHrHoursUI(root, adapter=disconnected) {
       button.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration)startReview(p);});detail.append(button);
     }
     if(p.historical)detail.append(el('p','דוח היסטורי של עובד שאינו פעיל בתחנה.','hr-notice'));
+    if(p.course_month){try{validateCourseMonth(p.course_month,p.month,p.uid);}catch(_){
+      detail.append(el('p','לא ניתן לאמת את זיכוי הקורס. נדרשת טעינה מחדש לפני הצגת השעות.','hr-notice'));return;
+    }}
     const totals=el('div',null,'hr-totals');
     for(const [title,value] of [['סך שעות בדוח השמור',p.stored_total_hours],['סך שעות בפירוט הנוכחי',p.current_detail_total_hours]]) {
       const box=el('div',title,'hr-total');box.append(el('strong',number(value)));totals.append(box);
     }
     detail.append(totals,el('p','הפירוט מציג את רשומות הנוכחות הנוכחיות. אם תוקנו מאז אישור הדוח, ההבדל בסכומים מוצג כאן.','hr-meta'));
+    if(p.course_month){
+      for(const snapshot of Object.values(p.course_month.periods))detail.append(renderCourseTimeline(snapshot,p.month));
+    }
     if(typeof p.current_detail_total_hours==='number'&&p.current_detail_total_hours>265){
       detail.append(el('p','❗ חריגת שעות: '+number(p.current_detail_total_hours)+' שעות בפירוט העדכני, מעל הסף של 265. נדרשת בדיקת משאבי אנוש.','hr-hours-alert'));
     }
@@ -364,22 +371,23 @@ export function createHrHoursUI(root, adapter=disconnected) {
       button.addEventListener('click',()=>{if(alive(g,key)&&d===detailGeneration)startNudge(p);});detail.append(button);controls();
     }
     if(!p.rows.length){detail.append(el('p','אין רשומות נוכחות לחודש הזה.'));return;}
-    const legend=el('div',null,'hr-legend');legend.setAttribute('aria-label','מקרא סוגי ימים');legend.append(el('span','מילואים','reserve'),el('span','מחלה','sick'),el('span','חופש','vacation'));detail.append(legend);
+    const legend=el('div',null,'hr-legend');legend.setAttribute('aria-label','מקרא סוגי ימים');legend.append(el('span','מילואים','reserve'),el('span','מחלה','sick'),el('span','חופש','vacation'),el('span','קורס','course'));detail.append(legend);
     const wrap=el('div',null,'hr-table-wrap');wrap.tabIndex=0;wrap.setAttribute('aria-label','פירוט שעות · ניתן לגלול לרוחב');
     const table=el('table'),head=el('thead'),tr=el('tr');
     for(const title of ['תאריך','סוג יום','כניסה','יציאה','מקום','הערות','שעות']){const th=el('th',title);th.scope='col';tr.append(th);}head.append(tr);table.append(head);
     const body=el('tbody');
     for(const row of p.rows){
       const r=el('tr');
-      if(row.day_type==='reserve')r.className='hr-day-reserve';
+      if(['reserve','reserve_shift'].includes(row.day_type))r.className='hr-day-reserve';
+      else if(row.day_type==='course')r.className='hr-day-course';
       else if(row.day_type==='sick')r.className='hr-day-sick';
       else if(row.day_type==='vacation')r.className='hr-day-vacation';
       const end=value=>value===1?' (+יום)':value===2?' (+יומיים)':'';
       const reasons=[['סיבה',row.reason],['הערות',row.notes],['נימוק לחריגה',row.overtime_reason]];
       const notes=reasons.filter((entry,i)=>entry[1]&&reasons.findIndex(other=>other[1]===entry[1])===i)
-        .map(([label,value])=>label+': '+value).join('\n');
-      [row.date,row.day_type_he||'—',row.start||'—',(row.end||'—')+end(row.end_day),row.site_name||'—',notes,number(row.hours)].forEach((value,i)=>r.append(el('td',value,i===2||i===3?'hr-range':'')));
-      if(row.start2){
+        .map(([label,value])=>label+': '+value).join('\n')+(row.course_overlay?' · קורס מאושר; השיבוץ המקורי נשמר, זיכוי פעם אחת':'');
+      [row.date,row.day_type_he||'—',row.course_overlay?'—':row.start||'—',row.course_overlay?'—':(row.end||'—')+end(row.end_day),row.site_name||'—',notes,number(row.hours)].forEach((value,i)=>r.append(el('td',value,i===2||i===3?'hr-range':'')));
+      if(row.start2&&!row.course_overlay){
         const interval=el('bdi',row.start2+'–'+(row.end2||'—'),'hr-range');interval.dir='ltr';
         r.children[5].append(el('br'),document.createTextNode('מקטע נוסף: '),interval,document.createTextNode(end(row.end_day2)));
       }

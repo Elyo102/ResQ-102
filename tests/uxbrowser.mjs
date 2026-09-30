@@ -133,6 +133,8 @@ await correctionContext.addInitScript(() => {
   window.__SMOKE_ROLE = 'super';
   const token = { seconds:1800000000, nanoseconds:7 };
   const contextResult = { station_id:'eilat_102', target_uid:'u2', employee_number:'17', month:'2026-08',
+    course_month:{ schema:'attendance-course-month-v1', month:'2026-08', owner_uid:'u2',
+      employee_number:'17', revision:0, days:{}, periods:{} },
     target:{ full_name:'טל חודרה', crew:'A', role:'firefighter', inactive:false },
     report:{ exists:true, status:'draft', expected_version:token },
     days:[{ date:'2026-08-01', record_id:'17_2026-08-01', expected_version:token, can_correct:true,

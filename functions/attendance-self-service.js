@@ -11,7 +11,7 @@ const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit, stampReserveCalculationVersion } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, stampReserveCalculationVersion, projectCourseHours, assertCourseDayCompatible } = require('./attendance-hours-calculator');
 
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -24,7 +24,7 @@ const RETAINED_DAY_FIELDS = Object.freeze([
 ]);
 
 function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
-  clock = Date.now, monthAt, readConfig, calculate }) {
+  clock = Date.now, monthAt, readConfig, calculate, readCourseMonth = null }) {
   if (!db || typeof db.runTransaction !== 'function' || !auth || typeof auth.getUser !== 'function'
       || [HttpsError, serverTimestamp, clock, monthAt, readConfig, calculate].some(v => typeof v !== 'function')) {
     throw new TypeError('Attendance self-service requires trusted database, identity, time and calculation ports');
@@ -139,6 +139,10 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       }
       if (!same(snapVersion(row), r.intent.expected_version)) fail('aborted', 'Attendance changed; reload before saving');
       const before = row.exists ? row.data() : null;
+      const course = readCourseMonth ? await readCourseMonth(tx, { sid: r.ctx.sid, uid: r.ctx.uid,
+        emp: person.employee_number, month: r.intent.month }) : null;
+      try { assertCourseDayCompatible(course, r.intent.date, r.intent.operation === 'save' ? r.intent.patch : null); }
+      catch (e) { fail('failed-precondition', e.message); }
       if (before && (!plain(before) || String(before.emp_number) !== person.employee_number
           || (own(before, 'uid') && before.uid !== r.ctx.uid) || before.date !== r.intent.date
           || before.month !== r.intent.month || (own(before, 'status') && before.status !== 'draft'))) {
@@ -205,6 +209,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         .where('month', '==', month).limit(32);
       const reportRef = root.collection('monthly_reports').doc(person.employee_number + '_' + month);
       const [rows, report] = await Promise.all([tx.get(query), tx.get(reportRef)]);
+      const course = readCourseMonth ? await readCourseMonth(tx, { sid: ctx.sid, uid: ctx.uid,
+        emp: person.employee_number, month }) : null;
       if (!rows || !Array.isArray(rows.docs) || rows.docs.length > 31) fail('failed-precondition', 'Attendance month is invalid');
       const days = rows.docs.map(s => {
         const value = s.data();
@@ -221,7 +227,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         reportValue = { expected_version: snapVersion(report), record: value };
       }
       await live(tx, r);
-      return { station_id: ctx.sid, employee_number: person.employee_number, month, days, report: reportValue };
+      return { station_id: ctx.sid, employee_number: person.employee_number, month, days, report: reportValue,
+        ...(course ? { course_month: course } : {}) };
     });
   }
   function monthRequest(req) {
@@ -236,7 +243,9 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
       : d.operation === 'recalculate' ? [...common, 'days']
       : d.operation === 'submit' ? [...common, 'days', 'expected_report_version']
       : [...common, 'expected_report_version'];
-    shape(d, allowed);
+    shape(d, allowed.concat(d.operation === 'submit' ? ['expected_course_revision'] : []), allowed);
+    if (own(d, 'expected_course_revision') && (!Number.isSafeInteger(d.expected_course_revision)
+        || d.expected_course_revision < 0)) fail('invalid-argument', 'Invalid course revision');
     let month;
     try { month = monthKey(d.month); } catch (_) { fail('invalid-argument', 'Invalid attendance month'); }
     if (typeof d.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,120}$/.test(d.request_id)) fail('invalid-argument', 'Invalid request id');
@@ -247,7 +256,7 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         if (day.slice(0, 7) !== month) fail('invalid-argument', 'Attendance entry is outside month');
         return { date: day, patch: editable(v.patch) }; });
     } else if (['recalculate', 'submit'].includes(d.operation)) {
-      if (!Array.isArray(d.days) || !d.days.length || d.days.length > 31) fail('invalid-argument', 'Invalid attendance days');
+      if (!Array.isArray(d.days) || (!d.days.length && !(d.operation === 'submit' && d.expected_course_revision > 0)) || d.days.length > 31) fail('invalid-argument', 'Invalid attendance days');
       days = d.days.map(v => { shape(v, ['date', 'expected_version']); const day = date(v.date);
         if (day.slice(0, 7) !== month) fail('invalid-argument', 'Attendance day is outside month');
         return { date: day, expected_version: version(v.expected_version, false) }; });
@@ -258,6 +267,7 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
     if (['submit', 'unsubmit'].includes(d.operation)) reportVersion = version(d.expected_report_version, d.operation === 'submit');
     const intent = { station_id: ctx.sid, actor_uid: ctx.uid, month, operation: d.operation,
       ...(entries ? { entries } : {}), ...(days ? { days } : {}),
+      ...(own(d, 'expected_course_revision') ? { expected_course_revision: d.expected_course_revision } : {}),
       ...(reportVersion ? { expected_report_version: reportVersion } : {}) };
     return { ctx, data: d, intent, fingerprint: hash(intent),
       id: hash(['attendance-self-month-v1', ctx.sid, ctx.uid, d.request_id]) };
@@ -289,6 +299,10 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         byDate.set(value.date, { snap: s, value });
       }
       const reportValue = report.exists ? report.data() : null;
+      const course = readCourseMonth ? await readCourseMonth(tx, { sid: r.ctx.sid, uid: r.ctx.uid,
+        emp: person.employee_number, month: r.intent.month }) : null;
+      try { for (const [date, row] of byDate) assertCourseDayCompatible(course, date, row.value); }
+      catch (e) { fail('failed-precondition', e.message); }
       if (reportValue && (!plain(reportValue) || String(reportValue.emp_number) !== person.employee_number
           || reportValue.month !== r.intent.month || (own(reportValue, 'uid') && reportValue.uid !== r.ctx.uid))) {
         fail('failed-precondition', 'Monthly report identity is invalid');
@@ -303,6 +317,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
         const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
         const pending = [];
         for (const entry of r.intent.entries) if (!byDate.has(entry.date)) {
+          try { assertCourseDayCompatible(course, entry.date, entry.patch); }
+          catch (e) { fail('failed-precondition', e.message); }
           const candidate = { uid: r.ctx.uid, emp_number: person.employee_number, full_name: person.full_name,
             crew: person.crew, date: entry.date, month: r.intent.month, status: 'draft', reported_at: commit,
             updated_at: commit, ...entry.patch };
@@ -341,28 +357,37 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           }
         }
       } else if (r.intent.operation === 'submit') {
+        const courseRevision = course ? course.revision : 0;
+        if ((r.intent.expected_course_revision === undefined ? 0 : r.intent.expected_course_revision) !== courseRevision) {
+          fail('aborted', 'Course approval changed; reload before submitting');
+        }
         if (!same(snapVersion(report), r.intent.expected_report_version) || reportState !== 'draft'
             || r.intent.days.length !== byDate.size) fail('aborted', 'Monthly report changed; reload before submitting');
         const sites = [...new Set([...byDate.values()].map(v => v.value.sub_station).filter(Boolean))];
         const config = await readConfig(tx, { stationId: r.ctx.sid, targetRole: person.role, subStationIds: sites });
-        let total = 0;
+        const calculated = [];
         const updates = [];
         for (const day of r.intent.days) {
           const row = byDate.get(day.date);
           if (!row || !same(snapVersion(row.snap), day.expected_version) || row.value.status !== 'draft'
               || !Number.isFinite(Number(row.value.hours))) fail('aborted', 'Attendance changed; reload before submitting');
           const output = derived(row.value, config);
-          total += output.hours;
+          calculated.push({ ...row.value, ...output });
           if (DERIVED.some(k => !same(row.value[k], output[k]))) {
             updates.push({ ref: row.snap.ref, value: { ...row.value, ...output, updated_at: commit } });
           }
         }
+        let projection;
+        try { projection = projectCourseHours(calculated, course); }
+        catch (e) { fail('failed-precondition', e.message); }
+        if (!projection.days.length || projection.total_hours === null) fail('failed-precondition', 'No valid hours to submit');
         status = 'submitted';
         await live(tx, r);
         for (const update of updates) tx.set(update.ref, update.value);
         tx.set(reportRef, { ...(reportValue || {}), uid: r.ctx.uid, emp_number: person.employee_number,
           full_name: person.full_name, crew: person.crew, month: r.intent.month, status,
-          days: r.intent.days.map(v => v.date), total_hours: Math.round(total * 100) / 100,
+          days: projection.days.map(v => v.date), total_hours: projection.total_hours,
+          ...(courseRevision > 0 ? { base_days: r.intent.days.map(v => v.date), course_revision: courseRevision } : {}),
           submitted_at: commit, updated_at: commit }); changed = 1;
       } else {
         if (!report.exists || !same(snapVersion(report), r.intent.expected_report_version)

@@ -72,6 +72,7 @@ function stubMyAttendanceMonth(payload){
     else byDate.delete(date);
   });
   return { station_id:'eilat_102', employee_number:'1', month,
+    course_month:{schema:'attendance-course-month-v1',employee_number:'1',month,owner_uid:'stub-uid',revision:0,days:{},periods:{}},
     days:Array.from(byDate.values()).sort((a,b)=>a.record.date.localeCompare(b.record.date)), report:null };
 }
 
@@ -168,6 +169,7 @@ function defaultCallableStep(name, payload){
       target:{ full_name:'טל חודרה', crew:'A', role:'firefighter', inactive:false },
       report:{ exists:false, status:'draft', expected_version:null },
       days:[], missing_dates:[],
+      course_month:{schema:'attendance-course-month-v1',employee_number:String(data.employee_number||''),month:String(data.month||''),owner_uid:data.target_uid,revision:0,days:{},periods:{}},
       eligibility:{ can_create:true, can_recalculate:true, can_reopen:false,
         historical:false, reopening_valid:false },
       snapshot_at_ms:Date.now()

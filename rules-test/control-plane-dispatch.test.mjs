@@ -6,7 +6,8 @@ import {createHash,randomUUID} from 'node:crypto';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
 import {doc,setDoc,getDoc,getDocs,updateDoc,deleteDoc,collection,query,where,limit,serverTimestamp,Timestamp,writeBatch} from 'firebase/firestore';
 import {assembleDispatchRules,CAPTURE_SHA256,DISPATCH_ANCHOR} from '../control-plane/assemble-rules.mjs';
-if(process.env.FIRESTORE_EMULATOR_HOST!=='127.0.0.1:8191'||process.env.GCLOUD_PROJECT!=='demo-resq')throw Error('LOCAL_EMULATOR_REQUIRED');
+if(!['127.0.0.1:8191','127.0.0.1:8199'].includes(process.env.FIRESTORE_EMULATOR_HOST)||process.env.GCLOUD_PROJECT!=='demo-resq')throw Error('LOCAL_EMULATOR_REQUIRED');
+const emulatorPort=Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]);
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const artifact=readFileSync(new URL('../control-plane/deploy/firestore.dispatch.rules',import.meta.url));
 const meta=JSON.parse(readFileSync(new URL('../control-plane/deploy/firestore-dispatch-provenance.json',import.meta.url),'utf8'));
@@ -66,7 +67,7 @@ if(process.argv[2]){
 // ---- emulator Rules on the exact artifact bytes ----
 const rules=artifact.toString('utf8');
 const projectId='demo-resq-dispatch-'+process.pid;
-const environment=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8191,rules}});
+const environment=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:emulatorPort,rules}});
 const ownerEmail=/request\.auth\.token\.email == '([^']+)'/.exec(rules)[1];
 const OWNER='synthetic-owner';
 const nowSeconds=()=>Math.floor(Date.now()/1000);
@@ -117,7 +118,8 @@ await check('document id and batchId must be lowercase RFC 4122 v4 UUIDs',async(
  for(const batchId of [...bad,7,null])await assertFails(put(owner(),row({batchId})));
 });
 const REJECTED=[0x200F,0x200E,0x061C,0x202A,0x202B,0x202C,0x202D,0x202E,0x2066,0x2067,0x2068,0x2069,0x2028,0x2029,0xFEFF,0x200B,0x200C,0x200D,0x05EB,0x05F0,0x0600,0x00A0,0x00AD];
-for(let c=0x80;c<=0x9F;c++)REJECTED.push(c);for(let c=0;c<=0x1F;c++)if(c!==0x0A)REJECTED.push(c); // \n (U+000A) is the only added characterREJECTED.push(0x7F);
+for(let c=0x80;c<=0x9F;c++)REJECTED.push(c);for(let c=0;c<=0x1F;c++)if(c!==0x0A)REJECTED.push(c); // LF (U+000A) is the only added character.
+REJECTED.push(0x7F);
 await check(`note allowlist rejects each of ${REJECTED.length} code points (incl. \\r, \\t, NUL), CRLF, astral/emoji and 10001 characters`,async()=>{
  await seed();
  for(const cp of REJECTED)await assertFails(put(owner(),row({note:'ok'+String.fromCodePoint(cp)+'ok'})),'U+'+cp.toString(16));

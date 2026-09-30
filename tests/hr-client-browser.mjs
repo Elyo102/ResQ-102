@@ -23,10 +23,16 @@ const db = {}, HttpsError = class {}, exports = {}, registered = [], received = 
 const injectedAuth = {}, authFactoryCalls = [];
 const timestampValue = Object.freeze({fixture:'server-timestamp'}), timestampCalls=[];
 let reviewCall = req => ({method:'review',req});
-vm.runInNewContext(registration, { db, HttpsError, exports, FV:{serverTimestamp(){timestampCalls.push(true);return timestampValue;}},
+let courseCall = req => ({method:'course',req});
+const courseCredits = Object.freeze({
+  readCourseMonth() { throw new Error('wiring must not execute course reads'); },
+  context(req) { return courseCall(req); }
+});
+vm.runInNewContext(registration, { db, HttpsError, exports, courseCredits, FV:{serverTimestamp(){timestampCalls.push(true);return timestampValue;}},
   admin: { auth() { authFactoryCalls.push(true); return injectedAuth; } },
   hrHoursModule: { createHrHoursService(deps) {
-    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db', 'serverTimestamp']);
+    assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db', 'readCourseMonth', 'serverTimestamp']);
+    assert.equal(deps.readCourseMonth, courseCredits.readCourseMonth);
     assert.equal(deps.auth, injectedAuth);
     assert.equal(deps.db, db); assert.equal(deps.HttpsError, HttpsError);
     received.push(deps);
@@ -42,12 +48,23 @@ await check('actual export block creates one service with exact db Auth and Http
   assert.equal(received[0].serverTimestamp(),timestampValue);assert.equal(timestampCalls.length,1);
 });
 await check('three actual read-only callables enforce AppCheck and forward original request', async () => {
-  assert.equal(registered.length, 4);
-  registered.slice(0,3).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
+  assert.equal(registered.length, 5);
+  registered.slice(1,4).forEach(options => { assert.deepEqual(Object.keys(options), ['enforceAppCheck']); assert.equal(options.enforceAppCheck, true); });
   const request = { auth: { uid: 'synthetic-reviewer' }, data: { month: '2026-09' } };
   const list = await exports.getHrMonthReports(request), detail = await exports.getHrEmployeeReport(request), overHours = await exports.getHrOverHoursAlert(request);
   assert.equal(list.method, 'list'); assert.equal(detail.method, 'detail'); assert.equal(overHours.method, 'overHoursCompatibility');
   assert.equal(list.req, request); assert.equal(detail.req, request); assert.equal(overHours.req, request);
+});
+await check('course context enforces regional AppCheck and preserves request, result and rejection', async () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(registered[0])), { enforceAppCheck: true, region: 'europe-west1' });
+  assert.equal((index.match(/exports\.getAttendanceCourseMonth\s*=/g) || []).length, 1);
+  const request = Object.freeze({ auth: { uid: 'synthetic-reviewer' }, data: { month: '2026-09' } });
+  const result = Object.freeze({ method: 'course', req: request });
+  courseCall = req => { assert.equal(req, request); return result; };
+  assert.equal(await exports.getAttendanceCourseMonth(request), result);
+  const failure = Error('synthetic course failure');
+  courseCall = () => Promise.reject(failure);
+  await assert.rejects(() => exports.getAttendanceCourseMonth(request), error => error === failure);
 });
 await check('legacy alert export is wired to the current monthly truth, never the retired reader', async () => {
   assert.match(registration, /exports\.getHrOverHoursAlert\s*=\s*onCall\([^\n]+getHrOverHoursCompatibility\(req\)/);
@@ -75,9 +92,9 @@ await check('legacy alert compatibility keeps an empty body and returns current 
   assert.equal(value.month, '2026-08');
 });
 await check('review callable has exact bounded options and preserves completion and rejection',async()=>{
-  assert.deepEqual(Object.keys(exports).sort(),['getHrEmployeeReport','getHrMonthReports','getHrOverHoursAlert','saveHrEmployeeReview']);
+  assert.deepEqual(Object.keys(exports).sort(),['getAttendanceCourseMonth','getHrEmployeeReport','getHrMonthReports','getHrOverHoursAlert','saveHrEmployeeReview']);
   assert.equal((index.match(/exports\.saveHrEmployeeReview\s*=/g)||[]).length,1);
-  assert.deepEqual(JSON.parse(JSON.stringify(registered[3])),{region:'europe-west1',enforceAppCheck:true,timeoutSeconds:60,memory:'256MiB',maxInstances:3,concurrency:1});
+  assert.deepEqual(JSON.parse(JSON.stringify(registered[4])),{region:'europe-west1',enforceAppCheck:true,timeoutSeconds:60,memory:'256MiB',maxInstances:3,concurrency:1});
   const request=Object.freeze({data:{month:'2026-09',uid:'employee',expected_revision:'a'.repeat(64),request_id:'request_001'}});
   const result=Object.freeze({review_id:'b'.repeat(64),reviewed_revision:'a'.repeat(64),current:true,duplicate:false});
   let release,settled=false;reviewCall=req=>{assert.equal(req,request);return new Promise(resolve=>{release=resolve;});};

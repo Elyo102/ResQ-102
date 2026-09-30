@@ -11,6 +11,7 @@ const access = require('./schedule-access');
 const { createOpsMemberIdentity } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
 const { COLLECTIONS, EDITABLE, DERIVED, TARGET_ROLES } = require('./attendance-corrections');
+const { projectCourseHours } = require('./attendance-hours-calculator');
 const LIMITS = Object.freeze({ days: 31, page: 25, bytes: 128 * 1024, text: 4000 });
 const APPROVER_ROLES = Object.freeze(['deputy', 'commander', 'station_commander', 'hr_coordinator']);
 const FIELDS = Object.freeze([...EDITABLE, ...DERIVED, 'status']);
@@ -22,7 +23,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const EVENT_ID = /^[a-f0-9]{64}$/;
 
 function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimestamp,
-  clock = Date.now, monthAt, hooks = {} }) {
+  clock = Date.now, monthAt, hooks = {}, readCourseMonth = null }) {
   if (!db || typeof db.runTransaction !== 'function' || !auth || typeof auth.getUser !== 'function'
       || [HttpsError, serverTimestamp, clock, monthAt].some(fn => typeof fn !== 'function')) {
     throw new TypeError('Database, Auth, error, timestamp, clock and trusted month ports required');
@@ -173,7 +174,8 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
       seen.add(key);
       return { snap: s, value: v, date: key, expected_version: token(s) };
     }).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-    return { report, rows };
+    const course = readCourseMonth ? await readCourseMonth(tx, { sid: r.ctx.sid, uid: r.target, emp: r.emp, month: r.month }) : null;
+    return { report, rows, course };
   }
   // A stored preimage is NOT a new patch. Preserve bounded legacy scalar/null
   // values faithfully (for example null day offsets); the mutation service
@@ -244,7 +246,8 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
       return { station_id: r.ctx.sid, target_uid: r.target, employee_number: r.emp, month: r.month,
         target: { full_name: person.full_name, crew: person.crew, role: person.role, inactive: person.inactive },
         report: { exists: !!v, status: v && typeof v.status === 'string' ? v.status : null, expected_version: token(m.report) },
-        days, missing_dates: Array.from({ length: last.getUTCDate() }, (_, i) => r.month + '-' + String(i + 1).padStart(2, '0')).filter(day => !existing.has(day)),
+        days, ...(m.course ? { course_month: m.course } : {}),
+        missing_dates: Array.from({ length: last.getUTCDate() }, (_, i) => r.month + '-' + String(i + 1).padStart(2, '0')).filter(day => !existing.has(day) && !(m.course && own(m.course.days, day))),
         eligibility: eligibility(m, person, at, r), snapshot_at_ms: at };
     });
   }
@@ -344,8 +347,15 @@ function createAttendanceCorrectionSupport({ db, auth, HttpsError, serverTimesta
         return { approval_id: r.id, outcome: 'approved', attendance_changed_count: m.rows.length, duplicate: true };
       }
       if (report.status !== 'submitted') corrupt('Only a submitted report can be approved');
-      if (!Array.isArray(report.days) || report.days.length !== m.rows.length
-          || !same([...report.days].sort(), m.rows.map(row => row.date))) {
+      const courseRevision = m.course ? m.course.revision : 0;
+      let projection;
+      try { projection = projectCourseHours(m.rows.map(row => row.value), m.course); }
+      catch (e) { corrupt(e.message); }
+      if (courseRevision > 0 && (report.course_revision !== courseRevision
+          || !same(report.base_days, m.rows.map(row => row.date))
+          || report.total_hours !== projection.total_hours)) corrupt('Course approval changed or submitted course total is invalid');
+      if (!Array.isArray(report.days) || report.days.length !== projection.days.length
+          || !same([...report.days].sort(), projection.days.map(row => row.date))) {
         corrupt('Submitted report does not match its attendance rows');
       }
       if (m.rows.some(row => own(row.value, 'status')

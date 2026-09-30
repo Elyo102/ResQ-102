@@ -30,7 +30,7 @@ if(process.env.RESQ_DISPATCH_POISON==='yes'){
 process.exit(Number(process.env.RESQ_DISPATCH_EXIT || 0));
 `;
 
-function invoke(gate, { exit = 0, poison = false } = {}) {
+function invoke(gate, { exit = 0, poison = false, endpoint = '127.0.0.1:8191', project = 'demo-resq' } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-dispatch-proof-'));
   const fakeNpm = path.join(directory, 'npm-entry.cjs');
   const capture = path.join(directory, 'argv.json');
@@ -39,8 +39,8 @@ function invoke(gate, { exit = 0, poison = false } = {}) {
   for (const key of ['NODE_OPTIONS', 'RESQ_CONTAINMENT_DIR', 'GOOGLE_APPLICATION_CREDENTIALS', 'FIREBASE_TOKEN',
     'ANTHROPIC_API_KEY', 'XAI_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY']) delete env[key];
   Object.assign(env, {
-    GCLOUD_PROJECT:'demo-resq', GOOGLE_CLOUD_PROJECT:'demo-resq', FIREBASE_CONFIG:'{"projectId":"demo-resq"}',
-    FIRESTORE_EMULATOR_HOST:'127.0.0.1:8191', METADATA_SERVER_DETECTION:'none', npm_execpath:fakeNpm,
+    GCLOUD_PROJECT:project, GOOGLE_CLOUD_PROJECT:project, FIREBASE_CONFIG:JSON.stringify({projectId:project}),
+    FIRESTORE_EMULATOR_HOST:endpoint, METADATA_SERVER_DETECTION:'none', npm_execpath:fakeNpm,
     RESQ_DISPATCH_CAPTURE:capture, RESQ_DISPATCH_GUARD:path.join(here,'lib/network-guard.cjs'),
     RESQ_DISPATCH_EXIT:String(exit), RESQ_DISPATCH_POISON:poison?'yes':'no'
   });
@@ -65,6 +65,22 @@ for (const [gate, inner] of [['all','all:inner'],['test:all','test:all:inner'],[
   });
 }
 
+test('owned alternate loopback port retains containment and demo identity', () => {
+  const {result,capture}=invoke('test:all',{endpoint:'127.0.0.1:8199'});
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(capture.emulator,'127.0.0.1:8199');
+  assert.equal(capture.project,'demo-resq');
+});
+for (const endpoint of ['localhost:8199','127.0.0.1:8198','127.0.0.1:08199','127.0.0.1:8199\n','firestore.googleapis.com:443']) {
+  test('alternate endpoint rejects malformed/unapproved target: '+JSON.stringify(endpoint),()=>{
+    const {result,capture}=invoke('test:all',{endpoint});
+    assert.notEqual(result.status,0);assert.equal(capture,null);
+  });
+}
+test('alternate endpoint cannot use a production project',()=>{
+  const {result,capture}=invoke('test:all',{endpoint:'127.0.0.1:8199',project:'station-102'});
+  assert.notEqual(result.status,0);assert.equal(capture,null);
+});
 for (const gate of [undefined,'all:inner','test:all:inner','reserve:contained:inner','constructor','__proto__','all && echo bypass']) {
   test('real supervisor refuses unknown gate without spawning: '+String(gate), () => {
     const { result, capture } = invoke(gate);

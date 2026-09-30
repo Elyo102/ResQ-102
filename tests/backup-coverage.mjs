@@ -114,4 +114,13 @@ for (const forbidden of [
   assert.equal(policy.getPolicy(forbidden).humanReadable, 'forbidden', forbidden);
 }
 
+const orderParent = policy.getPolicy('stations/{sid}/attendance_order_parents/{parentId}');
+assert.equal(orderParent.classification, 'source_of_truth');
+assert.equal(orderParent.restorePolicy, 'specialized_restore');
+assert.equal(orderParent.humanReadable, 'forbidden');
+const courseCredits = policy.getPolicy('stations/{sid}/attendance_course_credits/{monthId}');
+assert.equal(courseCredits.classification, 'derived');
+assert.equal(courseCredits.backupPolicy, 'exclude');
+assert.equal(courseCredits.restorePolicy, 'do_not_restore');
+assert.equal(courseCredits.humanReadable, 'forbidden');
 console.log(`✓ backup coverage: ${rulePaths.length} Firestore paths classified`);

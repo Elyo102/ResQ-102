@@ -26,12 +26,15 @@ const registration = one(/let attendanceCorrections;[\s\S]*?exports\.correctAtte
   'one correction registration block');
 const supportRegistration = one(/function getAttendanceCorrectionSupport\(\) \{[\s\S]*?exports\.getAttendanceCorrectionAudit = onCall\([\s\S]*?getAudit\(req\)\);/g,
   'one correction support registration block');
+one(/^const courseCredits = courseCreditModule\.createCourseCreditService\(\{ db, auth: admin\.auth\(\), HttpsError \}\);$/gm,
+  'one trusted course service initializer');
 
 class HttpsError extends Error {}
 const db = Object.freeze({ id: 'db' });
 const auth = Object.freeze({ id: 'auth' });
 const configReader = Object.freeze({ id: 'tested-reader' });
 const calculate = () => ({ hours: 24, day_type_he: 'רגיל', site_name: '', reason_required: false });
+const courseCredits = Object.freeze({ readCourseMonth: () => { throw Error('Wiring must not execute course reads'); } });
 const result = Object.freeze({ id: 'result' });
 const factories = [], registrations = [], calls = [];
 const modules = {
@@ -59,7 +62,7 @@ const modules = {
 };
 const exported = {};
 vm.runInNewContext([...imports, options, month, registration, supportRegistration].join('\n'), {
-  db, HttpsError, admin: { auth: () => auth },
+  db, HttpsError, courseCredits, admin: { auth: () => auth },
   FV: { serverTimestamp: () => Object.freeze({ id: 'timestamp' }) },
   exports: exported, Intl, Date, Object,
   require(name) { assert.ok(Object.hasOwn(modules, name), 'unexpected module ' + name); return modules[name]; },
@@ -84,9 +87,11 @@ assert.equal(factories.filter(([name]) => name === 'support').length, 1);
 const deps = factories.find(([name]) => name === 'service')[1];
 assert.equal(deps.db, db); assert.equal(deps.auth, auth); assert.equal(deps.HttpsError, HttpsError);
 assert.equal(deps.readConfig, configReader); assert.equal(deps.calculate, calculate);
+assert.equal(deps.readCourseMonth, courseCredits.readCourseMonth);
 assert.equal(typeof deps.monthAt, 'function'); assert.equal(typeof deps.serverTimestamp, 'function');
 const supportDeps = factories.find(([name]) => name === 'support')[1];
 assert.equal(supportDeps.db, db); assert.equal(supportDeps.auth, auth); assert.equal(supportDeps.HttpsError, HttpsError);
+assert.equal(supportDeps.readCourseMonth, courseCredits.readCourseMonth);
 assert.equal(typeof supportDeps.monthAt, 'function'); assert.equal(typeof supportDeps.serverTimestamp, 'function');
 assert.deepEqual(Object.keys(exported).sort(), ['correctAttendanceDay', 'correctAttendanceMonth',
   'approveAttendanceMonth', 'getAttendanceCorrectionAudit', 'getAttendanceCorrectionContext', 'listAttendanceCorrectionAudit',

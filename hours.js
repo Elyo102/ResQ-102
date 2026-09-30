@@ -83,6 +83,7 @@ export const SICK_HOURS = 0;
 export const YOTVATA_HOURS = 25;
 
 export function dayTypeHe(id) {
+  if (id === 'course') return 'קורס'; // Approved read-only overlay, not an editable day type.
   const t = DAY_TYPES.filter(function (x) { return x.id === id; })[0];
   return t ? t.he : id;
 }
@@ -178,6 +179,8 @@ export function isSplit(rec) {
 //            יטבתה = 25.
 export function calcHours(rec, siteHours) {
   const r = rec || {};
+  if (r.day_type === 'course') return r.course_overlay === true && typeof r.hours === 'number'
+    && Number.isFinite(r.hours) && r.hours > 0 && r.hours <= 48 ? r.hours : null;
 
   if (r.day_type === 'vacation') return VACATION_HOURS;
   if (r.day_type === 'sick')     return SICK_HOURS;
