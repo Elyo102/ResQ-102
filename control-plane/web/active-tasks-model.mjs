@@ -4,15 +4,28 @@
 // - Each agent's listener identity writes ONLY progress[own key]; nobody but the owner writes status.
 // - The overall status shown here is DERIVED from progress; it is never stored.
 // - A task is never approval for push, deploy, delete or secrets. Pickup is manual only.
-// - READY/delivered (DELIVERED) is never shown as "בביצוע"; only the agent's own IN_PROGRESS report is.
-import {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,hasSecret,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,formatDisplayStamp,renderStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch4';
+// - READY/delivered (DELIVERED) is never shown as "בביצוע".
+// Push trigger (t176u; UI review C1-C12, security review; review/push-trigger-verdicts.md):
+// - kind TASK (EXECUTE/IGNORE, non-targets IGNORE) or MESSAGE (NOTIFY/IGNORE, >= 1 NOTIFY, <= 2000, blocked not cut).
+// - acks[key] = LIT | UNDERSTOOD | UNREADABLE (+ summary <= 280) is written by that agent's listener. An ack is
+//   never approval and never the start of work. "נדלק, אין תשובה" / "לא התקבל אישור קבלה" are computed against
+//   SERVER time (an offset learned from server stamps), never the client clock; unknown offset -> not computed.
+// - IN_PROGRESS / COMPLETED are set only by the owner's manual click (Rules atOwnerProgress).
+import {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,hasSecret,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,formatDisplayStamp,renderStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch5';
 export {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,renderStamp};
 
 // Fixed agent map (display name -> key), identical to atKeyFor() in the Rules. Claude is not a target.
 export const TARGET_AGENTS=Object.freeze([['Gemini','gemini'],['Codex','codex'],['Grok','grok']].map(Object.freeze));
 export const TARGET_KEYS=Object.freeze(TARGET_AGENTS.map(([,k])=>k));
-export const TARGET_VALUES=Object.freeze(['EXECUTE','IGNORE']);
+export const TARGET_VALUES=Object.freeze(['EXECUTE','NOTIFY','IGNORE']);
+export const KINDS=Object.freeze(['TASK','MESSAGE']);
+export const KIND_VALUES=Object.freeze({TASK:Object.freeze(['IGNORE','EXECUTE']),MESSAGE:Object.freeze(['IGNORE','NOTIFY'])});
+export const KIND_ACTIVE=Object.freeze({TASK:'EXECUTE',MESSAGE:'NOTIFY'});
 export const TASK_KEYS=Object.freeze(['taskId','dispatchedBy','payload','targets','status','timestamp','progress']);
+export const OPTIONAL_TASK_KEYS=Object.freeze(['kind','acks']);
+export const ACK_STATES=Object.freeze(['LIT','UNDERSTOOD','UNREADABLE']);
+export const SUMMARY_MAX=280;
+export const MESSAGE_MAX=2000;
 export const TASK_STATUSES=Object.freeze(['PENDING','CANCELLED']);
 // Closed progress vocabulary, identical to atSteps() in the Rules.
 export const PROGRESS_STEPS=Object.freeze({READY:Object.freeze(['delivered','delivery_off']),REJECTED:Object.freeze(['invalid','secret','limit','declined']),
@@ -20,7 +33,10 @@ export const PROGRESS_STEPS=Object.freeze({READY:Object.freeze(['delivered','del
 export const PAYLOAD_MAX=NOTE_MAX;
 export const OWNER_LIST_LIMIT=20;     // Rules: owner list limit 1..20, orderBy(timestamp desc)
 export const LISTENER_LIST_LIMIT=3;   // Rules: task_listeners list limit 1..3
-export const HEARTBEAT_FRESH_MS=95000; // listener heartbeat every 60s; fresh when seen within 95s
+export const HEARTBEAT_FRESH_MS=165000; // C11: listener heartbeat every 120 s (t176u); fresh when seen within 165 s (150-180)
+export const ACK_LIT_TIMEOUT_MS=90000;   // C3/C5: LIT without UNDERSTOOD/UNREADABLE for 90 s (server time) -> "נדלק, אין תשובה"
+export const ACK_NONE_TIMEOUT_MS=180000; // C5: no ack at all 180 s (server time) after creation -> "לא התקבל אישור קבלה"
+export const ACK_ANNOUNCE_MS=5000;       // C7: highlight at most 5 s (none under reduced motion)
 export const CLOCK_SKEW_MS=60000;
 export const QUIET_MS=30*60000;        // "ללא עדכון מאז" after 30 minutes without a progress change
 export const STUCK_MS=60*60000;        // IN_PROGRESS without any update for 60 minutes -> "לא ידוע / תקוע"
@@ -31,9 +47,12 @@ export const TEXT=Object.freeze({
   inProgress:'בביצוע',noPulse:'בביצוע — אין דופק מאז ',noPulseEver:'בביצוע — אין דופק מהמאזין',pulseUnknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
   completed:'הושלם',failed:'נכשל',unknown:'מצב לא מוכר',quiet:'ללא עדכון מאז ',
   rejected:{invalid:'נדחה — משימה לא תקינה',secret:'נדחה — נראה שיש סוד',limit:'נדחה — יותר מדי משימות פתוחות',declined:'נדחה ע"י הסוכן'},
+  ack:{lit:'נדלק — קורא',litNoAnswer:'נדלק, אין תשובה',understood:'הבנתי',unreadable:'לא הצליח לקרוא',waiting:'ממתין לאישור קבלה',
+    noAck:'לא התקבל אישור קבלה',noAckMaybeOff:'אין אישור קבלה (ייתכן שכבוי)',listenerOff:'אישורי קבלה כבויים במאזין',
+    switchOff:'נעצר — אישורי קבלה כבויים',switchMissing:'לא מוגדר — אישורי קבלה חסומים',stale:'לא עדכני',closed:'—'},
   listenerNone:'אין מאזין',listenerDown:'מנותק',listenerUp:'מאזין',listenerUnknown:'לא ידוע (אין חיבור)',
-  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע (לפי דיווח הסוכן)',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',pulse_unknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
-    delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין'}
+  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',pulse_unknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
+    delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין',message:'הודעה'}
 });
 
 // Payload: same allowlist and size as the dispatch note (LF, printable ASCII, Hebrew letters and points; <= 10000).
@@ -70,22 +89,38 @@ export function payloadProblem(raw){
   if(!NOTE_PATTERN.test(p))return 'chars';
   return null;
 }
-export function targetsValid(targets){
-  return !!targets&&typeof targets==='object'&&Object.keys(targets).length===3&&TARGET_KEYS.every(k=>TARGET_VALUES.includes(targets[k]))
-    &&TARGET_KEYS.some(k=>targets[k]==='EXECUTE');
+export function targetsValid(targets,kind='TASK'){
+  const allowed=KIND_VALUES[kind];if(!allowed)return false;
+  return !!targets&&typeof targets==='object'&&Object.keys(targets).length===3&&TARGET_KEYS.every(k=>allowed.includes(targets[k]))
+    &&TARGET_KEYS.some(k=>targets[k]===KIND_ACTIVE[kind]);
 }
+// MESSAGE: <= 2000 code points, BLOCKED (never cut). Returns null or 'message_length'.
+export function kindProblem(kind,payload){return kind==='MESSAGE'&&payloadLength(payload)>MESSAGE_MAX?'message_length':null;}
 // Exact document shown in the preview and sent; timestamp is the server time added by the adapter.
-export function buildTask({taskId,uid,payload,targets}){
+export function buildTask({taskId,uid,payload,targets,kind='TASK'}){
   if(!UUID_V4.test(taskId??''))throw Error('INVALID_TASK_ID');
   if(typeof uid!=='string'||!uid)throw Error('UID_REQUIRED');
-  if(payloadProblem(payload))throw Error('INVALID_PAYLOAD');
-  if(!targetsValid(targets))throw Error('NO_EXECUTE_TARGET');
-  return Object.freeze({taskId,dispatchedBy:uid,payload:normalizePayload(payload),
-    targets:Object.freeze(Object.fromEntries(TARGET_KEYS.map(k=>[k,targets[k]]))),status:'PENDING',progress:Object.freeze({})});
+  if(!KINDS.includes(kind))throw Error('INVALID_KIND');
+  if(payloadProblem(payload)||kindProblem(kind,payload))throw Error('INVALID_PAYLOAD');
+  if(!targetsValid(targets,kind))throw Error(kind==='MESSAGE'?'NO_NOTIFY_TARGET':'NO_EXECUTE_TARGET');
+  return Object.freeze({taskId,dispatchedBy:uid,payload:normalizePayload(payload),kind,
+    targets:Object.freeze(Object.fromEntries(TARGET_KEYS.map(k=>[k,targets[k]]))),status:'PENDING',progress:Object.freeze({}),acks:Object.freeze({})});
 }
-// Exactly the stored fields (payload shown separately as text); timestamp is filled by the server.
-export function previewDoc(task){return {taskId:task.taskId,dispatchedBy:task.dispatchedBy,targets:{...task.targets},status:task.status,timestamp:'ייקבע בשרת',progress:{}};}
-export function draftKey(payload,targets){return JSON.stringify([normalizePayload(payload),TARGET_KEYS.map(k=>targets?.[k]??'')]);}
+// Exactly the stored fields (payload shown separately as text); timestamp is filled by the server. C8: kind + acks:{}.
+export function previewDoc(task){return {taskId:task.taskId,dispatchedBy:task.dispatchedBy,kind:task.kind,targets:{...task.targets},status:task.status,timestamp:'ייקבע בשרת',progress:{},acks:{}};}
+// C8: kind is part of the draft key, so changing it invalidates the preview.
+export function draftKey(payload,targets,kind='TASK'){return JSON.stringify([kind,normalizePayload(payload),TARGET_KEYS.map(k=>targets?.[k]??'')]);}
+// C8: defaults computed ONCE when the kind changes (never on a heartbeat). TASK: every agent IGNORE (non-targets
+// stay IGNORE; the owner picks EXECUTE). MESSAGE: NOTIFY for agents whose listener is 'up' at that moment, else IGNORE.
+// Switching TASK -> MESSAGE with any EXECUTE selected is BLOCKED (returns null); nothing is converted silently.
+export function kindSwitch(fromKind,toKind,targets,liveness={}){
+  if(!KINDS.includes(toKind))return null;
+  if(fromKind===toKind)return {targets:{...targets},note:null};
+  if(toKind==='MESSAGE'&&TARGET_KEYS.some(k=>targets?.[k]==='EXECUTE'))return null;
+  if(toKind==='MESSAGE')return {targets:Object.fromEntries(TARGET_KEYS.map(k=>[k,liveness[k]==='up'?'NOTIFY':'IGNORE'])),note:null};
+  const dropped=TARGET_KEYS.filter(k=>targets?.[k]==='NOTIFY');
+  return {targets:Object.fromEntries(TARGET_KEYS.map(k=>[k,'IGNORE'])),note:dropped.length?'notify_dropped':null};
+}
 // Server snapshot of one of our own tasks (getDocFromServer after a failed or unconfirmed create).
 export function reconcileTask(task,found){
   if(!found||found.exists!==true)return 'missing';
@@ -99,7 +134,51 @@ export function validEntry(e){
 }
 export function validTaskRow(r){
   return !!r&&UUID_V4.test(r.id)&&r.taskId===r.id&&typeof r.payload==='string'&&typeof r.dispatchedBy==='string'&&TASK_STATUSES.includes(r.status)
-    &&Number.isSafeInteger(r.timestamp)&&!!r.targets&&TARGET_KEYS.every(k=>TARGET_VALUES.includes(r.targets[k]))&&!!r.progress&&typeof r.progress==='object';
+    &&Number.isSafeInteger(r.timestamp)&&!!r.targets&&TARGET_KEYS.every(k=>TARGET_VALUES.includes(r.targets[k]))&&!!r.progress&&typeof r.progress==='object'
+    &&(r.kind===undefined||KINDS.includes(r.kind))&&(r.acks===undefined||(!!r.acks&&typeof r.acks==='object'));
+}
+export const rowKind=r=>r?.kind===undefined?'TASK':r.kind;
+export function validAck(a){
+  return !!a&&typeof a==='object'&&ACK_STATES.includes(a.state)&&typeof a.summary==='string'&&[...a.summary].length<=SUMMARY_MAX
+    &&Number.isSafeInteger(a.updatedAt)&&((a.state==='UNDERSTOOD')===(a.summary.length>0));
+}
+// C3: server-time offset. Every server stamp observed on receipt is <= the true server time, so the offset is the
+// max of (serverStamp - clientNowAtReceipt). null until a first server stamp arrives (then nothing is computed).
+export function learnOffset(prev,serverMs,clientMs){
+  if(!Number.isSafeInteger(serverMs)||!Number.isFinite(clientMs))return prev??null;
+  const o=serverMs-clientMs;return prev===null||prev===undefined?o:Math.max(prev,o);
+}
+export const serverNow=(clientNow,offset)=>offset===null||offset===undefined?null:clientNow+offset;
+// One ack line per TARGET agent (EXECUTE or NOTIFY); null for non-targets (C1: a non-target never lights up).
+// opts: {serverNowMs|null, fresh (feed is live), switchState 'on'|'off'|'missing'|'unknown', listenerAck 'on'|'off'|null}
+// kind: understood | unreadable | lit | lit_no_answer | waiting | no_ack | no_ack_maybe_off | listener_off | switch_off | switch_missing | closed
+// C2: when the feed is not fresh the line is marked stale and "no answer" is never computed.
+export function ackFor(row,key,{serverNowMs=null,fresh=true,switchState='unknown',listenerAck=null}={}){
+  const target=row?.targets?.[key];if(target!=='EXECUTE'&&target!=='NOTIFY')return null;
+  const agent=TARGET_AGENTS.find(([,k])=>k===key)[0];
+  const raw=row.acks?.[key];const a=validAck(raw)?raw:null;
+  const out=(kind,text,extra={})=>Object.freeze({key,agent,kind,text:fresh?text:text+' · '+TEXT.ack.stale,stale:!fresh,summary:null,updatedAt:a?.updatedAt??null,...extra});
+  if(a?.state==='UNDERSTOOD')return out('understood',TEXT.ack.understood,{summary:a.summary});
+  if(a?.state==='UNREADABLE')return out('unreadable',TEXT.ack.unreadable);
+  const t=fresh?serverNowMs:null;
+  if(a?.state==='LIT'){
+    if(t!==null&&t-a.updatedAt>ACK_LIT_TIMEOUT_MS)return out('lit_no_answer',TEXT.ack.litNoAnswer);
+    return out('lit',TEXT.ack.lit);
+  }
+  if(row.status!=='PENDING')return out('closed',TEXT.ack.closed);
+  if(switchState==='off')return out('switch_off',TEXT.ack.switchOff);
+  if(switchState==='missing')return out('switch_missing',TEXT.ack.switchMissing);
+  if(listenerAck==='off')return out('listener_off',TEXT.ack.listenerOff);
+  if(t!==null&&t-row.timestamp>ACK_NONE_TIMEOUT_MS)return listenerAck==='on'?out('no_ack',TEXT.ack.noAck):out('no_ack_maybe_off',TEXT.ack.noAckMaybeOff);
+  return out('waiting',TEXT.ack.waiting);
+}
+// C10: which manual owner click is allowed now (mirrors Rules atOwnerTransition): 'start' | 'complete' | null.
+export function ownerAction(row,key){
+  if(row?.status!=='PENDING'||row.targets?.[key]!=='EXECUTE')return null;
+  const p=row.progress?.[key];if(!validEntry(p))return null;
+  if(p.state==='READY'&&p.step==='delivered')return 'start';
+  if(p.state==='IN_PROGRESS')return 'complete';
+  return null;
 }
 // Listener liveness from task_listeners/{key}.seenAt (ms): 'none' | 'down' | 'up'. Only a listener identity can write
 // that document (Rules); CI telemetry heartbeats never reach it.
@@ -117,6 +196,7 @@ const hhmm=ms=>{const s=formatDisplayStamp(ms);return s==='—'?'—':s.slice(11
 // pulse_unknown: the listener stream failed / is offline, so the pulse is not known (never shown as no_pulse).
 export function chipFor(row,key,{now,seenAt,pulseKnown=true}){
   const agent=TARGET_AGENTS.find(([,k])=>k===key)[0];
+  if(row.targets[key]==='NOTIFY')return Object.freeze({key,agent,kind:'notify',text:'להודיע בלבד',updatedAt:null,quiet:false});
   if(row.targets[key]!=='EXECUTE')return Object.freeze({key,agent,kind:'ignore',text:TEXT.ignore,updatedAt:null,quiet:false});
   const raw=row.progress[key];
   const base={key,agent,updatedAt:null,quiet:false};
@@ -129,18 +209,20 @@ export function chipFor(row,key,{now,seenAt,pulseKnown=true}){
   if(raw.state==='REJECTED')return Object.freeze({...base,kind:'rejected',text:TEXT.rejected[raw.step],updatedAt:at});
   if(raw.state==='COMPLETED')return Object.freeze({...base,kind:'completed',text:TEXT.completed,updatedAt:at});
   if(raw.state==='FAILED')return Object.freeze({...base,kind:'failed',text:TEXT.failed,updatedAt:at});
-  // IN_PROGRESS: reported by that agent's own listener identity. Stale -> unknown/stuck; no fresh heartbeat -> say so.
+  // IN_PROGRESS: set ONLY by the owner's manual click (t176u); older docs may carry a listener-written IN_PROGRESS.
+  // Stale -> unknown/stuck; no fresh heartbeat -> say so (C10 keeps this rendering for old docs).
   if(now-at>STUCK_MS)return Object.freeze({...base,kind:'stuck',text:TEXT.stuck+' · '+TEXT.quiet+hhmm(at),updatedAt:at,quiet:true});
   if(!pulseKnown)return Object.freeze({...base,kind:'pulse_unknown',text:TEXT.pulseUnknown,updatedAt:at});
   const live=listenerState(seenAt,now);
   if(live!=='up')return Object.freeze({...base,kind:'no_pulse',text:Number.isSafeInteger(seenAt)?TEXT.noPulse+hhmm(seenAt):TEXT.noPulseEver,updatedAt:at});
   return Object.freeze({...base,kind:'in_progress',text:TEXT.inProgress,updatedAt:at});
 }
-// Derived overall status (never stored). 'בביצוע' only if some agent itself reported IN_PROGRESS AND its listener
+// Derived overall status (never stored). 'בביצוע' only if the owner marked IN_PROGRESS AND the listener
 // heartbeat is fresh; a report without a pulse (no_pulse) or a stale one (stuck) gets its own "unknown" kind.
 export function overallStatus(row,chips){
   if(row.status==='CANCELLED')return {kind:'CANCELLED',text:TEXT.overall.CANCELLED};
-  const active=chips.filter(c=>c.kind!=='ignore');
+  if(rowKind(row)==='MESSAGE')return {kind:'message',text:TEXT.overall.message};
+  const active=chips.filter(c=>c.kind!=='ignore'&&c.kind!=='notify');
   if(active.length&&active.every(c=>['completed','failed','rejected'].includes(c.kind)))return {kind:'done',text:TEXT.overall.done};
   if(active.some(c=>c.kind==='in_progress'))return {kind:'running',text:TEXT.overall.running};
   if(active.some(c=>c.kind==='pulse_unknown'))return {kind:'pulse_unknown',text:TEXT.overall.pulse_unknown};
@@ -160,17 +242,36 @@ export function orderTasks(rows){
 const toMs=v=>typeof v?.toMillis==='function'?v.toMillis():null;
 export function mapTaskDoc(id,x){
   const keys=Object.keys(x??{});
-  if(keys.length!==TASK_KEYS.length||!TASK_KEYS.every(k=>keys.includes(k))||toMs(x.timestamp)===null||!x.targets||typeof x.targets!=='object'
-    ||!x.progress||typeof x.progress!=='object')throw Error('INVALID_ACTIVE_TASK');
+  if(!TASK_KEYS.every(k=>keys.includes(k))||!keys.every(k=>TASK_KEYS.includes(k)||OPTIONAL_TASK_KEYS.includes(k))||toMs(x.timestamp)===null||!x.targets||typeof x.targets!=='object'
+    ||!x.progress||typeof x.progress!=='object'||(x.kind!==undefined&&!KINDS.includes(x.kind))||(x.acks!==undefined&&(!x.acks||typeof x.acks!=='object')))throw Error('INVALID_ACTIVE_TASK');
   const progress={};
   for(const k of TARGET_KEYS)if(Object.hasOwn(x.progress,k)){const e=x.progress[k];
     progress[k]=e&&typeof e==='object'?{state:e.state,step:e.step,updatedAt:toMs(e.updatedAt),...(Object.keys(e).length!==3?{extra:true}:{})}:{state:null,step:null,updatedAt:null,extra:true};}
-  return {id,taskId:x.taskId,dispatchedBy:x.dispatchedBy,payload:x.payload,status:x.status,timestamp:toMs(x.timestamp),
-    targets:{codex:x.targets.codex,grok:x.targets.grok,gemini:x.targets.gemini},progress};
+  const acks={};
+  if(x.acks)for(const k of TARGET_KEYS)if(Object.hasOwn(x.acks,k)){const a=x.acks[k];
+    acks[k]=a&&typeof a==='object'?{state:a.state,summary:typeof a.summary==='string'?a.summary:null,updatedAt:toMs(a.updatedAt)}:{state:null,summary:null,updatedAt:null};}
+  return {id,taskId:x.taskId,dispatchedBy:x.dispatchedBy,payload:x.payload,status:x.status,timestamp:toMs(x.timestamp),kind:x.kind===undefined?'TASK':x.kind,
+    targets:{codex:x.targets.codex,grok:x.targets.grok,gemini:x.targets.gemini},progress,acks};
 }
 // task_listeners docs [{id,data}] -> {codex|grok|gemini: seenAt ms}; anything malformed is ignored ("אין מאזין").
+// Heartbeat docs may carry ack ('on'|'off') and mode ('push'|'poll') (C5); older docs have only {agent, seenAt}.
+const HB_KEYS=['agent','seenAt','ack','mode'];
+const validHb=(id,data)=>TARGET_KEYS.includes(id)&&data&&Object.keys(data).every(k=>HB_KEYS.includes(k))&&data.agent===id&&toMs(data.seenAt)!==null
+  &&(data.ack===undefined||['on','off'].includes(data.ack))&&(data.mode===undefined||['push','poll'].includes(data.mode));
 export function mapListenerDocs(docs){
   const seen={};
-  for(const {id,data} of Array.isArray(docs)?docs:[])if(TARGET_KEYS.includes(id)&&data&&Object.keys(data).length===2&&data.agent===id&&toMs(data.seenAt)!==null)seen[id]=toMs(data.seenAt);
+  for(const {id,data} of Array.isArray(docs)?docs:[])if(validHb(id,data))seen[id]=toMs(data.seenAt);
   return seen;
+}
+// {codex|grok|gemini: {ack:'on'|'off'|null, mode:'push'|'poll'|null}} — null when the heartbeat has no such field.
+export function mapListenerMeta(docs){
+  const meta={};
+  for(const {id,data} of Array.isArray(docs)?docs:[])if(validHb(id,data))meta[id]={ack:data.ack??null,mode:data.mode??null};
+  return meta;
+}
+// control/ack_switch -> 'on' | 'off' | 'missing' (server snapshot only; anything malformed is 'unknown').
+export function mapAckSwitch(snap){
+  if(!snap||snap.exists===false)return {state:'missing',updatedAt:null};
+  const d=snap.data;if(!d||typeof d.enabled!=='boolean')return {state:'unknown',updatedAt:null};
+  return {state:d.enabled?'on':'off',updatedAt:toMs(d.updatedAt)};
 }

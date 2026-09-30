@@ -133,6 +133,7 @@ export function createTokenSource({mode='production',projectId,uid,agent,refresh
     },
     get authTime(){return authTime;},
     get fatal(){return fatal;},
+    get expiresAt(){return exp;},   // seconds; the push stream restarts before it (firestore-listen.mjs)
     uid,agent,projectId,mode
   });
 }

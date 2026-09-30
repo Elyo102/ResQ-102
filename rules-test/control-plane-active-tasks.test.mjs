@@ -1,6 +1,7 @@
 // Active tasks: exact-byte provenance on top of the LIVE f30d3d85 artifact plus emulator Rules on the SAME bytes that
 // would be deployed (control-plane/deploy/firestore.control-plane.rules). Local emulator only; synthetic identities only.
-// Security review 30/09/2026 conditions B1-B4, C1-C8 (control-plane/ACTIVE-TASKS.md).
+// Security review 30/09/2026 conditions B1-B4, C1-C8 (control-plane/ACTIVE-TASKS.md) and the push-trigger verdict
+// (review/push-trigger-verdicts.md, security 2): kind/NOTIFY, acks, ack_switch, owner-only IN_PROGRESS/COMPLETED.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
@@ -150,30 +151,45 @@ await check('B1 CI (private_publishers) and budget identities are rejected as li
  for(const mutate of [{Grok:{enabled:false}},{Grok:{revokedAfter:nowSeconds()+60}},{Grok:{role:'publisher'}},{Grok:{agent:'Codex'}}]){await seed(mutate);
   await assertFails(getDoc(doc(listener(),'active_tasks/'+T_GROK)));await assertFails(progress(listener(),T_GROK,'grok',entry('READY','delivered')));}
 });
-await check('B2/B4/C3 progress transitions: none->READY|REJECTED, READY->REJECTED, READY/delivered (only)->IN_PROGRESS, IN_PROGRESS->COMPLETED|FAILED; nothing leaves a terminal state',async()=>{
+await check('B2/B4/C3 + push trigger: the LISTENER may only write none->READY|REJECTED and READY->REJECTED; it can never start, complete or fail a task',async()=>{
  await seed();const db=listener();
  await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivered')));
  await assertFails(progress(db,T_GROK,'grok',entry('READY','delivery_off')));            // READY -> READY
- await assertFails(progress(db,T_GROK,'grok',entry('COMPLETED','completed')));          // READY -> COMPLETED
- await assertSucceeds(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));
- await assertFails(progress(db,T_GROK,'grok',entry('READY','delivered')));              // back to READY
- await assertFails(progress(db,T_GROK,'grok',entry('REJECTED','declined')));           // IN_PROGRESS -> REJECTED
- await assertSucceeds(progress(db,T_GROK,'grok',entry('COMPLETED','completed')));
+ for(const [s,st] of [['IN_PROGRESS','started'],['COMPLETED','completed'],['FAILED','failed']])await assertFails(progress(db,T_GROK,'grok',entry(s,st)));   // escalation denied
+ await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','declined')));
  for(const [s,st] of [['FAILED','failed'],['IN_PROGRESS','started'],['READY','delivered'],['REJECTED','declined'],['COMPLETED','completed']])await assertFails(progress(db,T_GROK,'grok',entry(s,st)));
  await seed();
- await assertFails(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));          // none -> IN_PROGRESS
- await assertFails(progress(db,T_GROK,'grok',entry('COMPLETED','completed')));
- await assertFails(progress(db,T_GROK,'grok',entry('FAILED','failed')));
+ for(const [s,st] of [['IN_PROGRESS','started'],['COMPLETED','completed'],['FAILED','failed']])await assertFails(progress(db,T_GROK,'grok',entry(s,st)));   // none -> escalation
  await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','secret')));
  for(const [s,st] of [['READY','delivered'],['IN_PROGRESS','started'],['REJECTED','invalid']])await assertFails(progress(db,T_GROK,'grok',entry(s,st)));
  await seed();
- // hardening: READY/delivery_off (nothing written to the inbox) can never become IN_PROGRESS; it may only be REJECTED
  await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivery_off')));
- await assertFails(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));          // delivery_off -> IN_PROGRESS denied
+ await assertFails(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));
  await assertSucceeds(progress(db,T_GROK,'grok',entry('REJECTED','declined')));
+});
+await check('owner manual click (t176u): READY/delivered -> IN_PROGRESS -> COMPLETED on an EXECUTE target only; no other owner progress write',async()=>{
+ await seed();const o=owner();
+ await assertFails(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started')));            // none -> IN_PROGRESS (no delivery)
+ await assertFails(progress(o,T_GROK,'grok',entry('READY','delivered')));                // the owner never writes READY
+ await assertSucceeds(progress(listener(),T_GROK,'grok',entry('READY','delivered')));
+ await assertFails(progress(o,T_GROK,'grok',entry('COMPLETED','completed')));            // READY -> COMPLETED
+ await assertFails(progress(o,T_GROK,'grok',entry('FAILED','failed')));
+ await assertFails(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started',{note:'x'})));
+ await assertFails(updateDoc(doc(o,'active_tasks/'+T_GROK),{'progress.grok':entry('IN_PROGRESS','started'),status:'IN_PROGRESS'}));
+ await assertFails(progress(ciPublisher(),T_GROK,'grok',entry('IN_PROGRESS','started')));
+ await assertSucceeds(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started')));
+ await assertFails(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started')));
+ await assertFails(progress(o,T_GROK,'grok',entry('FAILED','failed')));
+ await assertSucceeds(progress(o,T_GROK,'grok',entry('COMPLETED','completed')));
+ for(const [s,st] of [['IN_PROGRESS','started'],['COMPLETED','completed'],['READY','delivered']])await assertFails(progress(o,T_GROK,'grok',entry(s,st)));
  await seed();
- await assertSucceeds(progress(db,T_GROK,'grok',entry('READY','delivered')));await assertSucceeds(progress(db,T_GROK,'grok',entry('IN_PROGRESS','started')));
- await assertSucceeds(progress(db,T_GROK,'grok',entry('FAILED','failed')));await assertFails(progress(db,T_GROK,'grok',entry('COMPLETED','completed')));
+ await assertSucceeds(progress(listener(),T_GROK,'grok',entry('READY','delivery_off')));
+ await assertFails(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started')));            // delivery_off: no inbox file, no start
+ await assertFails(progress(o,T_CODEX,'grok',entry('IN_PROGRESS','started')));           // not an EXECUTE target
+ await assertSucceeds(updateDoc(doc(o,'active_tasks/'+T_GROK),{status:'CANCELLED'}));
+ await seed();await assertSucceeds(progress(listener(),T_GROK,'grok',entry('READY','delivered')));
+ await assertSucceeds(updateDoc(doc(o,'active_tasks/'+T_GROK),{status:'CANCELLED'}));
+ await assertFails(progress(o,T_GROK,'grok',entry('IN_PROGRESS','started')));            // cancelled
 });
 await check('B2/B4 entry is exactly {state, step, updatedAt=server time} with a closed step enum; only own key; never status or any other field',async()=>{
  await seed();const db=listener();
@@ -202,7 +218,7 @@ await check('C5 owner cancel: PENDING -> CANCELLED only, status key only, allowe
  await assertSucceeds(progress(listener(),T_GROK,'grok',entry('READY','delivered')));
  const ref=db=>doc(db,'active_tasks/'+T_GROK);
  for(const change of [{status:'COMPLETED'},{status:'PENDING'},{status:'CANCELLED',payload:'x'},{status:'CANCELLED','progress.grok':entry('COMPLETED','completed')},
-  {'progress.grok':entry('IN_PROGRESS','started')},{status:'cancelled'},{targets:{grok:'IGNORE',codex:'EXECUTE',gemini:'IGNORE'}}])await assertFails(updateDoc(ref(owner()),change));
+  {status:'CANCELLED','progress.grok':entry('IN_PROGRESS','started')},{status:'cancelled'},{targets:{grok:'IGNORE',codex:'EXECUTE',gemini:'IGNORE'}},{kind:'MESSAGE'},{acks:{grok:{state:'LIT',summary:'',updatedAt:serverTimestamp()}}}])await assertFails(updateDoc(ref(owner()),change));
  for(const db of [listener(),ciPublisher(),budget(),anon()])await assertFails(updateDoc(ref(db),{status:'CANCELLED'}));
  await assertFails(updateDoc(doc(owner(),'active_tasks/'+T_FOREIGN),{status:'CANCELLED'}));
  await assertSucceeds(updateDoc(ref(owner()),{status:'CANCELLED'}));
@@ -226,6 +242,8 @@ await check('task_listeners heartbeat: only that agent\'s listener identity, exa
  await aged(61000);
  for(const [path,data] of [['task_listeners/codex',{agent:'codex',seenAt:serverTimestamp()}],['task_listeners/grok',{agent:'codex',seenAt:serverTimestamp()}],
   ['task_listeners/grok',{agent:'grok',seenAt:Timestamp.now()}],['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),x:1}],['task_listeners/grok',{agent:'grok'}],
+  ['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),ack:'ON'}],['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),ack:true}],
+  ['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),mode:'grpc'}],['task_listeners/grok',{agent:'grok',seenAt:serverTimestamp(),ack:'on',mode:'push',summary:'x'}],
   ['task_listeners/claude',{agent:'claude',seenAt:serverTimestamp()}]])await assertFails(setDoc(doc(listener(),path),data));
  for(const db of [owner(),ciPublisher(),ciAsListener(),budgetAsListener(),budget(),anon()])await assertFails(setDoc(doc(db,'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp()}));
  for(const db of [owner(),listener()])await assertFails(deleteDoc(doc(db,'task_listeners/grok')));
@@ -233,6 +251,122 @@ await check('task_listeners heartbeat: only that agent\'s listener identity, exa
  await assertSucceeds(getDocs(query(collection(owner(),'task_listeners'),orderBy('seenAt','desc'),limit(3))));
  await assertFails(getDocs(query(collection(owner(),'task_listeners'),orderBy('seenAt','desc'),limit(4))));
  for(const db of [listener(),ciPublisher(),anon()])await assertFails(getDoc(doc(db,'task_listeners/codex')));
+});
+await check('heartbeat carries the ack mode (on|off) and transport (push|poll); both optional for the b41e775 runner',async()=>{
+ await seed();
+ const aged=ms=>environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'task_listeners/grok'),{agent:'grok',seenAt:Timestamp.fromMillis(Date.now()-ms)}));
+ for(const extra of [{},{ack:'off'},{ack:'on'},{mode:'push'},{ack:'on',mode:'push'},{ack:'off',mode:'poll'}]){await aged(61000);
+  await assertSucceeds(setDoc(doc(listener(),'task_listeners/grok'),{agent:'grok',seenAt:serverTimestamp(),...extra}));}
+});
+// ---------------- push trigger: kind / NOTIFY / acks / ack_switch ----------------
+const ack=(db,id,key,value)=>updateDoc(doc(db,'active_tasks/'+id),{['acks.'+key]:value});
+const ackEntry=(state,summary='',extra={})=>({state,summary,updatedAt:serverTimestamp(),...extra});
+const setSwitch=enabled=>environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),{enabled,updatedAt:Timestamp.now()}));
+const MSG=(id,extra={})=>task(id,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'NOTIFY',gemini:'IGNORE'},acks:{},payload:'הודעה לכולם',...extra});
+async function seedMessages(){
+ await seed();
+ await environment.withSecurityRulesDisabled(async c=>{const db=c.firestore();const ts=Timestamp.now();
+  await setDoc(doc(db,'active_tasks/'+M_ALL),{...MSG(M_ALL),timestamp:ts});
+  await setDoc(doc(db,'active_tasks/'+M_OLD),{...MSG(M_OLD),timestamp:Timestamp.fromMillis(Date.now()-24*3600000-60000)});
+  await setDoc(doc(db,'active_tasks/'+T_NEW),{...task(T_NEW,{kind:'TASK',acks:{}}),timestamp:ts});
+ });
+ await setSwitch(true);
+}
+const M_ALL=randomUUID(),M_OLD=randomUUID(),T_NEW=randomUUID();
+await check('create kind: TASK (EXECUTE/IGNORE, >=1 EXECUTE) and MESSAGE (NOTIFY/IGNORE, >=1 NOTIFY, <= 2000, never EXECUTE); acks missing or {}',async()=>{
+ await seed();
+ await assertSucceeds(put(owner(),task(randomUUID(),{kind:'TASK'})));await assertSucceeds(put(owner(),task(randomUUID(),{kind:'TASK',acks:{}})));
+ for(const targets of [{grok:'NOTIFY',codex:'NOTIFY',gemini:'NOTIFY'},{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},{grok:'IGNORE',codex:'IGNORE',gemini:'NOTIFY'}])
+  await assertSucceeds(put(owner(),MSG(randomUUID(),{targets})));
+ await assertSucceeds(put(owner(),MSG(randomUUID(),{payload:'א'.repeat(2000)})));{const id=randomUUID();const d=MSG(id);delete d.acks;await assertSucceeds(put(owner(),d,id));}
+ const bad=[{kind:'MESSAGE',targets:{grok:'EXECUTE',codex:'NOTIFY',gemini:'IGNORE'}},{targets:{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'}},{payload:'א'.repeat(2001)},
+  {kind:'TASK'},{kind:'message'},{kind:'BROADCAST'},{kind:7},{acks:{grok:{state:'LIT',summary:'',updatedAt:serverTimestamp()}}},{acks:null},{acks:'x'}];
+ for(const extra of bad){const id=randomUUID();const d=MSG(id,extra);if(d.acks===undefined)delete d.acks;await assertFails(put(owner(),d,id),JSON.stringify(extra).slice(0,60));}
+ for(const targets of [{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},{grok:'EXECUTE',codex:'NOTIFY',gemini:'IGNORE'}])await assertFails(put(owner(),task(randomUUID(),{targets})));   // TASK: non-targets IGNORE, never NOTIFY
+});
+await check('listener list: targets.<key> in [EXECUTE, NOTIFY] + orderBy(timestamp desc), limit 1..5 ONLY with the filter; get of NOTIFY own; never another key',async()=>{
+ await seedMessages();
+ const inQ=(db,key,n=5)=>query(collection(db,'active_tasks'),where('targets.'+key,'in',['EXECUTE','NOTIFY']),orderBy('timestamp','desc'),limit(n));
+ await assertSucceeds(getDocs(inQ(listener(),'grok')));await assertSucceeds(getDocs(inQ(listener('Codex'),'codex',1)));
+ const got=await getDocs(inQ(listener(),'grok'));assert.ok(got.docs.some(d=>d.id===M_ALL)&&got.docs.some(d=>d.id===T_GROK));
+ await assertFails(getDocs(inQ(listener(),'grok',6)));
+ await assertFails(getDocs(query(collection(listener(),'active_tasks'),where('targets.grok','in',['EXECUTE','NOTIFY']),orderBy('timestamp','desc'))));   // no limit
+ await assertFails(getDocs(query(collection(listener(),'active_tasks'),where('targets.grok','in',['EXECUTE','NOTIFY','IGNORE']),orderBy('timestamp','desc'),limit(5))));
+ await assertFails(getDocs(query(collection(listener(),'active_tasks'),orderBy('timestamp','desc'),limit(5))));
+ await assertFails(getDocs(inQ(listener(),'codex')));
+ await assertSucceeds(getDoc(doc(listener(),'active_tasks/'+M_ALL)));await assertFails(getDoc(doc(listener('Gemini'),'active_tasks/'+M_ALL)));   // gemini IGNORE
+});
+await check('acks: own key only, EXECUTE or NOTIFY target, LIT -> UNDERSTOOD|UNREADABLE terminal, exact {state, summary, updatedAt}, only acks changes',async()=>{
+ await seedMessages();const db=listener();
+ await assertSucceeds(ack(db,M_ALL,'grok',ackEntry('LIT')));
+ await assertFails(ack(db,M_ALL,'grok',ackEntry('LIT')));                                              // LIT -> LIT
+ await assertSucceeds(ack(db,M_ALL,'grok',ackEntry('UNDERSTOOD','הבנתי: בדיקה של כפתור השליחה')));
+ for(const v of [ackEntry('UNDERSTOOD','x'),ackEntry('UNREADABLE'),ackEntry('LIT')])await assertFails(ack(db,M_ALL,'grok',v));   // terminal
+ await assertSucceeds(ack(listener('Codex'),M_ALL,'codex',ackEntry('UNREADABLE')));                   // direct final state
+ await assertFails(ack(listener('Gemini'),M_ALL,'gemini',ackEntry('LIT')));                           // IGNORE target
+ await assertFails(ack(db,M_ALL,'codex',ackEntry('LIT')));                                            // another agent's key
+ await assertFails(ack(db,T_CODEX,'grok',ackEntry('LIT')));                                           // TASK not targeted at grok
+ await assertSucceeds(ack(db,T_NEW,'grok',ackEntry('UNDERSTOOD','summary')));                         // EXECUTE target
+ await assertSucceeds(ack(db,T_GROK,'grok',ackEntry('LIT')));                                         // legacy task without acks/kind
+ await assertFails(updateDoc(doc(db,'active_tasks/'+T_ALL),{'acks.grok':ackEntry('LIT'),'progress.grok':entry('READY','delivered')}));   // acks + progress together
+ for(const change of [{'acks.grok':ackEntry('LIT'),status:'CANCELLED'},{'acks.grok':ackEntry('LIT'),payload:'x'},{acks:{grok:ackEntry('LIT'),codex:ackEntry('LIT')}}])
+  await assertFails(updateDoc(doc(db,'active_tasks/'+T_ALL),change),JSON.stringify(Object.keys(change)));
+ for(const v of [{state:'LIT',summary:''},ackEntry('LIT','',{note:1}),ackEntry('LIT','',{updatedAt:Timestamp.now()}),ackEntry('lit'),ackEntry('ACK'),ackEntry('IN_PROGRESS'),
+  ackEntry('LIT','x'),ackEntry('UNREADABLE','x'),ackEntry('UNDERSTOOD',''),ackEntry('UNDERSTOOD',7),'LIT',null])await assertFails(ack(db,T_ALL,'grok',v),JSON.stringify(v));
+ for(const other of [owner(),ciPublisher(),ciAsListener(),budgetAsListener(),budget(),anon(),listener('Claude')])await assertFails(ack(other,T_ALL,'grok',ackEntry('LIT')));   // owner cannot forge an ack either
+});
+await check('NOTIFY (MESSAGE) targets write no progress at all (security: atProgress only for EXECUTE targets; no inbox file either)',async()=>{
+ await seedMessages();
+ for(const e of [entry('READY','delivered'),entry('READY','delivery_off'),entry('REJECTED','invalid'),entry('REJECTED','declined')]){
+  await assertFails(progress(listener(),M_ALL,'grok',e),JSON.stringify(e.state+e.step));await assertFails(progress(listener('Codex'),M_ALL,'codex',e));}
+ await environment.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'active_tasks/'+M_ALL),{'progress.grok':{state:'READY',step:'delivered',updatedAt:Timestamp.now()}}));
+ await assertFails(progress(owner(),M_ALL,'grok',entry('IN_PROGRESS','started')));                    // owner click needs an EXECUTE target too
+ await assertSucceeds(ack(listener(),M_ALL,'grok',ackEntry('LIT')));                                   // the ack is the only listener write on a MESSAGE
+});
+await check('summary: size() <= 280 counted per character with Hebrew + niqqud (280 ok, 281 denied); RE2 allowlist compiles; no newline, bidi, zero-width, gershayim, emoji',async()=>{
+ await seedMessages();const db=listener();
+ const heb='שָׁלוֹם';const s280=(heb.repeat(60)).slice(0,280);assert.equal([...s280].length,280);assert.equal(s280.length,280);
+ const fresh=async()=>{const id=randomUUID();await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'active_tasks/'+id),{...MSG(id),timestamp:Timestamp.now()}));return id;};
+ await assertSucceeds(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD',s280)));
+ await assertFails(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD',s280+'א')));
+ await assertSucceeds(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD','a'.repeat(280))));await assertFails(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD','a'.repeat(281))));
+ await assertSucceeds(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD','Fix: push/deploy? https://x.y ~!@#$%^&*()')));   // ':' and '/' allowed (UI renders textContent only)
+ for(const bad of ['a\nb','a\rb','a\tb','a\u202eb','a\u2066b','a\u200fb','a\u200bb','a\ufeffb','גרש\u05f3','\u05f4','😀','a\u2013b','\u201cq\u201d','\u0000'])
+  await assertFails(ack(db,await fresh(),'grok',ackEntry('UNDERSTOOD',bad)),JSON.stringify(bad));
+});
+await check('acks: only while PENDING and within 24 h of the task',async()=>{
+ await seedMessages();
+ await assertFails(ack(listener(),M_OLD,'grok',ackEntry('LIT')));
+ await assertSucceeds(updateDoc(doc(owner(),'active_tasks/'+M_ALL),{status:'CANCELLED'}));
+ await assertFails(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
+ await assertFails(ack(listener(),T_CANCELLED,'grok',ackEntry('LIT')));
+});
+await check('ack_switch: missing document or enabled:false denies every ack; enabled must be exactly true',async()=>{
+ await seedMessages();
+ await environment.withSecurityRulesDisabled(c=>deleteDoc(doc(c.firestore(),'control/ack_switch')));
+ await assertFails(ack(listener(),M_ALL,'grok',ackEntry('LIT')));                                    // missing -> get fails -> denied
+ await setSwitch(false);await assertFails(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
+ await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),{enabled:'true',updatedAt:Timestamp.now()}));
+ await assertFails(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
+ await setSwitch(true);await assertSucceeds(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
+});
+await check('ack_switch document: owner-only seed with enabled:false + fresh sign-in; OFF always allowed, ON needs a fresh sign-in; no listener access, no list, no delete',async()=>{
+ await seed();
+ const sw=db=>doc(db,'control/ack_switch');const v=enabled=>({enabled,updatedAt:serverTimestamp()});
+ await assertFails(setDoc(sw(owner()),v(true)));                                                      // seed must be false
+ await assertFails(setDoc(sw(owner({auth_time:nowSeconds()-1000})),v(false)));                       // seed needs fresh auth
+ for(const db of [listener(),ciPublisher(),budget(),anon()])await assertFails(setDoc(sw(db),v(false)));
+ await assertFails(setDoc(sw(owner()),{enabled:false,updatedAt:Timestamp.now()}));
+ await assertFails(setDoc(sw(owner()),{enabled:false,updatedAt:serverTimestamp(),by:'x'}));
+ await assertSucceeds(setDoc(sw(owner()),v(false)));
+ await assertFails(setDoc(sw(owner({auth_time:nowSeconds()-1000})),v(true)));                        // ON: stale auth denied
+ await assertSucceeds(setDoc(sw(owner()),v(true)));await assertSucceeds(setDoc(sw(owner()),v(true)));  // idempotent
+ await assertSucceeds(setDoc(sw(owner({auth_time:nowSeconds()-3000})),v(false)));                   // OFF: always allowed
+ await assertFails(setDoc(sw(owner()),{enabled:'false',updatedAt:serverTimestamp()}));
+ for(const db of [listener(),listener('Codex'),ciPublisher(),anon()]){await assertFails(getDoc(sw(db)));await assertFails(setDoc(sw(db),v(true)));await assertFails(updateDoc(sw(db),{enabled:true,updatedAt:serverTimestamp()}));}
+ await assertSucceeds(getDoc(sw(owner())));await assertFails(getDocs(query(collection(owner(),'control'),limit(1))));
+ for(const db of [owner(),listener()])await assertFails(deleteDoc(sw(db)));
+ await assertFails(setDoc(doc(owner(),'control/other'),v(false)));
 });
 await check('C8 live behaviour preserved on the new artifact: dispatch create/read, events read-only for owner, deny-all elsewhere',async()=>{
  await seed();

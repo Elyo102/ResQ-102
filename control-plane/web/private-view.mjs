@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch4';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch5';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
@@ -144,6 +144,13 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
         const row=node('div',null,'agent-status-row');row.append(node('span','CI:','agent-source'),status);
         const p=node('p',line,'agent-listener');p.dataset.listener=listenerStatus.state?.(a.agent)??'';
         card.append(node('h2',a.agent),row,node('small',detailText(a)),p);
+        // C1: only the target card gets ONE more line (latest ack state + task time), linked to its feed row.
+        let ack=null;try{ack=listenerStatus.ackLine?.(a.agent)??null;}catch{ack=null;}
+        if(ack&&typeof ack.text==='string'&&typeof ack.href==='string'){
+          const l=node('p',null,'agent-ack');l.dataset.kind=ack.kind??'';l.dataset.stale=String(ack.stale===true);
+          const link=node('a',ack.text);link.href=ack.href;link.onclick=e=>{e.preventDefault();try{listenerStatus.focusRow?.(ack.rowId);}catch{}};
+          l.append(link);card.append(l);
+        }
       }else card.append(node('h2',a.agent),status,node('small',detailText(a)));
       cards.append(card);}
   }

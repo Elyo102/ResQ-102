@@ -1,0 +1,25 @@
+{
+ "source": "https://github.com/googleapis/googleapis",
+ "commit": "93d6085996d0b4ff7e7e86ca9945d5524bb380d1",
+ "note": "Verified by listener/grpc-transport.mjs before loading; mismatch -> PROTO_HASH (fail closed). google/protobuf/* well-known types come from protobufjs (pinned via package-lock.json).",
+ "files": {
+  "google/api/annotations.proto": "e79ea741cb605a65e78ca322174764a4af9fde1962c1631e12b84c4934ba9a6c",
+  "google/api/client.proto": "5e9fc117290fe7d3472791543c979bec7cf4497f3fe6ffaf9de9ae99cc4f1804",
+  "google/api/field_behavior.proto": "bb7ed77725c95f751ec2c47cd92359d0137c39383b8a62aef41bab7aa7478da5",
+  "google/api/http.proto": "ead99129aa15dd5f6233942030c72eec33bc0d7b1c7c260dc143293ef66c5b78",
+  "google/api/launch_stage.proto": "68e22c9821227b4e84c7029569fce1055c21e6ccab991e0986bc75f12ef4dd82",
+  "google/api/routing.proto": "f31cb43c3efe07a80cd814eede587f1a38b4dac88053069dcfeaac86700511be",
+  "google/firestore/v1/aggregation_result.proto": "0e75f0283c9813f0db3fc584fa1d20534944263697c3c94f79c9cc5bc2557a3c",
+  "google/firestore/v1/bloom_filter.proto": "f7d44387d5ace96b6f76d03e092ac0e0e9f916f0342698ce4d064a0dac60401a",
+  "google/firestore/v1/common.proto": "76b22a52fe379ab2b9c1a2b8d7a44b3d042cb05f6d3789b774c3d6f1b64d5bf7",
+  "google/firestore/v1/document.proto": "7e7088b41f610fbe2405cfc26b5a837551a56510b769512f0e54b6baccb37aaa",
+  "google/firestore/v1/explain_stats.proto": "64b72a1a6d6c56fb974c0b6b01010c483515cca97fc543ba51646e0237ad73cd",
+  "google/firestore/v1/firestore.proto": "456dc27183788bdce2c3d7348e25d9dfd1ac50b2fc59fef00c32fdb96c299639",
+  "google/firestore/v1/pipeline.proto": "52361c0d0beb74682b064f914f38e16d1b7d57a3240eb855ab9553dde208392f",
+  "google/firestore/v1/query.proto": "3c41f325a151fbc6e26f3a161fdc8de177e5508c300b4e0ee0bb7a9ee2df0015",
+  "google/firestore/v1/query_profile.proto": "0bafd463bc608c5c5396665f9b1cd45227eeb79419f63ed6f054307680cb834d",
+  "google/firestore/v1/write.proto": "192793a66f4762b4c2e96e9b983a4644acd55558fdf322319f648d8584ac8045",
+  "google/rpc/status.proto": "f5bfd262e6705c7ae73f32e0ad8ee20ce8c0a2578df8c4f76ebf76b572f295ed",
+  "google/type/latlng.proto": "39666561b6c2cb45d488a56ad909b8ec9b5a086ccf62e28c662059170f3d1cbd"
+ }
+}

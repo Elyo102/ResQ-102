@@ -4,7 +4,11 @@
 //   POLL_MS as a server query (runQuery always reads the server: fromCache false, no pending writes). REST polling
 //   is used because the web SDK has no supported way to authenticate from a stored refresh token.
 // - writeProgress: ONE commit updating ONLY progress.<key> = {state, step, updatedAt: REQUEST_TIME}, doc must exist.
-// - writeHeartbeat: task_listeners/<key> = {agent: key, seenAt: REQUEST_TIME} (the Rules allow 1 write per 30 s).
+// - writeHeartbeat: task_listeners/<key> = {agent: key, ack: on|off, mode: push|poll, seenAt: REQUEST_TIME}
+//   (the Rules allow 1 write per 30 s; ack/mode are optional in the Rules, the runner always sends them).
+// - writeAck (push trigger): ONE commit updating ONLY acks.<key> = {state, summary, updatedAt: REQUEST_TIME}, doc
+//   must exist. The Rules decide (ack_switch on, PENDING, targeted, < 24 h, LIT -> UNDERSTOOD|UNREADABLE).
+// - Push mode uses this adapter for every write and read; only watchTasks is replaced (firestore-listen.mjs).
 // - readTask: a server GET of active_tasks/<taskId>.
 // Never logs; never surfaces a token or a response body. Endpoint: firestore.googleapis.com, or the local emulator
 // (127.0.0.1:8191/8199, demo-* project) for the e2e only.
@@ -17,7 +21,10 @@ export const EMULATOR_HOSTS=Object.freeze(['127.0.0.1:8191','127.0.0.1:8199']);
 // + 1440 heartbeats x <=4 Rules lookups = <=12.2k reads; both agents <=24.5k (was <=37.4k at 60 s). Quota check 30/09/2026.
 export const POLL_MS=120000;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const STATES=Object.freeze({READY:['delivered','delivery_off'],REJECTED:['invalid','secret','limit','declined'],IN_PROGRESS:['started'],COMPLETED:['completed'],FAILED:['failed']});
+// t176u: IN_PROGRESS / COMPLETED / FAILED are owner-click only; the listener can no longer write them.
+const STATES=Object.freeze({READY:['delivered','delivery_off'],REJECTED:['invalid','secret','limit','declined']});
+const ACK_STATES=Object.freeze(['LIT','UNDERSTOOD','UNREADABLE']);
+const SUMMARY_RE=/^[\u0020-\u007E\u05D0-\u05EA\u05B0-\u05C7]*$/u;
 
 export function firestoreBase({mode,projectId,emulatorHost}){
   if(mode==='production'){if(projectId!==PROJECT)fail('PROJECT_REJECTED');return FIRESTORE_URL;}
@@ -105,9 +112,20 @@ export function createListenerOps({client,key,pollMs=POLL_MS,setTimer=setInterva
         updateTransforms:[{fieldPath:`progress.${key}.updatedAt`,setToServerValue:'REQUEST_TIME'}],
         currentDocument:{exists:true}}]);
     },
-    async writeHeartbeat(k){
+    async writeAck(taskId,k,entry){
+      own(k);if(!UUID.test(taskId??''))fail('TASK_ID');
+      const n=typeof entry?.summary==='string'?[...entry.summary].length:-1;
+      if(!entry||Object.keys(entry).sort().join()!=='state,summary'||!ACK_STATES.includes(entry.state)||n<0||n>280||!SUMMARY_RE.test(entry.summary)
+        ||((entry.state==='UNDERSTOOD')!==(n>0)))fail('ACK_ENTRY');
+      await client.commit([{update:{name:client.name('active_tasks/'+taskId),fields:{acks:encodeValue({[key]:{state:entry.state,summary:entry.summary}})}},
+        updateMask:{fieldPaths:['acks.'+key]},
+        updateTransforms:[{fieldPath:`acks.${key}.updatedAt`,setToServerValue:'REQUEST_TIME'}],
+        currentDocument:{exists:true}}]);
+    },
+    async writeHeartbeat(k,info={ack:'off',mode:'poll'}){
       own(k);
-      await client.commit([{update:{name:client.name('task_listeners/'+key),fields:{agent:encodeValue(key)}},
+      if(!info||!['on','off'].includes(info.ack)||!['push','poll'].includes(info.mode))fail('HEARTBEAT_INFO');
+      await client.commit([{update:{name:client.name('task_listeners/'+key),fields:{agent:encodeValue(key),ack:encodeValue(info.ack),mode:encodeValue(info.mode)}},
         updateTransforms:[{fieldPath:'seenAt',setToServerValue:'REQUEST_TIME'}]}]);
     },
     async readTask(taskId){

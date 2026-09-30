@@ -57,6 +57,8 @@ export function assembleDispatchRules(capture,fragment){
 // Function names must not collide with any existing function in the live rules (tasks(), aid(), policy(), ...).
 export const LIVE_BASE_SHA256='f30d3d85142e21abae4e3a2c53938242d105be8f9dbffc71e5633301f3b94e16';
 export const LIVE_BASE_RULESET='projects/resq-agent-control-20260928/rulesets/569cfc0c-a798-45b6-b8f6-d3bd501369ba';
+// Previous active-tasks artifact (live since 30/09/2026, ruleset f7f2d208): the push-trigger diff is taken against it.
+export const PREVIOUS_ACTIVE_ARTIFACT_SHA256='358b4c0cf9bef8a49508828f1d4060864583677544ff0a449dbb545246691c7f';
 export function assembleActiveTasksRules(base,fragment){
  if(hash(base)!==LIVE_BASE_SHA256)throw Error('LIVE_BASE_HASH_MISMATCH');
  const source=base.toString('utf8');
@@ -79,7 +81,11 @@ export function assembleActiveTasksRules(base,fragment){
   functionsAdded:added,insertionOffsetBytes:offset,insertedBytes:inserted.length,prefixSha256:hash(prefix),suffixSha256:hash(suffix),
   artifact:'control-plane/deploy/firestore.control-plane.rules',artifactSha256:hash(result),artifactBytes:result.length,
   rulesDiff:'control-plane/deploy/firestore-active-tasks.diff',
-  changes:['Insert active_tasks and task_listeners blocks before the final deny-all match; live f30d3d85 bytes otherwise unchanged'],
+  changes:['Insert active_tasks, task_listeners and control/ack_switch blocks before the final deny-all match; live f30d3d85 bytes otherwise unchanged',
+   'Push trigger (t175u/t176u): kind TASK|MESSAGE + NOTIFY target, acks[own key] (LIT/UNDERSTOOD/UNREADABLE, summary <= 280), owner-only IN_PROGRESS/COMPLETED, listener READY/REJECTED only, heartbeat ack/mode fields'],
+  supersedesArtifactSha256:PREVIOUS_ACTIVE_ARTIFACT_SHA256,
+  rollback:'PATCH re-release of the live ruleset f7f2d208 (= artifact 358b4c0c); the full ruleset name is read from the live release at deploy time',
+  pushTriggerDiff:'control-plane/deploy/firestore-push-trigger.diff',
   excluded:['events rules','dispatchRequests rules','budget rules','indexes'],
   status:'LOCAL_ARTIFACT_NOT_DEPLOYED'}};
 }

@@ -2,6 +2,8 @@
 // The ONLY module of the listener that starts a process: the fixed Windows PowerShell binary with -NoProfile and a
 // CONSTANT script chosen from SCRIPTS below. Data (a path or base64 bytes) goes over stdin, never into the command
 // line; no shell; bounded time and output. Scripts use single quotes only. Not usable on other platforms (fail closed).
+// Push-trigger security condition (key): the child gets a MINIMAL env (SystemRoot, windir, TEMP, USERPROFILE, PATH),
+// never the parent env, so a key that was ever in the environment can never reach PowerShell.
 import {spawnSync} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {fail} from './listener-auth.mjs';
@@ -34,12 +36,20 @@ export function aclVerdict(info,{directory}){
   if(directory&&info.protected!==true)return 'ACL_INHERITANCE';
   return null;
 }
-export function createWindowsProtector({platform=process.platform,spawn=spawnSync,exists=existsSync}={}){
+export const CHILD_ENV_KEYS=Object.freeze(['SystemRoot','windir','TEMP','USERPROFILE','PATH']);
+// Builds the child env from an explicit snapshot (the runner's scrubbed copy); unknown keys are dropped.
+export function minimalChildEnv(source){
+  const out={};const src=source&&typeof source==='object'?source:{};
+  for(const k of CHILD_ENV_KEYS){const hit=Object.keys(src).find(x=>x.toLowerCase()===k.toLowerCase());if(hit&&typeof src[hit]==='string')out[k]=src[hit];}
+  return out;
+}
+export function createWindowsProtector({platform=process.platform,spawn=spawnSync,exists=existsSync,baseEnv={}}={}){
+  const childEnv=Object.freeze(minimalChildEnv(baseEnv));
   const run=(name,input)=>{
     if(platform!=='win32')fail('DPAPI_WINDOWS_ONLY');
     if(!exists(POWERSHELL))fail('POWERSHELL_MISSING');
     const r=spawn(POWERSHELL,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',SCRIPTS[name]],
-      {input,encoding:'utf8',windowsHide:true,shell:false,timeout:30000,maxBuffer:1<<20});
+      {input,encoding:'utf8',windowsHide:true,shell:false,timeout:30000,maxBuffer:1<<20,env:{...childEnv}});
     if(r.error||r.status!==0||typeof r.stdout!=='string')fail('PROTECTOR_'+name.toUpperCase()+'_FAILED');   // stderr never surfaced
     return r.stdout;
   };

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,symlinkSync,writeFileSync,readFileSync,existsSync,readdirSync,rmSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {validateConfig,validateTask,createListener,createAgentSession,listenerQuery,MAX_OPEN,LISTENER_LIMIT} from './task-listener.mjs';
+import {validateConfig,validateTask,createListener,createAgentSession,listenerQuery,MAX_OPEN,LISTENER_LIMIT,HEARTBEAT_MS,ACK_MAX_AGE_MS,taskTimeMs} from './task-listener.mjs';
 import {createInbox,fixedHeader,CANCELLED_CONTENT,INBOX_DIRS,WIN_ROOT} from './task-inbox.mjs';
 import * as realFs from 'node:fs';
 const ID='3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e';
@@ -15,13 +15,18 @@ function fakeOps(){
   const o={writes:[],beats:[],next:null,stopped:0,query:null};
   o.watchTasks=({key,limit,next})=>{o.query={key,limit};o.next=next;return()=>o.stopped++;};
   o.writeProgress=async(id,key,entry)=>{o.writes.push([id,key,entry.state,entry.step,Object.keys(entry).length]);};
-  o.writeHeartbeat=async key=>{o.beats.push(key);};
+  o.writeHeartbeat=async (key,info)=>{o.beats.push(key);o.info=info;};
+  o.acks=[];o.ackFail=null;o.writeAck=async(id,key,entry)=>{if(o.ackFail){const e=o.ackFail(entry);if(e)throw e;}o.acks.push([id,key,entry.state,entry.summary]);};
   return o;
 }
 const noTimer={setTimer:()=>1,clearTimer:()=>{}};
 
 test('config: delivery defaults to false; fixed agent map (Claude rejected); machine allowlist; unknown keys rejected',()=>{
-  const c=validateConfig({agent:'Grok',machine:'LD',inboxRoot:'/x'});assert.equal(c.delivery,false);assert.equal(c.key,'grok');
+  const c=validateConfig({agent:'Grok',machine:'LD',inboxRoot:'/x'});assert.equal(c.delivery,false);assert.equal(c.key,'grok');assert.equal(c.ack,false,'ack defaults to off');
+  assert.equal(validateConfig({agent:'Grok',machine:'LD',inboxRoot:'/x',ack:true}).ack,true);assert.throws(()=>validateConfig({agent:'Grok',machine:'LD',inboxRoot:'/x',ack:'on'}));
+  assert.equal(HEARTBEAT_MS,120000);
+  assert.deepEqual(JSON.parse(JSON.stringify(listenerQuery('grok','push'))),{collection:'active_tasks',where:['targets.grok','in',['EXECUTE','NOTIFY']],orderBy:['timestamp','desc'],limit:5});
+  assert.throws(()=>listenerQuery('grok','fallback'));
   assert.equal(validateConfig({agent:'Gemini',machine:'LD',inboxRoot:'/x',delivery:true}).delivery,true);
   for(const bad of [{agent:'Claude',machine:'LD',inboxRoot:'/x'},{agent:'grok',machine:'LD',inboxRoot:'/x'},{agent:'Grok',machine:'station-102',inboxRoot:'/x'},
     {agent:'Grok',machine:'LD',inboxRoot:'/x',delivery:'true'},{agent:'Grok',machine:'LD',inboxRoot:'/x',autostart:true},{agent:'Grok',machine:'LD'},null,[]])assert.throws(()=>validateConfig(bad));
@@ -34,6 +39,13 @@ test('validateTask mirrors the Rules shape and allowlist; secret-looking payload
     task(ID,{targets:{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'}}),task(ID,{status:'DONE'}),task(ID,{progress:null})])assert.equal(validateTask(ID,bad),'invalid');
   assert.equal(validateTask('../etc',task('../etc')),'invalid');
   assert.equal(validateTask(ID,task(ID,{payload:'-----BEGIN PRIVATE KEY-----'})),'secret');
+  // kind / acks (push trigger): TASK = EXECUTE|IGNORE with >=1 EXECUTE; MESSAGE = NOTIFY|IGNORE with >=1 NOTIFY, <=2000
+  assert.equal(validateTask(ID,task(ID,{kind:'TASK',acks:{}})),null);
+  assert.equal(validateTask(ID,task(ID,{kind:'MESSAGE',acks:{},targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'NOTIFY'}})),null);
+  for(const bad of [task(ID,{kind:'MESSAGE',targets:{grok:'EXECUTE',codex:'IGNORE',gemini:'IGNORE'}}),task(ID,{kind:'TASK',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'}}),
+    task(ID,{kind:'MESSAGE',targets:{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'}}),task(ID,{kind:'NOTE'}),task(ID,{acks:[]}),
+    task(ID,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},payload:'a'.repeat(2001)})])assert.equal(validateTask(ID,bad),'invalid');
+  assert.equal(validateTask(ID,task(ID,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},payload:'a'.repeat(2000)})),null);
 });
 test('listener: server-confirmed snapshots only; default delivery off -> READY/delivery_off, nothing on disk; writes progress only',async()=>{
   const ops=fakeOps();const root=tmp();
@@ -87,18 +99,78 @@ test('listener: delivery writes header + raw payload with wx; EEXIST counts as d
   assert.throws(()=>createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,delivery:true},ops}),/LISTENER_INBOX_REQUIRED/);
   await l.stop();await l2.stop();await l3.stop();rmSync(root,{recursive:true});
 });
-test('agent session: markStarted refuses when .cancelled exists or the task is not PENDING/READY-delivered; completes only from IN_PROGRESS',async()=>{
+test('agent session: decline only (IN_PROGRESS/COMPLETED are owner-click only, t176u); refuses when cancelled or not READY',async()=>{
   const root=tmp();const inbox=createInbox({root,agentKey:'grok'});let doc=task(ID,{progress:{grok:{state:'READY',step:'delivered'}}});const writes=[];
   const ops={readTask:async()=>doc,writeProgress:async(id,k,e)=>{writes.push([k,e.state,e.step]);doc={...doc,progress:{grok:{state:e.state,step:e.step}}};}};
   const s=createAgentSession({agent:'Grok',ops,inbox});
-  await assert.rejects(s.markCompleted(ID),/TRANSITION_REJECTED/);
-  await s.markStarted(ID);await assert.rejects(s.markStarted(ID),/TRANSITION_REJECTED/);await s.markCompleted(ID);
-  assert.deepEqual(writes,[['grok','IN_PROGRESS','started'],['grok','COMPLETED','completed']]);
-  doc=task(ID,{progress:{grok:{state:'READY',step:'delivered'}}});inbox.markCancelled(ID);await assert.rejects(s.markStarted(ID),/TASK_CANCELLED/);
-  doc=task(uuid(3),{status:'CANCELLED',progress:{grok:{state:'READY',step:'delivered'}}});await assert.rejects(s.markStarted(uuid(3)),/TASK_NOT_PENDING/);
-  doc=task(uuid(4),{progress:{grok:{state:'READY',step:'delivery_off'}}});await assert.rejects(s.markStarted(uuid(4)),/TRANSITION_REJECTED/);
-  await s.markDeclined(uuid(4));assert.deepEqual(writes.at(-1),['grok','REJECTED','declined']);
-  assert.throws(()=>createAgentSession({agent:'Claude',ops,inbox}));await assert.rejects(s.markStarted('../x'),/SESSION_TASK_ID/);
+  assert.deepEqual(Object.keys(s),['markDeclined']);assert.equal(s.markStarted,undefined);assert.equal(s.markCompleted,undefined);assert.equal(s.markFailed,undefined);
+  await s.markDeclined(ID);assert.deepEqual(writes,[['grok','REJECTED','declined']]);await assert.rejects(s.markDeclined(ID),/TRANSITION_REJECTED/);
+  doc=task(uuid(2),{progress:{grok:{state:'READY',step:'delivered'}}});inbox.markCancelled(uuid(2));await assert.rejects(s.markDeclined(uuid(2)),/TASK_CANCELLED/);
+  doc=task(uuid(3),{status:'CANCELLED',progress:{grok:{state:'READY',step:'delivered'}}});await assert.rejects(s.markDeclined(uuid(3)),/TASK_NOT_PENDING/);
+  doc=task(uuid(4),{progress:{grok:{state:'IN_PROGRESS',step:'started'}}});await assert.rejects(s.markDeclined(uuid(4)),/TRANSITION_REJECTED/);
+  assert.throws(()=>createAgentSession({agent:'Claude',ops,inbox}));await assert.rejects(s.markDeclined('../x'),/SESSION_TASK_ID/);
+  rmSync(root,{recursive:true});
+});
+const NOWMS=Date.parse('2026-09-30T18:00:00Z');
+const ts=(msAgo=60000)=>({timestamp:new Date(NOWMS-msAgo).toISOString()});
+function ledgerFake(ids=[]){const set=new Set(ids);return {set,has:id=>set.has(id),add:id=>set.add(id)};}
+function summFake({take=true,result={state:'UNDERSTOOD',summary:'סיכום קצר'}}={}){const f={calls:0,take:()=>take,async summarize(p){f.calls++;f.last=p;return typeof result==='function'?result(p):result;}};return f;}
+const denied=()=>Object.assign(Error('PERMISSION_DENIED'),{code:'PERMISSION_DENIED',status:403});
+test('ack flow (push, ack on): LIT -> summary -> UNDERSTOOD, ledger; EXECUTE target also gets READY progress, NOTIFY target never gets progress',async()=>{
+  const ops=fakeOps();const root=tmp();const ledger=ledgerFake();const summ=summFake();
+  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,...noTimer});l.start();
+  await l.idle();await new Promise(r=>setImmediate(r));assert.deepEqual(ops.info,{ack:'on',mode:'push'});
+  const msg=task(uuid(1),{kind:'MESSAGE',acks:{},targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},timestamp:ts()});
+  const tsk=task(uuid(2),{kind:'TASK',acks:{},timestamp:ts()});
+  ops.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(1),data:msg},{id:uuid(2),data:tsk}]});await l.idle();
+  assert.deepEqual(ops.acks,[[uuid(1),'grok','LIT',''],[uuid(1),'grok','UNDERSTOOD','סיכום קצר'],[uuid(2),'grok','LIT',''],[uuid(2),'grok','UNDERSTOOD','סיכום קצר']]);
+  assert.deepEqual(ops.writes,[[uuid(2),'grok','READY','delivery_off',2]],'progress only for the EXECUTE target');
+  assert.deepEqual([...ledger.set],[uuid(1),uuid(2)]);assert.equal(summ.calls,2);
+  // replay (same snapshot, or a restart with the ledger) -> nothing new
+  ops.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(1),data:{...msg,acks:{grok:{state:'LIT'}}}}]});await l.idle();assert.equal(ops.acks.length,4);
+  const ops2=fakeOps();const l2=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:ops2,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,...noTimer});l2.start();
+  ops2.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(1),data:msg}]});await l2.idle();assert.deepEqual(ops2.acks,[]);
+  const st=l.status();assert.equal(st.lit,2);assert.equal(st.understood,2);assert.equal(st.received,2);assert.doesNotMatch(JSON.stringify(st),/סיכום|בדיקה/);
+  await l.stop();await l2.stop();rmSync(root,{recursive:true});
+});
+test('ack flow: not targeted / IGNORE / cancelled / >24h / already final / ack off / poll mode -> no ack; denied LIT -> no model call',async()=>{
+  const root=tmp();
+  const cases=[task(uuid(1),{targets:{grok:'IGNORE',codex:'EXECUTE',gemini:'IGNORE'},timestamp:ts()}),
+    task(uuid(2),{status:'CANCELLED',timestamp:ts()}),task(uuid(3),{timestamp:ts(ACK_MAX_AGE_MS+1000)}),
+    task(uuid(4),{acks:{grok:{state:'UNDERSTOOD',summary:'x'}},timestamp:ts()}),task(uuid(5),{acks:{grok:{state:'UNREADABLE',summary:''}},timestamp:ts()}),
+    task(uuid(6),{timestamp:{}})];
+  const ops=fakeOps();const summ=summFake();
+  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,...noTimer});l.start();
+  ops.next({fromCache:false,hasPendingWrites:false,docs:cases.slice(0,5).map(d=>({id:d.taskId,data:d}))});
+  ops.next({fromCache:false,hasPendingWrites:false,docs:cases.slice(5).map(d=>({id:d.taskId,data:d}))});await l.idle();
+  assert.deepEqual(ops.acks,[]);assert.equal(summ.calls,0);
+  for(const [cfg,mode] of [[{ack:false},'push'],[{ack:true},'poll']]){
+    const o=fakeOps();const lx=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,...cfg},ops:o,summarizer:summ,ledger:ledgerFake(),mode,now:()=>NOWMS,...noTimer});lx.start();
+    o.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(7),data:task(uuid(7),{timestamp:ts()})}]});await lx.idle();
+    assert.deepEqual(o.acks,[]);assert.equal(lx.status().ack,'off');await lx.stop();
+  }
+  // ack_switch off / revoked: the LIT write is denied -> counted, never retried, no model call, no ledger entry
+  const od=fakeOps();od.ackFail=()=>denied();const led=ledgerFake();
+  const ld=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:od,summarizer:summ,ledger:led,mode:'push',now:()=>NOWMS,...noTimer});ld.start();
+  od.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(8),data:task(uuid(8),{timestamp:ts()})}]});
+  od.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(8),data:task(uuid(8),{timestamp:ts()})}]});await ld.idle();
+  assert.equal(ld.status().ackDenied,1);assert.equal(summ.calls,0);assert.equal(led.set.size,0);
+  await l.stop();await ld.stop();rmSync(root,{recursive:true});
+});
+test('ack flow: S0 (no key), rate-limited, secret/invalid payload and model failure -> UNREADABLE with an empty summary',async()=>{
+  const root=tmp();
+  const run=async(summarizer,data)=>{const o=fakeOps();const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:o,summarizer,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,...noTimer});
+    l.start();o.next({fromCache:false,hasPendingWrites:false,docs:[{id:data.taskId,data}]});await l.idle();await l.stop();return {acks:o.acks,status:l.status()};};
+  let r=await run(null,task(uuid(1),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(r.acks[1][3],'');
+  const lim=summFake({take:false});r=await run(lim,task(uuid(2),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(lim.calls,0);assert.equal(r.status.rateLimited,1);
+  const sec=summFake();r=await run(sec,task(uuid(3),{payload:'ghp_abcdefghijklmnopqrst',timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(sec.calls,0);
+  const bad=summFake({result:{state:'UNREADABLE',reason:'llm'}});r=await run(bad,task(uuid(4),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(r.status.llmFail,1);
+  const long=summFake({result:{state:'UNDERSTOOD',summary:'א'.repeat(281)}});r=await run(long,task(uuid(5),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);
+  const thr=summFake({result:()=>{throw Error('boom');}});r=await run(thr,task(uuid(6),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);
+  // resuming a LIT left by a crash: no second LIT
+  const res=summFake();r=await run(res,task(uuid(7),{acks:{grok:{state:'LIT',summary:''}},timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['UNDERSTOOD']);
+  assert.equal(taskTimeMs({timestamp:{timestamp:'2026-09-30T18:00:00Z'}}),NOWMS);assert.equal(taskTimeMs({timestamp:{}}),null);
+  assert.throws(()=>createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:{...fakeOps(),writeAck:undefined},ledger:ledgerFake(),mode:'push'}),/LISTENER_ACK_OPS/);
   rmSync(root,{recursive:true});
 });
 test('inbox: fixed agent map, UUID-only names, header carries the A2 wording; wx never overwrites',()=>{

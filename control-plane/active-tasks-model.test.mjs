@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {blockedChars,blockedCharText,payloadProblem,buildTask,previewDoc,draftKey,reconcileTask,targetsValid,chipFor,overallStatus,orderTasks,listenerState,listenerText,
+import {KINDS,MESSAGE_MAX,kindProblem,kindSwitch,ackFor,ownerAction,learnOffset,serverNow,validAck,mapListenerMeta,mapAckSwitch,ACK_LIT_TIMEOUT_MS,ACK_NONE_TIMEOUT_MS,SUMMARY_MAX,blockedChars,blockedCharText,payloadProblem,buildTask,previewDoc,draftKey,reconcileTask,targetsValid,chipFor,overallStatus,orderTasks,listenerState,listenerText,
   mapTaskDoc,mapListenerDocs,validEntry,TEXT,PROGRESS_STEPS,TARGET_KEYS,TARGET_AGENTS,HEARTBEAT_FRESH_MS,QUIET_MS,STUCK_MS,OWNER_LIST_LIMIT,NOTE_RULES_PATTERN,PAYLOAD_CHAR,payloadThreshold,payloadThresholdText} from './web/active-tasks-model.mjs';
 import {NOTE_PATTERN} from './web/dispatch-model.mjs';
 const id='3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e',now=Date.parse('2026-09-30T15:00:00Z');
@@ -29,8 +29,8 @@ test('allowlist is unchanged (no widening to ״ ׳ or curly quotes) and identica
 test('buildTask/preview: exact doc, taskId is the idempotency key, all-IGNORE blocked, edits change the draft key',()=>{
   const targets={grok:'EXECUTE',codex:'IGNORE',gemini:'IGNORE'};
   const t=buildTask({taskId:id,uid:'u',payload:'a\r\nb',targets});
-  assert.deepEqual({...t,targets:{...t.targets},progress:{...t.progress}},{taskId:id,dispatchedBy:'u',payload:'a\nb',targets,status:'PENDING',progress:{}});
-  assert.deepEqual(previewDoc(t),{taskId:id,dispatchedBy:'u',targets,status:'PENDING',timestamp:'ייקבע בשרת',progress:{}});
+  assert.deepEqual({...t,targets:{...t.targets},progress:{...t.progress},acks:{...t.acks}},{taskId:id,dispatchedBy:'u',payload:'a\nb',kind:'TASK',targets,status:'PENDING',progress:{},acks:{}});
+  assert.deepEqual(previewDoc(t),{taskId:id,dispatchedBy:'u',kind:'TASK',targets,status:'PENDING',timestamp:'ייקבע בשרת',progress:{},acks:{}});
   assert.equal(Object.hasOwn(previewDoc(t),'payloadLength'),false);  // preview is exactly the stored document
   assert.throws(()=>buildTask({taskId:id,uid:'u',payload:'x',targets:{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'}}),/NO_EXECUTE_TARGET/);
   assert.throws(()=>buildTask({taskId:id.toUpperCase(),uid:'u',payload:'x',targets}),/INVALID_TASK_ID/);
@@ -61,7 +61,7 @@ test('IN_PROGRESS: בביצוע only with a fresh listener heartbeat; otherwise 
   assert.equal(chipFor(r,'grok',{now}).text,'בביצוע — אין דופק מהמאזין');
   const stuck=chipFor(row({progress:{grok:e('IN_PROGRESS','started',now-STUCK_MS-1)}}),'grok',{now,seenAt:now});
   assert.equal(stuck.kind,'stuck');assert.match(stuck.text,/^לא ידוע \/ תקוע · ללא עדכון מאז \d\d:\d\d$/);
-  assert.equal(overallStatus(r,[chipFor(r,'grok',{now,seenAt:now})]).text,'בביצוע (לפי דיווח הסוכן)');
+  assert.equal(overallStatus(r,[chipFor(r,'grok',{now,seenAt:now})]).text,'בביצוע');
   // no_pulse / stuck are separate overall kinds, never "running"
   const o1=overallStatus(r,[np]);assert.equal(o1.kind,'no_pulse');assert.doesNotMatch(o1.text,/^בביצוע \(/);
   const o2=overallStatus(r,[stuck]);assert.equal(o2.kind,'stuck');
@@ -107,4 +107,58 @@ test('PAYLOAD_CHAR is exactly the dispatch NOTE_PATTERN alphabet; thresholds ann
   for(const c of ['\u{1F600}','\uFEFF','\u202E','\u200F'])assert.equal(PAYLOAD_CHAR.test(c),NOTE_PATTERN.test(c));
   assert.equal(payloadThreshold('a'.repeat(8999)),null);assert.equal(payloadThreshold('a'.repeat(9000)),'9000');assert.equal(payloadThreshold('a'.repeat(9900)),'9900');
   assert.equal(payloadThreshold('a'.repeat(10000)),'10000');assert.equal(payloadThreshold('a'.repeat(10001)),'over');assert.match(payloadThresholdText('over'),/חסומה/);
+});
+
+// ---- push trigger (UI review C1-C11) ----
+test('C8: kind is in the draft key and preview; MESSAGE needs NOTIFY, <=2000 blocked not cut; TASK->MESSAGE blocked with EXECUTE',()=>{
+  assert.deepEqual(KINDS,['TASK','MESSAGE']);
+  const tg={grok:'EXECUTE',codex:'IGNORE',gemini:'IGNORE'},nt={grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'};
+  assert.notEqual(draftKey('a',tg,'TASK'),draftKey('a',tg,'MESSAGE'));
+  const m=buildTask({taskId:id,uid:'u',payload:'hi',targets:nt,kind:'MESSAGE'});assert.equal(m.kind,'MESSAGE');assert.deepEqual(previewDoc(m).acks,{});assert.equal(previewDoc(m).kind,'MESSAGE');
+  assert.throws(()=>buildTask({taskId:id,uid:'u',payload:'hi',targets:tg,kind:'MESSAGE'}),/NO_NOTIFY_TARGET/);
+  assert.throws(()=>buildTask({taskId:id,uid:'u',payload:'hi',targets:nt,kind:'TASK'}),/NO_EXECUTE_TARGET/);
+  assert.throws(()=>buildTask({taskId:id,uid:'u',payload:'hi',targets:{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'},kind:'MESSAGE'}),/NO_NOTIFY_TARGET/);
+  assert.equal(kindProblem('MESSAGE','א'.repeat(MESSAGE_MAX)),null);assert.equal(kindProblem('MESSAGE','א'.repeat(MESSAGE_MAX+1)),'message_length');assert.equal(kindProblem('TASK','א'.repeat(5000)),null);
+  assert.throws(()=>buildTask({taskId:id,uid:'u',payload:'a'.repeat(MESSAGE_MAX+1),targets:nt,kind:'MESSAGE'}),/INVALID_PAYLOAD/);
+  assert.equal(kindSwitch('TASK','MESSAGE',tg,{grok:'up'}),null);                         // blocked, nothing converted silently
+  assert.deepEqual(kindSwitch('TASK','MESSAGE',{grok:'IGNORE',codex:'IGNORE',gemini:'IGNORE'},{grok:'up',codex:'down'}).targets,{gemini:'IGNORE',codex:'IGNORE',grok:'NOTIFY'});
+  const back=kindSwitch('MESSAGE','TASK',nt,{grok:'up'});assert.deepEqual(back.targets,{gemini:'IGNORE',codex:'IGNORE',grok:'IGNORE'});assert.equal(back.note,'notify_dropped');
+  assert.equal(targetsValid({grok:'NOTIFY',codex:'EXECUTE',gemini:'IGNORE'},'TASK'),false);assert.equal(targetsValid({grok:'NOTIFY',codex:'EXECUTE',gemini:'IGNORE'},'MESSAGE'),false);
+});
+test('C1-C5: ack lines only for targets; stale feed never computes "no answer"; server-time timeouts; switch off/missing; heartbeat ack mode',()=>{
+  const t0=now,U=(state,summary='',at=t0+1000)=>({state,summary,updatedAt:at});
+  const r=row({timestamp:t0,targets:{grok:'EXECUTE',codex:'NOTIFY',gemini:'IGNORE'},acks:{}});
+  assert.equal(ackFor(r,'gemini',{serverNowMs:t0}),null);                               // non-target never lights
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0+1000,switchState:'on',listenerAck:'on'}).kind,'waiting');
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0+ACK_NONE_TIMEOUT_MS+1,switchState:'on',listenerAck:'on'}).text,'לא התקבל אישור קבלה');
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0+ACK_NONE_TIMEOUT_MS+1,switchState:'on',listenerAck:null}).text,'אין אישור קבלה (ייתכן שכבוי)');
+  assert.equal(ackFor(r,'grok',{serverNowMs:null,switchState:'on',listenerAck:'on'}).kind,'waiting');   // no server offset yet -> nothing computed
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0,switchState:'off'}).text,'נעצר — אישורי קבלה כבויים');
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0,switchState:'missing'}).text,'לא מוגדר — אישורי קבלה חסומים');
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0,switchState:'on',listenerAck:'off'}).kind,'listener_off');
+  const lit=row({...r,acks:{grok:U('LIT')}});
+  assert.equal(ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1}).text,'נדלק, אין תשובה');
+  const st=ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1,fresh:false});assert.equal(st.kind,'lit');assert.equal(st.stale,true);assert.match(st.text,/לא עדכני$/);   // C2
+  const un=ackFor(row({...r,acks:{grok:U('UNDERSTOOD','תקציר')}}),'grok',{serverNowMs:t0});assert.equal(un.kind,'understood');assert.equal(un.summary,'תקציר');assert.equal(un.text,'הבנתי');
+  assert.equal(ackFor(row({...r,acks:{grok:U('UNREADABLE')}}),'grok',{}).text,'לא הצליח לקרוא');
+  assert.equal(ackFor(row({...r,acks:{grok:U('UNDERSTOOD','')}}),'grok',{serverNowMs:t0}).kind,'waiting');    // malformed ack ignored
+  assert.equal(validAck(U('UNDERSTOOD','א'.repeat(SUMMARY_MAX))),true);assert.equal(validAck(U('UNDERSTOOD','א'.repeat(SUMMARY_MAX+1))),false);
+  assert.equal(ackFor(row({...r,status:'CANCELLED'}),'grok',{serverNowMs:t0+10**7}).kind,'closed');
+  // C3: offset from server stamps, never the client clock alone
+  let off=null;off=learnOffset(off,t0,t0+3600000);off=learnOffset(off,t0+5000,t0+3600000);assert.equal(off,-3595000);assert.equal(serverNow(t0+3600000,off),t0+5000);assert.equal(serverNow(1,null),null);
+  assert.deepEqual(mapListenerMeta([{id:'grok',data:{agent:'grok',seenAt:{toMillis:()=>1},ack:'on',mode:'push'}},{id:'codex',data:{agent:'codex',seenAt:{toMillis:()=>1}}}]),{grok:{ack:'on',mode:'push'},codex:{ack:null,mode:null}});
+  assert.deepEqual(mapListenerMeta([{id:'grok',data:{agent:'grok',seenAt:{toMillis:()=>1},ack:'yes'}}]),{});
+  assert.deepEqual(mapAckSwitch({exists:false}),{state:'missing',updatedAt:null});assert.deepEqual(mapAckSwitch({exists:true,data:{enabled:false,updatedAt:{toMillis:()=>7}}}),{state:'off',updatedAt:7});
+  assert.equal(mapAckSwitch({exists:true,data:{enabled:'no'}}).state,'unknown');
+});
+test('C10: owner click allowed only on EXECUTE targets from delivered (start) or IN_PROGRESS (complete)',()=>{
+  assert.equal(ownerAction(row({progress:{grok:e('READY','delivered')}}),'grok'),'start');
+  assert.equal(ownerAction(row({progress:{grok:e('IN_PROGRESS','started')}}),'grok'),'complete');
+  assert.equal(ownerAction(row({progress:{grok:e('READY','delivery_off')}}),'grok'),null);
+  assert.equal(ownerAction(row({progress:{grok:e('COMPLETED','completed')}}),'grok'),null);
+  assert.equal(ownerAction(row({progress:{}}),'grok'),null);assert.equal(ownerAction(row({status:'CANCELLED',progress:{grok:e('READY','delivered')}}),'grok'),null);
+  assert.equal(ownerAction(row({targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},progress:{grok:e('READY','delivered')}}),'grok'),null);
+  assert.equal(chipFor(row({progress:{grok:e('READY','delivered')}}),'grok',{now}).text,'נמסר — טרם התחיל');
+  assert.equal(chipFor(row({targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'}}),'grok',{now}).kind,'notify');
+  assert.equal(overallStatus(row({kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'}}),[]).text,'הודעה');
 });

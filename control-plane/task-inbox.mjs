@@ -1,5 +1,7 @@
 // Local inbox for active tasks (LD only, library only: no CLI, no credentials, no autostart).
-// Security review 30/09/2026 conditions A1-A5 (see control-plane/ACTIVE-TASKS.md):
+// Security review 30/09/2026 conditions A1-A5 (see control-plane/ACTIVE-TASKS.md; A1 as amended 30/09/2026 for the push
+// trigger: the only autonomous action is auto-read + a <=280-char ack by a foreground listener; "הבנתי" is not a go).
+// Only EXECUTE targets get an inbox file; a MESSAGE (NOTIFY) never creates one (A2 unchanged):
 // - Fixed agent map for the sub-folder; file names are ONLY `<taskId>.task.txt` / `<taskId>.cancelled` with a
 //   lowercase UUIDv4 taskId. The payload never reaches a file name, a path, a shell, eval, env or a log.
 // - Every write goes to a fresh temp file opened with 'wx' (create-exclusive) in the same folder, and is then

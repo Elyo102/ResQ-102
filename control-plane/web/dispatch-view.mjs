@@ -4,7 +4,7 @@
 // (which re-run controller.reset) never clear the form or mint new ids. No success is shown before the server
 // confirms; a timeout is 'לא אושר' and the same ids are reused on retry.
 import {DISPATCH_AGENTS,DISPATCH_TASKS,taskTypeText,noteProblem,invalidCharReport,counterText,noteThreshold,thresholdText,noteSnippet,normalizeNote,NOTE_BANNER,SECRET_TEXT,newKeys,buildPayload,draftKey,
-  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch4';
+  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch5';
 
 export const TEXT=Object.freeze({
   title:'מרכז שיגור סוכנים',

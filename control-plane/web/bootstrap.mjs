@@ -1,8 +1,8 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch4';
-import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch4';
-import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch4';
-import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch4';
-import {mountActiveTasksPanel} from './active-tasks-view.mjs?v=20260930-grok-dispatch4';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch5';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch5';
+import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch5';
+import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch5';
+import {mountActiveTasksPanel} from './active-tasks-view.mjs?v=20260930-grok-dispatch5';
 const root=document.getElementById('private-root');
 
 const loadGoogleOauth=()=>new Promise((resolve,reject)=>{

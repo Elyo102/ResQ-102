@@ -1,8 +1,11 @@
     // Active tasks (security review 30/09/2026, SAFE_WITH_CONDITIONS; see control-plane/ACTIVE-TASKS.md).
-    // Owner creates (fresh sign-in, 900s) and may only cancel PENDING. Agents act only through a SEPARATE
-    // listener identity (private_listeners + control_plane_role 'listener'); telemetry (CI) and budget
-    // identities are rejected explicitly. Agents write ONLY progress[own key]; they never write status.
-    // No delete. The payload is data for a human-supervised agent session, never a command.
+    // Owner creates (fresh sign-in, 900s) a TASK (EXECUTE/IGNORE) or a MESSAGE (NOTIFY/IGNORE, <= 2000 chars),
+    // may cancel PENDING, and is the ONLY one who marks IN_PROGRESS / COMPLETED (manual dashboard click).
+    // Agents act only through a SEPARATE listener identity (private_listeners + control_plane_role 'listener');
+    // telemetry (CI) and budget identities are rejected explicitly. A listener writes ONLY progress[own key]
+    // (READY / REJECTED, EXECUTE targets only) and acks[own key] (LIT / UNDERSTOOD / UNREADABLE + a summary of
+    // <= 280 allowlisted chars, only while control/ack_switch.enabled == true). Agents never write status.
+    // No delete. The payload is data for a human-supervised agent session, never a command (A1 amended, A2).
     // The Admin SDK bypasses these rules.
     function atKeyFor(agent) {
       return {'Codex': 'codex', 'Grok': 'grok', 'Gemini': 'gemini'}[agent];
@@ -38,19 +41,32 @@
         'FAILED': ['failed']
       };
     }
+    // TASK: EXECUTE/IGNORE, at least one EXECUTE (non-targets IGNORE). MESSAGE: NOTIFY/IGNORE, at least one NOTIFY,
+    // never EXECUTE, payload <= 2000. kind missing == TASK (documents created before the push trigger).
+    function atTaskTargets(t) {
+      return t.grok in ['EXECUTE', 'IGNORE'] && t.codex in ['EXECUTE', 'IGNORE'] && t.gemini in ['EXECUTE', 'IGNORE']
+        && (t.grok == 'EXECUTE' || t.codex == 'EXECUTE' || t.gemini == 'EXECUTE');
+    }
+    function atMessageTargets(t) {
+      return t.grok in ['NOTIFY', 'IGNORE'] && t.codex in ['NOTIFY', 'IGNORE'] && t.gemini in ['NOTIFY', 'IGNORE']
+        && (t.grok == 'NOTIFY' || t.codex == 'NOTIFY' || t.gemini == 'NOTIFY');
+    }
     function atCreate(id) {
       let d = request.resource.data;
       let t = d.targets;
+      let kind = d.get('kind', 'TASK');
       return atUuid(id)
         && d.keys().hasAll(['taskId', 'dispatchedBy', 'payload', 'targets', 'status', 'timestamp', 'progress'])
-        && d.keys().hasOnly(['taskId', 'dispatchedBy', 'payload', 'targets', 'status', 'timestamp', 'progress'])
+        && d.keys().hasOnly(['taskId', 'dispatchedBy', 'payload', 'targets', 'status', 'timestamp', 'progress', 'kind', 'acks'])
         && d.taskId == id && d.dispatchedBy == request.auth.uid
         && d.payload is string && d.payload.size() <= 10000
         && d.payload.matches('^[\\x{000A}\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]*$')
         && t is map && t.keys().hasAll(['grok', 'codex', 'gemini']) && t.keys().hasOnly(['grok', 'codex', 'gemini'])
-        && t.grok in ['EXECUTE', 'IGNORE'] && t.codex in ['EXECUTE', 'IGNORE'] && t.gemini in ['EXECUTE', 'IGNORE']
-        && (t.grok == 'EXECUTE' || t.codex == 'EXECUTE' || t.gemini == 'EXECUTE')
+        && kind in ['TASK', 'MESSAGE']
+        && ((kind == 'TASK' && atTaskTargets(t))
+          || (kind == 'MESSAGE' && atMessageTargets(t) && d.payload.size() <= 2000))
         && d.status == 'PENDING' && d.progress is map && d.progress.size() == 0
+        && d.get('acks', {}) is map && d.get('acks', {}).size() == 0
         && d.timestamp == request.time;
     }
     function atCancel() {
@@ -65,12 +81,29 @@
         && e.state is string && e.state in atSteps() && e.step in atSteps()[e.state]
         && e.updatedAt == request.time;
     }
-    // IN_PROGRESS only after a real inbox delivery (READY/delivered); READY/delivery_off may only be REJECTED.
+    // Listener identity: READY or REJECTED only (push trigger, t176u). It can no longer start or finish a task.
     function atTransition(prev, next) {
       return (prev == null && next in ['READY', 'REJECTED'])
-        || (prev != null && prev.state == 'READY' && next == 'REJECTED')
-        || (prev != null && prev.state == 'READY' && prev.step == 'delivered' && next == 'IN_PROGRESS')
-        || (prev != null && prev.state == 'IN_PROGRESS' && next in ['COMPLETED', 'FAILED']);
+        || (prev != null && prev.state == 'READY' && next == 'REJECTED');
+    }
+    // Owner (manual dashboard click): IN_PROGRESS only after a real inbox delivery (READY/delivered), then COMPLETED.
+    function atOwnerTransition(prev, next) {
+      return (prev != null && prev.state == 'READY' && prev.step == 'delivered' && next == 'IN_PROGRESS')
+        || (prev != null && prev.state == 'IN_PROGRESS' && next == 'COMPLETED');
+    }
+    function atOwnerProgressFor(k) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.targets.get(k, 'IGNORE') == 'EXECUTE'
+        && after.progress.diff(before.progress).affectedKeys().hasOnly([k])
+        && atEntry(after.progress.get(k, null))
+        && atOwnerTransition(before.progress.get(k, null), after.progress.get(k, {}).get('state', ''));
+    }
+    function atOwnerProgress() {
+      return resource.data.status == 'PENDING'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['progress'])
+        && request.resource.data.progress is map
+        && (atOwnerProgressFor('grok') || atOwnerProgressFor('codex') || atOwnerProgressFor('gemini'));
     }
     function atProgress() {
       let k = atKey();
@@ -82,20 +115,71 @@
         && atEntry(after.progress.get(k, null))
         && atTransition(before.progress.get(k, null), after.progress.get(k, {}).get('state', ''));
     }
+    // Acknowledgement (the ONLY autonomous agent write, A1 amended): acks[own key] only, EXECUTE or NOTIFY targets,
+    // PENDING, within 24 h of the task, LIT -> UNDERSTOOD | UNREADABLE (terminal), summary <= 280 allowlisted chars
+    // (no newline, no bidi/zero-width), non-empty only for UNDERSTOOD. Denied unless control/ack_switch.enabled is
+    // true (a missing switch document fails the get and denies).
+    function atAckEntry(e) {
+      return e is map && e.keys().hasAll(['state', 'summary', 'updatedAt'])
+        && e.keys().hasOnly(['state', 'summary', 'updatedAt'])
+        && e.state is string && e.state in ['LIT', 'UNDERSTOOD', 'UNREADABLE']
+        && e.summary is string && e.summary.size() <= 280
+        && e.summary.matches('^[\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]*$')
+        && ((e.state == 'UNDERSTOOD') == (e.summary.size() >= 1))
+        && e.updatedAt == request.time;
+    }
+    function atAckTransition(prev, next) {
+      return (prev == null && next in ['LIT', 'UNDERSTOOD', 'UNREADABLE'])
+        || (prev != null && prev.get('state', '') == 'LIT' && next in ['UNDERSTOOD', 'UNREADABLE']);
+    }
+    function atAckOn() {
+      return get(/databases/$(database)/documents/control/ack_switch).data.enabled == true;
+    }
+    function atAck() {
+      let k = atKey();
+      let before = resource.data;
+      let after = request.resource.data;
+      let prev = before.get('acks', {});
+      return before.status == 'PENDING' && before.targets.get(k, 'IGNORE') in ['EXECUTE', 'NOTIFY']
+        && request.time < before.timestamp + duration.value(24, 'h')
+        && prev is map && after.diff(before).affectedKeys().hasOnly(['acks']) && after.acks is map
+        && after.acks.diff(prev).affectedKeys().hasOnly([k])
+        && atAckEntry(after.acks.get(k, null))
+        && atAckTransition(prev.get(k, null), after.acks.get(k, {}).get('state', ''))
+        && atAckOn();
+    }
     function atHeartbeat(agentKey) {
+      let d = request.resource.data;
       return atListener() && agentKey == atKey()
-        && request.resource.data.keys().hasAll(['agent', 'seenAt'])
-        && request.resource.data.keys().hasOnly(['agent', 'seenAt'])
-        && request.resource.data.agent == agentKey && request.resource.data.seenAt == request.time;
+        && d.keys().hasAll(['agent', 'seenAt'])
+        && d.keys().hasOnly(['agent', 'seenAt', 'ack', 'mode'])
+        && d.agent == agentKey && d.seenAt == request.time
+        && d.get('ack', 'off') in ['on', 'off'] && d.get('mode', 'poll') in ['push', 'poll'];
     }
     match /active_tasks/{taskId} {
-      allow get: if owner() || (atListener() && resource.data.targets.get(atKey(), 'IGNORE') == 'EXECUTE');
+      allow get: if owner() || (atListener() && resource.data.targets.get(atKey(), 'IGNORE') in ['EXECUTE', 'NOTIFY']);
       allow list: if (owner() && request.query.limit != null
           && request.query.limit >= 1 && request.query.limit <= 20)
         || (atListener() && request.query.limit != null && request.query.limit >= 1 && request.query.limit <= 5
-          && resource.data.targets[atKey()] == 'EXECUTE');
+          && resource.data.targets[atKey()] in ['EXECUTE', 'NOTIFY']);
       allow create: if owner() && atFresh() && atCreate(taskId);
-      allow update: if (owner() && atCancel()) || (atListener() && atProgress());
+      allow update: if (owner() && (atCancel() || atOwnerProgress())) || (atListener() && (atProgress() || atAck()));
+      allow delete: if false;
+    }
+    // Acknowledgement kill switch. Owner only: seeded once with enabled:false (fresh sign-in); switching OFF is always
+    // allowed, switching ON needs a fresh sign-in. No listener access, no list, no delete.
+    match /control/ack_switch {
+      allow get: if owner();
+      allow list: if false;
+      allow create: if owner() && atFresh()
+        && request.resource.data.keys().hasAll(['enabled', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['enabled', 'updatedAt'])
+        && request.resource.data.enabled == false && request.resource.data.updatedAt == request.time;
+      allow update: if owner()
+        && request.resource.data.keys().hasAll(['enabled', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['enabled', 'updatedAt'])
+        && request.resource.data.enabled is bool && request.resource.data.updatedAt == request.time
+        && (request.resource.data.enabled == false || atFresh());
       allow delete: if false;
     }
     // Listener liveness only (no task content): written by that agent's own listener identity.

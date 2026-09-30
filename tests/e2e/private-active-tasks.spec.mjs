@@ -12,8 +12,8 @@ async function mount(page,{tick=0}={}){
   if(files.includes(file)){await route.fulfill({body:readFileSync(new URL(file,source)),contentType:'text/javascript'});return;}
   if(file==='private.css'){await route.fulfill({body:readFileSync(new URL('private.css',source)),contentType:'text/css'});return;}
   await route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="he" dir="rtl"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/private.css"><p>בדיקה סינתטית בלבד — לא מחובר לענן</p><main id="root"></main><script type="module">
-import {mountPrivateDashboard} from '/private-view.mjs?v=20260930-grok-dispatch4';
-import {mountActiveTasksPanel} from '/active-tasks-view.mjs?v=20260930-grok-dispatch4';
+import {mountPrivateDashboard} from '/private-view.mjs?v=20260930-grok-dispatch5';
+import {mountActiveTasksPanel} from '/active-tasks-view.mjs?v=20260930-grok-dispatch5';
 let onAuth;window.creates=[];window.verifies=[];window.cancels=[];window.listeners=[];window.uidNow='synthetic-owner';
 window.watchStarts=0;window.watchStops=0;window.listenerStarts=0;window.listenerStops=0;
 window.createImpl=()=>new Promise(()=>{});window.verifyImpl=()=>Promise.resolve({exists:false});window.cancelImpl=()=>Promise.resolve();window.authImpl=async()=>Date.now();
@@ -21,7 +21,11 @@ const api={uid:()=>window.uidNow,authTime:()=>window.authImpl(),
  watch({next,error}){window.watchStarts++;window.feedNext=next;window.feedError=error;return()=>{window.watchStops++;};},
  watchListeners({next,error}){window.listenerStarts++;window.hbNext=next;window.hbError=error;return()=>{window.listenerStops++;};},
  create(task){window.creates.push(JSON.parse(JSON.stringify(task)));return window.createImpl(task);},
- verify(id){window.verifies.push(id);return window.verifyImpl(id);},cancel(id){window.cancels.push(id);return window.cancelImpl(id);}};
+ verify(id){window.verifies.push(id);return window.verifyImpl(id);},cancel(id){window.cancels.push(id);return window.cancelImpl(id);},
+ watchAckSwitch({next,error}){window.swStarts=(window.swStarts||0)+1;window.swNext=next;window.swError=error;return()=>{};},
+ setAckSwitch(enabled,opts){window.switchWrites.push({enabled,exists:opts.exists});return window.switchImpl(enabled,opts);},
+ markProgress(id,key,state){window.progressWrites.push([id,key,state]);return window.progressImpl(id,key,state);}};
+window.switchWrites=[];window.progressWrites=[];window.switchImpl=()=>Promise.resolve();window.progressImpl=()=>Promise.resolve();
 window.panel=mountActiveTasksPanel({doc:document,api,signIn:()=>new Promise(()=>{}),sendTimeoutMs:1500,tickMs:Number(new URLSearchParams(location.search).get('tick')||0)});
 window.setIdentity=user=>onAuth(user);
 const mockAuth={onIdentity(fn){onAuth=fn;return()=>{};},async signIn(){},async signOut(){window.setIdentity(null);}};
@@ -65,7 +69,9 @@ test('DELIVERED is never shown as בביצוע; delivery-off text; IGNORE chip; 
  await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1,{targets:{grok:'EXECUTE',codex:'EXECUTE',gemini:'IGNORE'},progress:{grok:entry('READY','delivered'),codex:entry('READY','delivery_off')}})]);});
  await expect(chip(page,1,'grok')).toContainText('נמסר — טרם התחיל');await expect(chip(page,1,'codex')).toContainText('מסירה כבויה, המשימה נשמרה בלבד');
  await expect(chip(page,1,'gemini')).toContainText('לא נבחר');await expect(page.locator('.active-chip')).toHaveCount(3);
- await expect(page.locator('#active-tasks-panel')).not.toContainText('בביצוע');
+ // status/chips never say בביצוע; only the owner's manual button (C10) carries that word, as an action
+ await expect(page.locator('.active-chips')).not.toContainText('בביצוע');await expect(page.locator('.active-status')).not.toContainText('בביצוע');
+ await expect(page.locator('.active-owner-btn')).toHaveText(['Grok: בביצוע']);
  await expect(page.locator('.active-row .active-status')).toHaveText('סטטוס: נמסר — טרם התחיל');
  await expect(chip(page,1,'grok').locator('bdi > time[datetime]')).toHaveCount(1);expect(errors).toEqual([]);
 });
@@ -157,12 +163,12 @@ for(const width of [320,360])test(`mobile ${width}px: stacked full-width 16px se
 });
 test('keyed feed: tick updates chips/times in place; focus, <details> and row nodes survive ticks and unrelated snapshots',async({page})=>{
  const errors=await mount(page,{tick:100});await authorize(page);const long='שורה ארוכה\n'.repeat(40);
- await page.evaluate(long=>{hbNext({grok:Date.now()-95000+700});feedNext([row(1,{payload:long,progress:{grok:entry('IN_PROGRESS','started',60000)}}),row(2)]);},long);
+ await page.evaluate(long=>{hbNext({grok:Date.now()-165000+700});feedNext([row(1,{payload:long,progress:{grok:entry('IN_PROGRESS','started',60000)}}),row(2)]);},long);
  const summary=page.locator('#active-more-'+rid(1));await expect(summary).toHaveCount(1);
  await summary.click();await expect(summary).toBeFocused();
  await page.evaluate(id=>{document.querySelector(`.active-row[data-id="${id}"]`).__mark='kept';},rid(1));
  await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('בביצוע');
- // heartbeat ages past 95s on the tick alone: chip text changes in place, focus and open state untouched
+ // heartbeat ages past HEARTBEAT_FRESH_MS (165 s, C11) on the tick alone: chip text changes in place, focus and open state untouched
  await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText(/^בביצוע — אין דופק מאז \d\d:\d\d$/,{timeout:4000});
  await expect(rowEl(page,1).locator('.active-status')).toHaveAttribute('data-kind','no_pulse');
  await expect(summary).toBeFocused();await expect(rowEl(page,1).locator('details')).toHaveJSProperty('open',true);
@@ -287,4 +293,208 @@ test('cancel hidden when every selected agent finished; cancel failure texts (de
  await r2.locator('.active-cancel-btn').click();await r2.locator('.active-cancel-yes').click();await expect(r2).toBeFocused();
  await page.evaluate(()=>{feedNext([row(1,{progress:{grok:entry('COMPLETED','completed')}}),row(2,{status:'CANCELLED'})]);releaseCancel();});
  await expect(r2.locator('.active-status')).toHaveText('סטטוס: בוטל');await expect(r2).toBeFocused();expect(errors).toEqual([]);
+});
+
+// ---------------- push trigger: UI review C12 (review/push-trigger-verdicts.md) ----------------
+const ackEl=(page,n,agent)=>rowEl(page,n).locator(`.active-ack[data-agent="${agent}"]`);
+const onSwitch=page=>page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-1000}));
+test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the bdi + visible frame + label + quote + go; card line on the target card only, linked to the row',async({page})=>{
+ const errors=await mount(page);await authorize(page);await events(page);await onSwitch(page);
+ const summary='אבדוק את הבדיקות ואחזור עם תוצאה';
+ await page.evaluate(summary=>{hbNext({grok:Date.now(),codex:Date.now()},{meta:{grok:{ack:'on',mode:'push'},codex:{ack:'on',mode:'push'}}});
+  const A=(state,s='',ago=1000)=>({state,summary:s,updatedAt:Date.now()-ago});
+  feedNext([row(1,{acks:{grok:A('UNDERSTOOD',summary)}}),row(2,{kind:'MESSAGE',targets:{grok:'IGNORE',codex:'NOTIFY',gemini:'IGNORE'},acks:{codex:A('LIT')}}),
+   row(3,{acks:{grok:A('UNREADABLE')}}),row(4,{targets:{grok:'IGNORE',codex:'EXECUTE',gemini:'IGNORE'},acks:{}})]);},summary);
+ const u=ackEl(page,1,'grok');await expect(u).toHaveAttribute('data-kind','understood');
+ await expect(u.locator('.active-ack-state')).toHaveText('הבנתי:');
+ await expect(u.locator('.active-ack-label')).toHaveText('סיכום אוטומטי, אינו אישור');await expect(u.locator('.active-ack-label')).toBeVisible();
+ await expect(u.locator('.active-ack-frame')).toHaveText('סיכום אוטומטי של Grok — אינו אישור ואינו התחלת עבודה');await expect(u.locator('.active-ack-frame')).toBeVisible();
+ await expect(u.locator('blockquote.active-ack-summary > div.clamp > bdi[dir="rtl"]')).toHaveText(summary);
+ await expect(u.locator('bdi')).not.toContainText('הבנתי');
+ await expect(u.locator('.active-ack-go')).toHaveText('ממתין ל-go שלך בסשן');
+ await expect(rowEl(page,1).locator('.active-ack')).toHaveCount(1);                       // non-targets (codex, gemini) never light
+ await expect(ackEl(page,2,'codex').locator('.active-ack-state')).toHaveText('נדלק — קורא');await expect(ackEl(page,2,'codex').locator('.active-ack-go')).toHaveCount(0);
+ await expect(rowEl(page,2).locator('.active-status')).toHaveText('סטטוס: הודעה');await expect(chip(page,2,'codex').locator('.active-chip-text')).toHaveText('להודיע בלבד');
+ await expect(ackEl(page,3,'grok').locator('.active-ack-state')).toHaveText('לא הצליח לקרוא');
+ await expect(ackEl(page,4,'codex').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');
+ // C1: card keeps its liveness line; the target card adds ONE line with the latest ack + task time
+ await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מאזין');
+ await expect(card(page,'Grok').locator('.agent-ack')).toHaveText(/^אחרון: לא הצליח לקרוא · משימה \d\d:\d\d$/);
+ await expect(card(page,'Codex').locator('.agent-ack')).toHaveText(/^אחרון: ממתין לאישור קבלה · משימה \d\d:\d\d$/);
+ await expect(card(page,'Gemini').locator('.agent-ack')).toHaveCount(0);await expect(card(page,'Claude').locator('.agent-ack')).toHaveCount(0);
+ await expect(card(page,'Grok').locator('.agent-ack a')).toHaveAttribute('href','#active-row-'+rid(3));
+ await expect(page.locator('.agent .active-ack-summary, .agent .active-chip')).toHaveCount(0);   // chips and summary live in the feed only
+ await card(page,'Grok').locator('.agent-ack a').click();await expect(rowEl(page,3)).toBeFocused();expect(errors).toEqual([]);
+});
+test('C12 kill switch: missing doc -> blocked + seed (off only); off banner "מאז HH:mm" from server updatedAt; re-enable confirm; success only after the server; timeout -> לא אושר; stale auth -> re-auth',async({page})=>{
+ const errors=await mount(page);await authorize(page);
+ await expect(page.locator('#active-ack-switch-text')).toHaveText('טוען את מצב אישורי הקבלה…');
+ for(const id of ['#active-ack-stop','#active-ack-enable','#active-ack-seed'])await expect(page.locator(id)).toBeHidden();
+ await page.evaluate(()=>{swNext({state:'missing',updatedAt:null});hbNext({grok:Date.now()});feedNext([row(1)]);});
+ await expect(page.locator('#active-ack-switch-text')).toHaveText('לא מוגדר — אישורי קבלה חסומים');await expect(page.locator('#active-ack-switch')).toHaveAttribute('data-state','missing');
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('לא מוגדר — אישורי קבלה חסומים');
+ await expect(page.locator('#active-ack-stop')).toBeHidden();await page.locator('#active-ack-seed').click();
+ await expect(page.locator('#active-ack-switch-result')).toHaveText('השינוי אושר על ידי השרת.');
+ expect(await page.evaluate(()=>switchWrites)).toEqual([{enabled:false,exists:false}]);
+ await expect(page.locator('#active-ack-switch-text')).toHaveText('לא מוגדר — אישורי קבלה חסומים');   // no optimistic state: only the server snapshot changes it
+ await page.evaluate(()=>swNext({state:'off',updatedAt:Date.now()-5000}));
+ await expect(page.locator('#active-ack-switch-text')).toHaveText(/^אישורי קבלה כבויים מאז \d\d:\d\d$/);
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נעצר — אישורי קבלה כבויים');
+ await page.locator('#active-ack-enable').click();await expect(page.locator('.active-ack-confirm')).toContainText('זה אינו אישור לביצוע');await expect(page.locator('#active-ack-enable-yes')).toBeFocused();
+ await page.locator('#active-ack-enable-no').click();await expect(page.locator('.active-ack-confirm')).toBeHidden();expect(await page.evaluate(()=>switchWrites.length)).toBe(1);
+ await page.evaluate(()=>{window.authImpl=async()=>Date.now()-20*60000;});
+ await page.locator('#active-ack-enable').click();await page.locator('#active-ack-enable-yes').click();
+ await expect(page.locator('#active-ack-switch-result')).toContainText('נדרשת התחברות טרייה');await expect(page.locator('#active-ack-reauth')).toBeVisible();expect(await page.evaluate(()=>switchWrites.length)).toBe(1);
+ await page.evaluate(()=>{window.authImpl=async()=>Date.now();});
+ await page.locator('#active-ack-enable-yes').click();await expect(page.locator('#active-ack-switch-result')).toHaveText('השינוי אושר על ידי השרת.');
+ expect(await page.evaluate(()=>switchWrites.at(-1))).toEqual({enabled:true,exists:true});
+ await expect(page.locator('#active-ack-switch-text')).toHaveText(/^אישורי קבלה כבויים מאז/);            // still off until the server says on
+ await onSwitch(page);await expect(page.locator('#active-ack-switch-text')).toContainText('אישורי קבלה פעילים');await expect(page.locator('#active-ack-stop')).toBeVisible();
+ await page.evaluate(()=>{window.switchImpl=()=>new Promise(()=>{});});
+ await page.locator('#active-ack-stop').click();await expect(page.locator('#active-ack-stop')).toBeDisabled();
+ await expect(page.locator('#active-ack-switch-result')).toHaveText('לא אושר — ייתכן שהשינוי עוד יחול. המצב יתעדכן רק מהשרת.',{timeout:5000});
+ await expect(page.locator('#active-ack-stop')).toBeEnabled();
+ await page.evaluate(()=>{window.switchImpl=()=>Promise.reject(Object.assign(Error('no'),{code:'permission-denied'}));});
+ await page.locator('#active-ack-stop').click();await expect(page.locator('#active-ack-switch-result')).toHaveText('השרת דחה את השינוי. המצב לא השתנה.');
+ expect(await page.evaluate(()=>switchWrites.map(w=>w.enabled))).toEqual([false,true,false,false]);expect(errors).toEqual([]);
+});
+test('C12 clock skew: "no answer" is computed from SERVER time (offset), never the client clock, in both directions',async({page})=>{
+ const errors=await mount(page);await authorize(page);
+ const H=3600000;await page.evaluate(H=>swNext({state:'on',updatedAt:Date.now()-H-60000}),H);   // every stamp here is SERVER time
+ // client clock 1 h AHEAD of the server: a client-clock computation would say "no answer" at once
+ await page.evaluate(H=>{const S=Date.now()-H;window.S=S;hbNext({grok:S},{meta:{grok:{ack:'on',mode:'push'}}});
+  feedNext([row(1,{timestamp:S-10000,acks:{grok:{state:'LIT',summary:'',updatedAt:S-5000}}}),row(2,{timestamp:S-10000,acks:{}})]);},H);
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק — קורא');
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');
+ await page.evaluate(()=>hbNext({grok:S+100000},{meta:{grok:{ack:'on',mode:'push'}}}));   // server time advanced 100 s
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');   // 110 s < 180 s
+ await page.evaluate(()=>hbNext({grok:S+185000},{meta:{grok:{}}}));
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('אין אישור קבלה (ייתכן שכבוי)');   // heartbeat without the ack field (C5)
+ await page.evaluate(()=>hbNext({grok:S+185000},{meta:{grok:{ack:'on',mode:'push'}}}));
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('לא התקבל אישור קבלה');
+ await page.evaluate(()=>hbNext({grok:S+185000},{meta:{grok:{ack:'off',mode:'push'}}}));
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('אישורי קבלה כבויים במאזין');
+ // client clock 1 h BEHIND the server: a client-clock computation would never say "no answer"
+ await page.evaluate(()=>setIdentity(null));await authorize(page);
+ await page.evaluate(H=>{const S=Date.now()+H;swNext({state:'on',updatedAt:S-60000});feedNext([row(1,{timestamp:S,acks:{grok:{state:'LIT',summary:'',updatedAt:S+1000}}})]);hbNext({grok:S+96000});},H);
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');expect(errors).toEqual([]);
+});
+test('C12 cache/stale feed: ack marked "לא עדכני" and "no answer" is never computed; card line stale too',async({page})=>{
+ const errors=await mount(page);await authorize(page);await events(page);await onSwitch(page);
+ await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1,{acks:{grok:{state:'LIT',summary:'',updatedAt:Date.now()-120000}}}),row(2,{timestamp:Date.now()-400000})]);});
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');
+ await page.evaluate(()=>feedNext(null,{fromCache:true}));
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק — קורא · לא עדכני');await expect(ackEl(page,1,'grok')).toHaveAttribute('data-stale','true');
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה · לא עדכני');
+ await expect(page.locator('#active-tasks-panel')).not.toContainText('אין תשובה');await expect(page.locator('#active-tasks-panel')).not.toContainText('לא התקבל אישור');
+ await expect(card(page,'Grok').locator('.agent-ack')).toHaveAttribute('data-stale','true');await expect(card(page,'Grok').locator('.agent-ack')).toContainText('לא עדכני');
+ await page.evaluate(()=>feedError());await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק — קורא · לא עדכני');
+ await expect(page.locator('#active-tasks-panel')).not.toContainText('אין תשובה');expect(errors).toEqual([]);
+});
+for(const width of [320,360])test(`C12 clamp ${width}px: 280 chars English-first + 39-char token; real 44px button with aria; state per task+agent survives ticks and rebuilds; no overflow`,async({page})=>{
+ await page.setViewportSize({width,height:740});const errors=await mount(page,{tick:100});await authorize(page);await onSwitch(page);
+ const token='T'+'a1b2c3d4e5'.repeat(3)+'f6g7h8i9';expect(token.length).toBe(39);
+ let summary='Build '+token+' ';while([...summary].length<280)summary+='אבדוק ';summary=[...summary].slice(0,280).join('');expect([...summary].length).toBe(280);
+ await page.evaluate(summary=>{hbNext({grok:Date.now()});feedNext([row(1,{acks:{grok:{state:'UNDERSTOOD',summary,updatedAt:Date.now()-1000}}}),
+  row(2,{acks:{grok:{state:'UNDERSTOOD',summary:'קצר',updatedAt:Date.now()-1000}}})]);},summary);
+ const btn=page.locator(`#active-ack-more-${rid(1)}-grok`);await expect(btn).toBeVisible();
+ await expect(page.locator(`#active-ack-more-${rid(2)}-grok`)).toBeHidden();                   // not truncated -> no button
+ expect(await btn.evaluate(e=>e.tagName)).toBe('BUTTON');await expect(btn).toHaveAttribute('aria-expanded','false');
+ await expect(btn).toHaveAttribute('aria-controls',`active-ack-sum-${rid(1)}-grok`);
+ const box=await btn.boundingBox();expect(box.height).toBeGreaterThanOrEqual(44);expect(box.width).toBeGreaterThanOrEqual(44);
+ const clamp=page.locator(`#active-ack-sum-${rid(1)}-grok`);
+ expect(await clamp.evaluate(e=>getComputedStyle(e).overflowWrap)).toBe('anywhere');
+ const closedH=(await clamp.boundingBox()).height;
+ await btn.click();await expect(btn).toHaveAttribute('aria-expanded','true');await expect(clamp).toHaveClass(/clamp-open/);await expect(btn).toBeFocused();
+ expect((await clamp.boundingBox()).height).toBeGreaterThan(closedH);
+ await page.waitForTimeout(400);                                                                 // several ticks
+ await expect(btn).toHaveAttribute('aria-expanded','true');await expect(btn).toBeFocused();
+ // the row is rebuilt (codex ack arrives): the expand state is kept per task+agent
+ await page.evaluate(summary=>feedNext([row(1,{targets:{grok:'EXECUTE',codex:'EXECUTE',gemini:'IGNORE'},acks:{grok:{state:'UNDERSTOOD',summary,updatedAt:Date.now()-1000},codex:{state:'LIT',summary:'',updatedAt:Date.now()}}}),
+  row(2,{acks:{grok:{state:'UNDERSTOOD',summary:'קצר',updatedAt:Date.now()-1000}}})]),summary);
+ await expect(ackEl(page,1,'codex')).toHaveCount(1);await expect(page.locator(`#active-ack-sum-${rid(1)}-grok`)).toHaveClass(/clamp-open/);
+ await expect(page.locator(`#active-ack-more-${rid(1)}-grok`)).toHaveAttribute('aria-expanded','true');await expect(page.locator(`#active-ack-more-${rid(1)}-grok`)).toBeFocused();
+ await expect(clamp.locator('bdi')).toHaveText(summary);                                         // never cut silently: full text in the DOM
+ const overflow=await page.evaluate(()=>({doc:document.documentElement.scrollWidth,vw:document.documentElement.clientWidth,
+  wide:[...document.querySelectorAll('#active-tasks-panel *')].filter(e=>e.getBoundingClientRect().right>document.documentElement.clientWidth+0.5||e.getBoundingClientRect().left<-0.5).map(e=>e.className||e.tagName)}));
+ expect(overflow.doc).toBeLessThanOrEqual(overflow.vw);expect(overflow.wide).toEqual([]);
+ await page.locator(`#active-ack-more-${rid(1)}-grok`).click();await expect(page.locator(`#active-ack-sum-${rid(1)}-grok`)).not.toHaveClass(/clamp-open/);expect(errors).toEqual([]);
+});
+async function createInSession(page){
+ await page.evaluate(()=>{window.createImpl=()=>Promise.resolve();});
+ await page.locator('#active-target-grok').selectOption('EXECUTE');await page.locator('#active-payload').fill('משימה בסשן');await page.locator('#active-preview').click();
+ await page.locator('#active-send').click();await expect(page.locator('#active-result')).toHaveText('המשימה נשמרה ואושרה על ידי השרת.');
+ return page.evaluate(()=>creates.at(-1).taskId);
+}
+test('C12 reduced motion: no highlight; the ONE polite region announces only UNDERSTOOD/UNREADABLE of tasks created in this session',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});const errors=await mount(page);await authorize(page);await onSwitch(page);
+ const tid=await createInSession(page);
+ await expect(page.locator('[aria-live="polite"]#active-ack-live')).toHaveCount(1);
+ await page.evaluate(tid=>{window.mk=(acks,n=1)=>({...row(n),id:n===1?tid:row(n).id,taskId:n===1?tid:row(n).taskId,acks});hbNext({grok:Date.now()});feedNext([mk({}),mk({},2)]);},tid);
+ await page.evaluate(()=>feedNext([mk({grok:{state:'LIT',summary:'',updatedAt:Date.now()}}),mk({},2)]));
+ const own=page.locator(`.active-row[data-id="${tid}"] .active-ack[data-agent="grok"]`);await expect(own.locator('.active-ack-state')).toHaveText('נדלק — קורא');
+ await expect(page.locator('#active-ack-live')).toHaveText('');                                   // LIT is not announced
+ await expect(own).not.toHaveClass(/ack-changed/);
+ await page.evaluate(()=>feedNext([mk({grok:{state:'UNDERSTOOD',summary:'סיכום',updatedAt:Date.now()}}),mk({grok:{state:'UNREADABLE',summary:'',updatedAt:Date.now()}},2)]));
+ await expect(page.locator('#active-ack-live')).toHaveText('Grok: הבנתי — סיכום אוטומטי, אינו אישור');   // row 2 (not this session) is not announced
+ expect(await page.locator('.active-ack.ack-changed').count()).toBe(0);
+ expect(await page.locator('.active-ack').first().evaluate(e=>getComputedStyle(e).animationName)).toBe('none');expect(errors).toEqual([]);
+});
+test('C12 motion allowed: highlight on change lasts at most 5 s',async({page})=>{
+ await page.emulateMedia({reducedMotion:'no-preference'});const errors=await mount(page);await authorize(page);await onSwitch(page);
+ await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1)]);});await expect(ackEl(page,1,'grok')).toHaveAttribute('data-kind','waiting');
+ await page.evaluate(()=>feedNext([row(1,{acks:{grok:{state:'LIT',summary:'',updatedAt:Date.now()}}})]));
+ await expect(ackEl(page,1,'grok')).toHaveClass(/ack-changed/);
+ await expect(page.locator('#active-ack-live')).toHaveText('');
+ await expect(ackEl(page,1,'grok')).not.toHaveClass(/ack-changed/,{timeout:5600});expect(errors).toEqual([]);
+});
+test('C12 kind selector: kind in preview + draft key; TASK->MESSAGE blocked with EXECUTE; defaults once (heartbeat never overrides); MESSAGE > 2000 blocked, not cut; MESSAGE needs NOTIFY',async({page})=>{
+ const errors=await mount(page);await authorize(page);
+ await page.locator('#active-target-grok').selectOption('EXECUTE');await page.locator('#active-payload').fill('בדיקת סוג');await page.locator('#active-preview').click();
+ let shown=JSON.parse(await page.locator('#active-preview-json').textContent());expect(shown.kind).toBe('TASK');expect(shown.acks).toEqual({});
+ await page.locator('#active-kind').selectOption('MESSAGE');
+ await expect(page.locator('#active-kind')).toHaveValue('TASK');await expect(page.locator('#active-kind-note')).toContainText('המעבר להודעה חסום');
+ await expect(page.locator('#active-target-grok')).toHaveValue('EXECUTE');
+ await page.locator('#active-target-grok').selectOption('IGNORE');await expect(page.locator('#active-preview-box')).toBeHidden();
+ await page.evaluate(()=>hbNext({codex:Date.now()}));
+ await page.locator('#active-kind').selectOption('MESSAGE');await expect(page.locator('#active-kind')).toHaveValue('MESSAGE');
+ await expect(page.locator('#active-target-codex')).toHaveValue('NOTIFY');await expect(page.locator('#active-target-grok')).toHaveValue('IGNORE');await expect(page.locator('#active-target-gemini')).toHaveValue('IGNORE');
+ expect(await page.locator('#active-target-grok option').evaluateAll(o=>o.map(x=>x.value))).toEqual(['IGNORE','NOTIFY']);
+ await page.evaluate(()=>hbNext({grok:Date.now(),codex:Date.now(),gemini:Date.now()}));await page.waitForTimeout(100);
+ await expect(page.locator('#active-target-grok')).toHaveValue('IGNORE');                          // a heartbeat never changes the defaults
+ await page.locator('#active-preview').click();shown=JSON.parse(await page.locator('#active-preview-json').textContent());
+ expect(shown).toMatchObject({kind:'MESSAGE',targets:{codex:'NOTIFY',grok:'IGNORE',gemini:'IGNORE'},acks:{},progress:{}});
+ await page.locator('#active-kind').selectOption('TASK');await expect(page.locator('#active-preview-box')).toBeHidden();   // kind change invalidates the preview
+ await expect(page.locator('#active-kind-note')).toContainText('איפס את הסוכנים שסומנו "להודיע"');await expect(page.locator('#active-target-codex')).toHaveValue('IGNORE');
+ await page.locator('#active-kind').selectOption('MESSAGE');await page.locator('#active-target-codex').selectOption('NOTIFY');
+ await page.locator('#active-payload').fill('א'.repeat(2001));await page.locator('#active-preview').click();
+ await expect(page.locator('#active-send')).toBeDisabled();await expect(page.locator('#active-tasks-panel')).toContainText('הודעה מוגבלת ל-2000 תווים');
+ expect([...await page.locator('#active-payload').inputValue()].length).toBe(2001);                 // not cut
+ await page.locator('#active-payload').fill('א'.repeat(2000));await page.locator('#active-preview').click();await expect(page.locator('#active-send')).toBeEnabled();
+ for(const k of ['grok','codex','gemini'])await page.locator('#active-target-'+k).selectOption('IGNORE');await page.locator('#active-preview').click();
+ await expect(page.locator('#active-send')).toBeDisabled();await expect(page.locator('#active-tasks-panel')).toContainText('יש לבחור "להודיע" לסוכן אחד לפחות');
+ expect(await page.evaluate(()=>creates.length)).toBe(0);expect(errors).toEqual([]);
+});
+test('C12 owner buttons: shown only when the transition is allowed; double-click guarded; success only after the server; timeout/denied texts',async({page})=>{
+ const errors=await mount(page);await authorize(page);await onSwitch(page);
+ await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1,{progress:{grok:entry('READY','delivered')}}),row(2,{progress:{grok:entry('READY','delivery_off')}}),
+  row(3,{dispatchedBy:'someone-else',progress:{grok:entry('READY','delivered')}}),row(4,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'}}),row(5,{progress:{grok:entry('COMPLETED','completed')}})]);});
+ await expect(page.locator('.active-owner-btn')).toHaveCount(1);const start=page.locator(`#active-start-${rid(1)}-grok`);await expect(start).toHaveText('Grok: בביצוע');
+ await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('נמסר — טרם התחיל');
+ await page.evaluate(()=>{window.progressImpl=()=>new Promise(()=>{});});
+ await page.evaluate(id=>{const b=document.getElementById(id);b.click();b.click();b.click();},`active-start-${rid(1)}-grok`);
+ await expect(start).toBeDisabled();expect(await page.evaluate(()=>progressWrites.length)).toBe(1);
+ await expect(page.locator('#active-result')).toHaveText('לא אושר — הסטטוס יתעדכן רק מהשרת.',{timeout:5000});
+ await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('נמסר — טרם התחיל');       // nothing optimistic
+ await page.evaluate(()=>{window.progressImpl=()=>Promise.reject(Object.assign(Error('no'),{code:'permission-denied'}));});
+ await start.click();await expect(page.locator('#active-result')).toHaveText('השרת דחה את הסימון. הסטטוס לא השתנה.');
+ await page.evaluate(()=>{window.progressImpl=()=>Promise.resolve();});
+ await start.click();await expect(page.locator('#active-result')).toHaveText('הסימון אושר על ידי השרת.');
+ await page.evaluate(()=>feedNext([row(1,{progress:{grok:entry('IN_PROGRESS','started')}})]));
+ await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('בביצוע');
+ await expect(page.locator(`#active-start-${rid(1)}-grok`)).toHaveCount(0);const done=page.locator(`#active-complete-${rid(1)}-grok`);await expect(done).toHaveText('Grok: הסתיים');
+ await done.click();await expect(page.locator('#active-result')).toHaveText('הסימון אושר על ידי השרת.');
+ await page.evaluate(()=>feedNext([row(1,{progress:{grok:entry('COMPLETED','completed')}})]));await expect(page.locator('.active-owner-btn')).toHaveCount(0);
+ expect(await page.evaluate(()=>progressWrites.map(w=>w[2]))).toEqual(['IN_PROGRESS','IN_PROGRESS','IN_PROGRESS','COMPLETED']);expect(errors).toEqual([]);
 });

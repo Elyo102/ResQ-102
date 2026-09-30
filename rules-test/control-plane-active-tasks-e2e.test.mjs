@@ -1,5 +1,6 @@
 // Active tasks end-to-end on the local emulator with the EXACT deploy artifact:
 // owner create -> listener (delivery enabled IN THIS TEST ONLY, temporary inbox) -> inbox file -> progress -> UI model.
+// Push trigger: IN_PROGRESS/COMPLETED only by the owner's click; the listener runs with --ack off (default).
 // Synthetic identities only; the listener library is driven with injected Firestore ops (no credential, no daemon).
 import assert from 'node:assert/strict';
 import {readFileSync,mkdtempSync,rmSync,existsSync,readdirSync} from 'node:fs';
@@ -88,22 +89,26 @@ try{
   await waitFor('heartbeats',async()=>{const x=await ui(delivered);return x.seen.grok&&x.seen.codex;});
   const x=await ui(delivered);assert.equal(listenerState(x.seen.grok,x.now),'up');assert.equal(listenerState(x.seen.gemini,x.now),'none');
  });
- await check('manual pickup: session marks IN_PROGRESS (server read, no .cancelled) -> UI בביצוע from the agent\'s own report; then COMPLETED',async()=>{
-  await session.markStarted(delivered);
+ await check('push trigger (t176u): the listener identity can no longer start/complete; the OWNER click marks IN_PROGRESS -> UI בביצוע; then COMPLETED',async()=>{
+  assert.deepEqual(Object.keys(session),['markDeclined']);
+  const grokDb=listenerDb('Grok');
+  await assert.rejects(updateDoc(doc(grokDb,'active_tasks/'+delivered),{'progress.grok':{state:'IN_PROGRESS',step:'started',updatedAt:serverTimestamp()}}));
+  await updateDoc(doc(ownerDb,'active_tasks/'+delivered),{'progress.grok':{state:'IN_PROGRESS',step:'started',updatedAt:serverTimestamp()}});
   let v=await waitFor('IN_PROGRESS',async()=>{const v=await ui(delivered);return v.row.progress.grok.state==='IN_PROGRESS'?v:null;});
   assert.equal(v.chips.grok.kind,'in_progress');assert.equal(v.chips.grok.text,'בביצוע');assert.equal(v.overall.kind,'running');
-  await assert.rejects(session.markStarted(delivered),/TRANSITION_REJECTED/);
-  await session.markCompleted(delivered);
+  await assert.rejects(updateDoc(doc(grokDb,'active_tasks/'+delivered),{'progress.grok':{state:'COMPLETED',step:'completed',updatedAt:serverTimestamp()}}));
+  await updateDoc(doc(ownerDb,'active_tasks/'+delivered),{'progress.grok':{state:'COMPLETED',step:'completed',updatedAt:serverTimestamp()}});
   v=await waitFor('COMPLETED',async()=>{const v=await ui(delivered);return v.row.progress.grok.state==='COMPLETED'?v:null;});
   assert.equal(v.chips.grok.kind,'completed');assert.equal(v.overall.kind,'saved','grok done; codex saved-only (delivery off) keeps the task open');
  });
- await check('owner cancel after delivery -> listener writes <taskId>.cancelled (fixed content) -> manual start refused; UI shows בוטל',async()=>{
+ await check('owner cancel after delivery -> listener writes <taskId>.cancelled (fixed content) -> decline and owner start refused; UI shows בוטל',async()=>{
   const id=await create({grok:'EXECUTE',codex:'IGNORE',gemini:'IGNORE'},'cancel me');
   await waitFor('delivered',async()=>(await ui(id)).row.progress.grok?.step==='delivered');
   await updateDoc(doc(ownerDb,'active_tasks/'+id),{status:'CANCELLED'});
   const marker=join(root,'grok',id+'.cancelled');await waitFor('cancel marker',()=>existsSync(marker));
   assert.match(readFileSync(marker,'utf8'),/^CANCELLED\n/);
-  await assert.rejects(session.markStarted(id),/TASK_CANCELLED/);
+  await assert.rejects(session.markDeclined(id),/TASK_CANCELLED/);
+  await assert.rejects(updateDoc(doc(ownerDb,'active_tasks/'+id),{'progress.grok':{state:'IN_PROGRESS',step:'started',updatedAt:serverTimestamp()}}));   // owner click only while PENDING
   const v=await ui(id);assert.equal(v.overall.kind,'CANCELLED');assert.equal(v.overall.text,'בוטל');assert.equal(v.row.progress.grok.state,'READY');
  });
  await check('listener rejects a secret-looking payload (REJECTED/secret) and never writes it to the inbox',async()=>{
@@ -113,7 +118,8 @@ try{
   assert.equal(existsSync(join(root,'grok',id+'.task.txt')),false);
  });
  await check('listener status exposes counters only (no task content)',async()=>{
-  const s=grok.status();assert.deepEqual(Object.keys(s).sort(),['agent','cancelledMarkers','delivered','delivery','errors','ready','rejected','running'].sort());
+  const s=grok.status();assert.deepEqual(Object.keys(s).sort(),['ack','agent','cancelledMarkers','delivered','delivery','errors','ready','rejected','running','mode',
+   'received','lit','understood','unreadable','ackDenied','rateLimited','llmFail'].sort());assert.equal(s.ack,'off');
   assert.equal(s.errors,0);assert.ok(s.delivered>=2);assert.equal(s.rejected,1);assert.equal(s.cancelledMarkers,1);
   assert.doesNotMatch(JSON.stringify(s),/cancel me|ghp_|בדוק/);
  });

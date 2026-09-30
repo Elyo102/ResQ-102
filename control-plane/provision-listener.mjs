@@ -14,6 +14,12 @@
 //   auth_time (the Rules then reject every older token) -> new credential -> the same verification.
 // - revoke: private_listeners enabled:false + revokedAfter=now+1 (Rules deny at once), validSince=now, disable user.
 // - delivery on|off: edits only the local config file. status: read-only.
+// Push trigger (review/push-trigger-verdicts.md; t176u):
+// - ack on|off: edits only the local config file (default off; create writes ack:false). The Firestore kill switch
+//   control/ack_switch is separate and owner-only (dashboard).
+// - llm-key set --model <m>: reads the dedicated, spend-capped LLM key from HIDDEN stdin (TTY raw mode, no echo;
+//   refuses when stdin is not a TTY; never argv, never env) and stores it DPAPI-protected next to the credential
+//   (same ACL check). Grok -> api.x.ai, Codex -> api.openai.com only. llm-key status|remove: local, never shows the key.
 // Output: JSON with agent/uid/paths/hashes/flags only. Errors: safe codes only.
 import {randomBytes} from 'node:crypto';
 import {createRequire} from 'node:module';
@@ -21,18 +27,19 @@ import {homedir} from 'node:os';
 import {join,isAbsolute} from 'node:path';
 import * as nodeFs from 'node:fs';
 import {pathToFileURL} from 'node:url';
-import {LISTENER_AGENTS,PROJECT,fail,safeCode,verifyIdToken,createTokenSource,createCertCache} from './listener/listener-auth.mjs';
+import {LISTENER_AGENTS,PROJECT,fail,safeCode,verifyIdToken,createTokenSource,createCertCache,SafeError} from './listener/listener-auth.mjs';
 import {createFirestoreClient,encodeValue,structuredListenerQuery,FIRESTORE_URL} from './listener/firestore-rest.mjs';
 import {createIdentityAdmin} from './listener/identity-admin.mjs';
 import {createCredentialStore} from './listener/credential-store.mjs';
-import {createWindowsProtector} from './listener/win-protect.mjs';
+import {createWindowsProtector,minimalChildEnv} from './listener/win-protect.mjs';
 
 export const OWNER_EMAIL='eldad50@gmail.com';
 export const listenerEmail=(key,projectId)=>`listener-${key}@${projectId}.invalid`;
 export const randomPassword=()=>randomBytes(32).toString('base64url');
-const OPS=['create','rotate','revoke','status','delivery-on','delivery-off'];
+const OPS=['create','rotate','revoke','status','delivery-on','delivery-off','ack-on','ack-off','llm-key-set','llm-key-status','llm-key-remove'];
 
-// deps: {mode, projectId, idtk, ownerDb, store, listenerClientFor(tokenSource), fetcher, getCerts, now, sleep, fs, home, inboxRoot?}
+// deps: {mode, projectId, idtk, ownerDb, store, listenerClientFor(tokenSource), fetcher, getCerts, now, sleep, fs, home, inboxRoot?,
+//        model? (llm-key-set), readSecret?() -> Promise<string> (hidden stdin; llm-key-set only)}
 export async function provisionListener({op,agent,deps}){
   if(!OPS.includes(op))fail('OP_REJECTED');
   if(!Object.hasOwn(LISTENER_AGENTS,agent))fail('AGENT_REJECTED');
@@ -77,12 +84,30 @@ export async function provisionListener({op,agent,deps}){
     let config=null,configError=null;if(store.hasConfig(agent)){try{config=store.readConfig(agent);}catch(e){configError=safeCode(e);}}
     return {op,agent,email,uid:u?.uid??null,authDisabled:u?.disabled??null,claimsOk:u?claimsOk(u.claims):null,
       listenerDoc:d?{enabled:d.data.enabled===true,revokedAfter:d.data.revokedAfter??null}:null,
-      credentialFile:store.hasCredential(agent),delivery:config?config.delivery:null,configError};
+      credentialFile:store.hasCredential(agent),delivery:config?config.delivery:null,ack:config?config.ack:null,configError,
+      llmKey:llmStatus()};
   }
+  function llmStatus(){try{return store.llmKeyStatus(agent);}catch(e){return {present:null,error:safeCode(e)};}}
   if(op==='delivery-on'||op==='delivery-off'){
     if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
-    const c=store.readConfig(agent);const w=store.writeConfig(agent,{inboxRoot:c.inboxRoot,delivery:op==='delivery-on'});
-    return {op,agent,configPath:w.path,sha256:w.sha256,delivery:op==='delivery-on'};
+    const c=store.readConfig(agent);const w=store.writeConfig(agent,{inboxRoot:c.inboxRoot,delivery:op==='delivery-on',ack:c.ack});
+    return {op,agent,configPath:w.path,sha256:w.sha256,delivery:op==='delivery-on',ack:c.ack};
+  }
+  if(op==='ack-on'||op==='ack-off'){
+    if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
+    const c=store.readConfig(agent);const w=store.writeConfig(agent,{inboxRoot:c.inboxRoot,delivery:c.delivery,ack:op==='ack-on'});
+    return {op,agent,configPath:w.path,sha256:w.sha256,delivery:c.delivery,ack:op==='ack-on',llmKey:llmStatus(),
+      note:'ack also needs control/ack_switch enabled by the owner in the dashboard; without an LLM key every ack is UNREADABLE (S0)'};
+  }
+  if(op==='llm-key-status')return {op,agent,llmKey:llmStatus()};
+  if(op==='llm-key-remove'){const removed=store.removeLlmKey(agent);return {op,agent,removed};}
+  if(op==='llm-key-set'){
+    if(!store.hasCredential(agent))fail('NOT_PROVISIONED');
+    if(typeof deps.readSecret!=='function')fail('LLM_KEY_TTY_REQUIRED');
+    let apiKey=await deps.readSecret();
+    try{const w=store.writeLlmKey(agent,{apiKey,model:deps.model});const st=store.llmKeyStatus(agent);
+      return {op,agent,llmPath:w.path,sha256:w.sha256,host:st.host,model:st.model,reminder:'use a dedicated key with a hard spend cap'};}
+    finally{apiKey=null;}
   }
   if(op==='revoke'){
     const u=await existingUser();await listenerDoc(u.uid);
@@ -140,9 +165,10 @@ export async function provisionListener({op,agent,deps}){
     credentialPath:cred.path,credentialSha256:cred.sha256,...v};
 }
 
-// Strict argv: --project resq-agent-control-20260928 --agent Grok|Codex [--rotate|--revoke|--status|--delivery on|off] [--inbox-root <abs>]
+// Strict argv: --project resq-agent-control-20260928 --agent Grok|Codex
+//   [--rotate|--revoke|--status|--delivery on|off|--ack on|off|--llm-key set|status|remove] [--model <m>] [--inbox-root <abs>]
 export function parseProvisionArgs(argv){
-  const a=[...argv];let project=null,agent=null,op='create',inboxRoot;
+  const a=[...argv];let project=null,agent=null,op='create',inboxRoot,model;
   const setOp=o=>{if(op!=='create')fail('ARGS_ONE_OPERATION');op=o;};
   while(a.length){
     const f=a.shift();
@@ -152,13 +178,18 @@ export function parseProvisionArgs(argv){
     else if(f==='--revoke')setOp('revoke');
     else if(f==='--status')setOp('status');
     else if(f==='--delivery'){const v=a.shift();if(v!=='on'&&v!=='off')fail('ARGS_DELIVERY');setOp('delivery-'+v);}
+    else if(f==='--ack'){const v=a.shift();if(v!=='on'&&v!=='off')fail('ARGS_ACK');setOp('ack-'+v);}
+    else if(f==='--llm-key'){const v=a.shift();if(!['set','status','remove'].includes(v))fail('ARGS_LLM_KEY');setOp('llm-key-'+v);}
+    else if(f==='--model')model=a.shift();
     else if(f==='--inbox-root')inboxRoot=a.shift();
     else fail('ARGS_UNKNOWN');
   }
   if(project!==PROJECT)fail('ARGS_PROJECT');   // no default project
   if(!Object.hasOwn(LISTENER_AGENTS,agent))fail('ARGS_AGENT');
   if(inboxRoot!==undefined&&(op!=='create'||typeof inboxRoot!=='string'||!/^[A-Za-z]:\\(?![\\/])/.test(inboxRoot)))fail('ARGS_INBOX_ROOT');
-  return {project,agent,op,inboxRoot};
+  if(op==='llm-key-set'&&(typeof model!=='string'||!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(model)))fail('ARGS_MODEL');
+  if(op!=='llm-key-set'&&model!==undefined)fail('ARGS_MODEL');
+  return {project,agent,op,inboxRoot,model};
 }
 // The owner's existing firebase-tools login (same pattern as the read-only capture scripts). Token stays in memory.
 function ownerTokenSource(){
@@ -180,6 +211,25 @@ function ownerTokenSource(){
     token=r.access_token;until=Date.now()+30*60000;return token;
   };
 }
+// Hidden line from a TTY: raw mode, no echo, backspace, Ctrl+C aborts. Refuses when stdin is not a TTY (no pipes,
+// no redirects, no argv), so the key never lands in shell history, a file or the process list.
+export function readHiddenLine({stdin,stderr,max=400}){
+  if(!stdin||stdin.isTTY!==true||typeof stdin.setRawMode!=='function')fail('LLM_KEY_TTY_REQUIRED');
+  return new Promise((resolve,reject)=>{
+    let buf='';stderr.write('LLM key (hidden): ');
+    const done=(err)=>{stdin.setRawMode(false);stdin.pause();stdin.removeListener('data',on);stderr.write('\n');if(err)reject(err);else resolve(buf);buf='';};
+    const on=chunk=>{
+      for(const ch of String(chunk)){
+        if(ch==='\r'||ch==='\n'){done(null);return;}
+        if(ch==='\u0003'){done(new SafeError('LLM_KEY_ABORTED'));return;}
+        if(ch==='\u007f'||ch==='\b'){buf=buf.slice(0,-1);continue;}
+        if(ch<' ')continue;
+        buf+=ch;if(buf.length>max){done(new SafeError('LLM_KEY_FORMAT'));return;}
+      }
+    };
+    stdin.setEncoding('utf8');stdin.setRawMode(true);stdin.resume();stdin.on('data',on);
+  });
+}
 async function main(){
   if(process.platform!=='win32')fail('PROVISION_WINDOWS_ONLY');
   const args=parseProvisionArgs(process.argv.slice(2));
@@ -187,7 +237,8 @@ async function main(){
   const deps={mode:'production',projectId:PROJECT,fetcher:fetch,home,inboxRoot:args.inboxRoot,
     idtk:createIdentityAdmin({projectId:PROJECT,accessToken:ownerToken}),
     ownerDb:createFirestoreClient({base:FIRESTORE_URL,projectId:PROJECT,token:ownerToken,userProject:PROJECT}),
-    store:createCredentialStore({home,protector:createWindowsProtector()}),
+    store:createCredentialStore({home,protector:createWindowsProtector({baseEnv:minimalChildEnv(process.env)})}),
+    model:args.model,readSecret:args.op==='llm-key-set'?()=>readHiddenLine({stdin:process.stdin,stderr:process.stderr}):undefined,
     listenerClientFor:ts=>createFirestoreClient({base:FIRESTORE_URL,projectId:PROJECT,token:()=>ts.getIdToken()})};
   return provisionListener({op:args.op,agent:args.agent,deps});
 }

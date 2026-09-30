@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync,createSign} from 'node:crypto';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,symlinkSync,realpathSync,readdirSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,symlinkSync,realpathSync,readdirSync,existsSync,unlinkSync as nodeFsUnlink} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {requestJson,decodeJwt,verifyListenerClaims,verifyIdToken,createTokenSource,SafeError,PROJECT,PROJECT_NUMBER,
@@ -27,6 +27,10 @@ function rs256(body,kid='k1'){const h=b64({alg:'RS256',kid,typ:'JWT'}),p=b64(bod
 const unsigned=body=>b64({alg:'none',typ:'JWT'})+'.'+b64(body)+'.';
 const resp=(status,body)=>new Response(body===undefined?'':JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const getCerts=async()=>({k1:PEM});
+// Every key the runner may print (counters/flags only; never content).
+const RUNNER_LINE_KEYS=['agent','delivery','ack','mode','running','ready','delivered','rejected','cancelledMarkers','errors','received','lit','understood','unreadable',
+  'ackDenied','rateLimited','llmFail','summarizer','pollFailures','heartbeatDenied','lastError','started','heartbeatMs','pollMs','stopped',
+  'streams','streamRestarts','restartsLastHour','streamCurrent','streamError'];
 
 test('requestJson: bounded, redirect:error, safe codes only (upstream allowlist or HTTP_<n>), never the body',async()=>{
   let seen;const f=async(u,o)=>{seen=o;return resp(400,{error:{message:'TOKEN_EXPIRED : secret-detail-xyz',status:'INVALID_ARGUMENT'}});};
@@ -135,11 +139,20 @@ test('REST adapter: endpoint guards; exact listener query; progress = ONE masked
   await ops.writeProgress(ID,'grok',{state:'READY',step:'delivered'});
   assert.deepEqual(reqs[0].body,{writes:[{update:{name:`projects/${PROJECT}/databases/(default)/documents/active_tasks/${ID}`,fields:{progress:{mapValue:{fields:{grok:{mapValue:{fields:{state:{stringValue:'READY'},step:{stringValue:'delivered'}}}}}}}}},
     updateMask:{fieldPaths:['progress.grok']},updateTransforms:[{fieldPath:'progress.grok.updatedAt',setToServerValue:'REQUEST_TIME'}],currentDocument:{exists:true}}]});
-  await ops.writeHeartbeat('grok');
-  assert.deepEqual(reqs[1].body,{writes:[{update:{name:`projects/${PROJECT}/databases/(default)/documents/task_listeners/grok`,fields:{agent:{stringValue:'grok'}}},updateTransforms:[{fieldPath:'seenAt',setToServerValue:'REQUEST_TIME'}]}]});
+  await ops.writeHeartbeat('grok',{ack:'on',mode:'push'});
+  assert.deepEqual(reqs[1].body,{writes:[{update:{name:`projects/${PROJECT}/databases/(default)/documents/task_listeners/grok`,fields:{agent:{stringValue:'grok'},ack:{stringValue:'on'},mode:{stringValue:'push'}}},updateTransforms:[{fieldPath:'seenAt',setToServerValue:'REQUEST_TIME'}]}]});
+  await assert.rejects(ops.writeHeartbeat('grok',{ack:'maybe',mode:'push'}),code('HEARTBEAT_INFO'));
+  // ack: ONE masked update of acks.<key> + REQUEST_TIME; entry shape mirrors atAckEntry
+  reqs.length=0;await ops.writeAck(ID,'grok',{state:'UNDERSTOOD',summary:'סיכום קצר'});
+  assert.deepEqual(reqs[0].body,{writes:[{update:{name:`projects/${PROJECT}/databases/(default)/documents/active_tasks/${ID}`,fields:{acks:{mapValue:{fields:{grok:{mapValue:{fields:{state:{stringValue:'UNDERSTOOD'},summary:{stringValue:'סיכום קצר'}}}}}}}}},
+    updateMask:{fieldPaths:['acks.grok']},updateTransforms:[{fieldPath:'acks.grok.updatedAt',setToServerValue:'REQUEST_TIME'}],currentDocument:{exists:true}}]});
+  for(const e of [{state:'UNDERSTOOD',summary:''},{state:'LIT',summary:'x'},{state:'DONE',summary:''},{state:'UNDERSTOOD',summary:'א'.repeat(281)},{state:'UNDERSTOOD',summary:'a\nb'},{state:'LIT',summary:'',x:1},null])
+    await assert.rejects(ops.writeAck(ID,'grok',e),code('ACK_ENTRY'));
+  await assert.rejects(ops.writeAck(ID,'codex',{state:'LIT',summary:''}),code('LISTENER_KEY'));
+  reqs.length=0;await ops.writeHeartbeat('grok',{ack:'off',mode:'poll'});
   await assert.rejects(ops.writeProgress(ID,'codex',{state:'READY',step:'delivered'}),code('LISTENER_KEY'));
   await assert.rejects(ops.writeHeartbeat('codex'),code('LISTENER_KEY'));
-  for(const e of [{state:'PENDING',step:'x'},{state:'READY',step:'started'},{state:'COMPLETED',step:'done'},{state:'CANCELLED',step:'x'},null])
+  for(const e of [{state:'PENDING',step:'x'},{state:'READY',step:'started'},{state:'COMPLETED',step:'done'},{state:'CANCELLED',step:'x'},{state:'IN_PROGRESS',step:'started'},{state:'COMPLETED',step:'completed'},{state:'FAILED',step:'failed'},null])
     await assert.rejects(ops.writeProgress(ID,'grok',e),code('PROGRESS_ENTRY'));
   await assert.rejects(ops.writeProgress('../x','grok',{state:'READY',step:'delivered'}),code('TASK_ID'));
   assert.equal(await ops.readTask(ID),null);
@@ -177,12 +190,37 @@ test('credential store: DPAPI-protected refresh token (never plain on disk), ACL
   assert.deepEqual(Object.keys(JSON.parse(disk)),['v','agent','uid','projectId','revokedAfter','protected']);
   assert.deepEqual({...store.readCredential('Grok')},{agent:'Grok',uid:UID,projectId:PROJECT,revokedAfter:S-100,refreshToken:'REFRESH-'+'x'.repeat(40)});
   assert.deepEqual(readdirSync(join(home,'.resq-listeners')).sort(),['grok.credential.json'],'no temp files left');
+  // LLM key: DPAPI-protected, fixed host per agent, validated model, never plain on disk; status never shows it
+  const KEY='xai-'+'K'.repeat(40);
+  assert.throws(()=>store.writeLlmKey('Grok',{apiKey:'sk-'+'a'.repeat(40),model:'grok-4'}),code('LLM_KEY_FORMAT'));
+  assert.throws(()=>store.writeLlmKey('Grok',{apiKey:KEY,model:'Grok 4; rm'}),code('LLM_MODEL_FORMAT'));
+  const lw=store.writeLlmKey('Grok',{apiKey:KEY,model:'grok-4-fast'});assert.equal(lw.path,join(home,'.resq-listeners','grok.llm.json'));
+  const ldisk=readFileSync(lw.path,'utf8');assert.doesNotMatch(ldisk,/xai-|KKKK/);assert.deepEqual(Object.keys(JSON.parse(ldisk)),['v','agent','host','model','protected']);
+  assert.equal(JSON.parse(ldisk).host,'api.x.ai');
+  assert.deepEqual({...store.readLlmKey('Grok')},{agent:'Grok',host:'api.x.ai',model:'grok-4-fast',apiKey:KEY});
+  assert.deepEqual({...store.llmKeyStatus('Grok')},{present:true,host:'api.x.ai',model:'grok-4-fast'});assert.doesNotMatch(JSON.stringify(store.llmKeyStatus('Grok')),/xai-/);
+  writeFileSync(lw.path,JSON.stringify({...JSON.parse(ldisk),host:'evil.example'}));assert.throws(()=>store.readLlmKey('Grok'),code('LLM_SHAPE'));
+  prot.acl='ACL_OTHER_PRINCIPAL';assert.throws(()=>store.readLlmKey('Grok'),code('ACL_OTHER_PRINCIPAL'));prot.acl=null;
+  assert.equal(store.removeLlmKey('Grok'),true);assert.equal(store.hasLlmKey('Grok'),false);assert.deepEqual({...store.llmKeyStatus('Grok')},{present:false});
+  assert.throws(()=>store.writeLlmKey('Gemini',{apiKey:KEY,model:'m1'}),code('AGENT_REJECTED'));
+  // Ledger: UUIDs only, capped, same ACL check, bad file fails closed
+  assert.deepEqual(store.readLedger('Grok'),[]);
+  const U=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+  store.writeLedger('Grok',Array.from({length:520},(_,i)=>U(i)));const led=store.readLedger('Grok');assert.equal(led.length,500);assert.equal(led[0],U(20));
+  assert.throws(()=>store.writeLedger('Grok',['not-a-uuid']),code('LEDGER_SHAPE'));
+  writeFileSync(listenerPaths(home,'Grok').acks,JSON.stringify({v:1,ids:['x'],payload:'p'}));assert.throws(()=>store.readLedger('Grok'),code('LEDGER_SHAPE'));
+  prot.acl='ACL_OWNER';assert.throws(()=>store.readLedger('Grok'),code('ACL_OWNER'));prot.acl=null;
+  nodeFsUnlink(listenerPaths(home,'Grok').acks);
   assert.throws(()=>store.readCredential('Codex'));
   prot.acl='ACL_OTHER_PRINCIPAL';assert.throws(()=>store.readCredential('Grok'),code('ACL_OTHER_PRINCIPAL'));prot.acl=null;
   prot.broken=true;assert.throws(()=>store.readCredential('Grok'),code('CREDENTIAL_UNPROTECT'));prot.broken=false;
   const d=JSON.parse(disk);writeFileSync(w.path,JSON.stringify({...d,extra:1}));assert.throws(()=>store.readCredential('Grok'),code('CREDENTIAL_SHAPE'));
   writeFileSync(w.path,JSON.stringify({...d,agent:'Codex'}));assert.throws(()=>store.readCredential('Grok'),code('CREDENTIAL_SHAPE'));
-  store.writeConfig('Grok',{inboxRoot:'/inbox',delivery:false});assert.deepEqual({...store.readConfig('Grok')},{inboxRoot:'/inbox',delivery:false});
+  store.writeConfig('Grok',{inboxRoot:'/inbox',delivery:false});assert.deepEqual({...store.readConfig('Grok')},{inboxRoot:'/inbox',delivery:false,ack:false});
+  writeFileSync(listenerPaths(home,'Grok').config,JSON.stringify({inboxRoot:'/inbox',delivery:false}));assert.equal(store.readConfig('Grok').ack,false,'old config without ack stays valid, ack off');
+  store.writeConfig('Grok',{inboxRoot:'/inbox',delivery:false,ack:true});assert.equal(store.readConfig('Grok').ack,true);
+  writeFileSync(listenerPaths(home,'Grok').config,JSON.stringify({inboxRoot:'/i',delivery:true,ack:'on'}));assert.throws(()=>store.readConfig('Grok'),code('CONFIG_SHAPE'));
+  store.writeConfig('Grok',{inboxRoot:'/inbox',delivery:false});
   writeFileSync(listenerPaths(home,'Grok').config,JSON.stringify({inboxRoot:'/i',delivery:true,autostart:true}));assert.throws(()=>store.readConfig('Grok'),code('CONFIG_UNKNOWN_KEY'));
   writeFileSync(listenerPaths(home,'Grok').config,JSON.stringify({inboxRoot:'/i',delivery:'true'}));assert.throws(()=>store.readConfig('Grok'),code('CONFIG_SHAPE'));
   assert.throws(()=>listenerPaths(home,'Gemini'),code('AGENT_REJECTED'));assert.throws(()=>listenerPaths(home,'Claude'),code('AGENT_REJECTED'));
@@ -223,16 +261,24 @@ test('Windows protector: ACL policy; fixed PowerShell binary, constant scripts, 
   assert.throws(()=>aclBad.checkAcl('C:\\x',{directory:false}),code('ACL_OTHER_PRINCIPAL'));
 });
 test('CLIs: strict arguments (explicit project, Grok|Codex only, one operation); runner takes only --agent',()=>{
-  assert.deepEqual(parseProvisionArgs(['--project',PROJECT,'--agent','Grok']),{project:PROJECT,agent:'Grok',op:'create',inboxRoot:undefined});
+  assert.deepEqual(parseProvisionArgs(['--project',PROJECT,'--agent','Grok']),{project:PROJECT,agent:'Grok',op:'create',inboxRoot:undefined,model:undefined});
+  assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Grok','--ack','on']).op,'ack-on');
+  assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Grok','--ack','off']).op,'ack-off');
+  assert.deepEqual(parseProvisionArgs(['--project',PROJECT,'--agent','Codex','--llm-key','set','--model','gpt-5-mini']).model,'gpt-5-mini');
+  assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Codex','--llm-key','status']).op,'llm-key-status');
   assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Codex','--rotate']).op,'rotate');
   assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Codex','--delivery','on']).op,'delivery-on');
   assert.equal(parseProvisionArgs(['--project',PROJECT,'--agent','Grok','--inbox-root','C:\\Users\\User\\ResQ-Inbox']).inboxRoot,'C:\\Users\\User\\ResQ-Inbox');
   for(const bad of [['--agent','Grok'],['--project','station-102','--agent','Grok'],['--project',PROJECT,'--agent','Gemini'],['--project',PROJECT,'--agent','Claude'],
     ['--project',PROJECT,'--agent','Grok','--rotate','--revoke'],['--project',PROJECT,'--agent','Grok','--force'],['--project',PROJECT,'--agent','Grok','--delivery','yes'],
-    ['--project',PROJECT,'--agent','Grok','--inbox-root','\\\\srv\\share'],['--project',PROJECT,'--agent','Grok','--rotate','--inbox-root','C:\\x']])
+    ['--project',PROJECT,'--agent','Grok','--inbox-root','\\\\srv\\share'],['--project',PROJECT,'--agent','Grok','--rotate','--inbox-root','C:\\x'],
+    ['--project',PROJECT,'--agent','Grok','--ack','yes'],['--project',PROJECT,'--agent','Grok','--llm-key','set'],['--project',PROJECT,'--agent','Grok','--llm-key','set','--model','A B'],
+    ['--project',PROJECT,'--agent','Grok','--llm-key','xai-abcdefghijklmnopqrstuvwxyz'],['--project',PROJECT,'--agent','Grok','--status','--model','m1'],['--project',PROJECT,'--agent','Grok','--ack','on','--delivery','on']])
     assert.throws(()=>parseProvisionArgs(bad),SafeError,bad.join(' '));
-  assert.deepEqual(parseRunnerArgs(['--agent','Codex']),{agent:'Codex'});
-  for(const bad of [[],['--agent','Gemini'],['--agent','Grok','--delivery'],['--agent','grok'],['--emulator','--agent','Grok']])assert.throws(()=>parseRunnerArgs(bad),SafeError);
+  assert.deepEqual(parseRunnerArgs(['--agent','Codex']),{agent:'Codex',listen:'push'});
+  assert.deepEqual(parseRunnerArgs(['--agent','Grok','--mode','poll']),{agent:'Grok',listen:'poll'});
+  for(const bad of [[],['--agent','Gemini'],['--agent','Grok','--delivery'],['--agent','grok'],['--emulator','--agent','Grok'],['--agent','Grok','--mode','fallback'],
+    ['--agent','Grok','--mode'],['--agent','Grok','--key','xai-x'],['--agent','Grok','--mode','push','--ack','on']])assert.throws(()=>parseRunnerArgs(bad),SafeError);
 });
 
 // Provisioning flow with in-memory fakes (the emulator e2e runs the same code against the Rules).
@@ -300,42 +346,73 @@ test('runner: fail-closed startup (config/credential/token), counters-only outpu
   // running: firestore fails -> poll failures -> stop(3)
   const st=secureTokenFake();const lines=[];const timers=[];
   const fetcher=async(url,o)=>url.startsWith(FIRESTORE_URL)?resp(503,{error:{message:'payload-secret'}}):st(url,o);
-  const r=await startRunner({agent:'Grok',deps:{...deps0,fetcher,pollMs:1111,statusMs:2222,out:l=>lines.push(l),setTimer:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimer:()=>{}}});
+  const r=await startRunner({agent:'Grok',listen:'poll',deps:{...deps0,fetcher,pollMs:1111,statusMs:2222,out:l=>lines.push(l),setTimer:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimer:()=>{}}});
   assert.equal(r.listener.config.delivery,false);assert.equal(JSON.parse(lines[0]).heartbeatMs,HEARTBEAT_MS);
   assert.deepEqual(timers.map(t=>t.ms).sort(),[1111,2222,HEARTBEAT_MS].sort());
   const poll=timers.find(t=>t.ms===1111);
   for(let i=0;i<MAX_POLL_FAILURES;i++){await poll.fn();await new Promise(r=>setTimeout(r,5));}
   r.check();assert.equal(await r.done,EXIT.POLL_FAILURES);
-  const allowed=['agent','delivery','running','ready','delivered','rejected','cancelledMarkers','errors','pollFailures','lastError','started','heartbeatMs','pollMs','stopped'];
+  const allowed=RUNNER_LINE_KEYS;
   for(const l of lines){const o=JSON.parse(l);assert.deepEqual(Object.keys(o).filter(k=>!allowed.includes(k)),[]);assert.doesNotMatch(l,/secret|Bearer|eyJ/);}
   assert.equal(JSON.parse(lines.at(-1)).stopped,'poll_failures');assert.equal(JSON.parse(lines.at(-1)).lastError,'HTTP_503');
   // credential dies while running (refresh -> TOKEN_EXPIRED) -> stop with EXIT.CREDENTIAL_DEAD
   let now=NOW,dead=false;const st2=secureTokenFake({clock:()=>now});const st3=secureTokenFake({error:'TOKEN_EXPIRED'});
   const out2=[];
-  const r2=await startRunner({agent:'Grok',deps:{...deps0,now:()=>now,out:l=>out2.push(l),fetcher:async(url,o)=>url.startsWith(FIRESTORE_URL)?resp(200,[]):(dead?st3:st2)(url,o),setTimer:()=>1,clearTimer:()=>{}}});
+  const r2=await startRunner({agent:'Grok',listen:'poll',deps:{...deps0,now:()=>now,out:l=>out2.push(l),fetcher:async(url,o)=>url.startsWith(FIRESTORE_URL)?resp(200,[]):(dead?st3:st2)(url,o),setTimer:()=>1,clearTimer:()=>{}}});
   dead=true;now+=3600*1000;
   await assert.rejects(r2.tokens.getIdToken(),code('TOKEN_EXPIRED'));assert.equal(r2.tokens.fatal,'TOKEN_EXPIRED');
   r2.check();assert.equal(await r2.done,EXIT.CREDENTIAL_DEAD);assert.equal(JSON.parse(out2.at(-1)).stopped,'credential_token_expired');
 });
 
-test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAPI helper), eval, import dynamically, read env, log, or call other hosts',()=>{
-  const files={'task-listener-run.mjs':{},'listener/firestore-rest.mjs':{},'listener/listener-auth.mjs':{},'listener/credential-store.mjs':{},
-    'listener/identity-admin.mjs':{},'listener/win-protect.mjs':{spawn:true},'provision-listener.mjs':{env:true}};
+test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAPI helper), eval, import dynamically, read env (except env-scrub), log, or call other hosts',()=>{
+  const files={'task-listener-run.mjs':{},'listener/firestore-rest.mjs':{},'listener/listener-auth.mjs':{},'listener/credential-store.mjs':{llmName:true},
+    'listener/identity-admin.mjs':{},'listener/win-protect.mjs':{spawn:true},'provision-listener.mjs':{env:true},
+    'listener/firestore-listen.mjs':{},'listener/summarizer.mjs':{llm:true},'listener/env-scrub.mjs':{env:true},'listener/grpc-transport.mjs':{grpc:true}};
   const HOSTS=['securetoken.googleapis.com','www.googleapis.com','firestore.googleapis.com','identitytoolkit.googleapis.com','securetoken.google.com'];
+  const LLM_HOSTS=['api.x.ai','api.openai.com'];
   for(const [f,allow] of Object.entries(files)){
     const src=readFileSync(new URL('./'+f,import.meta.url),'utf8');const code=src.replace(/^\s*\/\/.*$/gm,'');
     assert.doesNotMatch(code,/\beval\s*\(|new Function|Function\s*\(|\bimport\s*\(|console\.|require\s*\(\s*['"]|marked|markdown/,f);
     if(!allow.spawn)assert.doesNotMatch(code,/child_process|\bspawn|\bexec(?:Sync|File)?\s*\(/,f);
     if(!allow.env)assert.doesNotMatch(code,/process\.env/,f);
-    for(const m of code.matchAll(/https?:\/\/([a-z0-9.-]+)/gi))assert.ok(HOSTS.includes(m[1])||(f==='listener/firestore-rest.mjs'&&m[0]==='http://'),f+': '+m[0]);
+    if(!allow.grpc)assert.doesNotMatch(code,/@grpc\/|grpc-js|proto-loader/,f+': only grpc-transport.mjs imports gRPC');
+    assert.doesNotMatch(code,/google-auth-library|GoogleAuth|applicationDefault|createFromGoogleCredential|GOOGLE_APPLICATION_CREDENTIALS/,f+': no ADC');
+    for(const m of code.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)){
+      if(allow.llm)assert.ok(LLM_HOSTS.includes(m[1]),f+': '+m[0]);
+      else assert.ok(HOSTS.includes(m[1])||(f==='listener/firestore-rest.mjs'&&m[0]==='http://'),f+': '+m[0]);
+    }
+    if(!allow.llm&&!allow.llmName)for(const h of LLM_HOSTS)assert.ok(!code.includes(h),f+' never names '+h);
   }
+  // one host per agent (key condition): Grok -> api.x.ai, Codex -> api.openai.com, nothing for Gemini
+  const summ=readFileSync(new URL('./listener/summarizer.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  assert.match(summ,/Grok:Object\.freeze\(\{host:'api\.x\.ai',url:'https:\/\/api\.x\.ai\/v1\/chat\/completions'/);
+  assert.match(summ,/Codex:Object\.freeze\(\{host:'api\.openai\.com',url:'https:\/\/api\.openai\.com\/v1\/responses'/);
+  assert.doesNotMatch(summ,/Gemini:|generativelanguage/);
+  const store=readFileSync(new URL('./listener/credential-store.mjs',import.meta.url),'utf8');
+  assert.match(store,/LLM_HOSTS=Object\.freeze\(\{Grok:'api\.x\.ai',Codex:'api\.openai\.com'\}\)/);
+  // gRPC transport: constant TLS target with default roots, no env proxy, insecure only in the emulator branch
+  const gt=readFileSync(new URL('./listener/grpc-transport.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  assert.match(gt,/PRODUCTION_TARGET='firestore\.googleapis\.com:443'/);assert.match(gt,/grpc\.credentials\.createSsl\(\)/);
+  assert.equal((gt.match(/createInsecure\(\)/g)||[]).length,1);assert.match(gt,/else if\(mode==='emulator'\)\{[^]*?if\(!EMULATOR_TARGETS\.includes\(emulatorHost\)\)fail\('EMULATOR_HOST_REJECTED'\);\s*target=emulatorHost;creds=grpc\.credentials\.createInsecure\(\);/);
+  assert.match(gt,/'grpc\.enable_http_proxy':0/);assert.match(gt,/verifyProtos\(\);\s*const def=protoLoader\.loadSync/);
   const ps=readFileSync(new URL('./listener/win-protect.mjs',import.meta.url),'utf8');
   assert.equal((ps.match(/spawnSync\(|spawn\(/g)||[]).length,1,'exactly one process start');assert.match(ps,/shell:false/);assert.doesNotMatch(ps,/shell:true/);
+  assert.match(ps,/env:\{\.\.\.childEnv\}\}\);/,'the DPAPI helper always gets the minimal env');
   const prov=readFileSync(new URL('./provision-listener.mjs',import.meta.url),'utf8');
   assert.deepEqual([...prov.matchAll(/process\.env\.([A-Z_]+)/g)].map(m=>m[1]),['APPDATA']);
-  const runner=readFileSync(new URL('./task-listener-run.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  assert.match(prov,/minimalChildEnv\(process\.env\)/);assert.doesNotMatch(prov,/--llm-key[^\n]*argv|apiKey:args|args\.apiKey|args\.key\b/);
+  const scrub=readFileSync(new URL('./listener/env-scrub.mjs',import.meta.url),'utf8').replace(/^\s*\/\/.*$/gm,'');
+  assert.doesNotMatch(scrub,/stdout|stderr|JSON\.stringify/,'never prints');
+  assert.deepEqual([...scrub.matchAll(/(\S*)env\[name\]/g)].map(m=>m[0]),['env[name]'],'the only value access is delete env[name]');
+  assert.match(scrub,/delete env\[name\]/);
+  const runnerSrc=readFileSync(new URL('./task-listener-run.mjs',import.meta.url),'utf8');
+  const runner=runnerSrc.replace(/^\s*\/\/.*$/gm,'');
+  assert.match(runner,/async function main\(\)\{\n\s*const \{childEnv\}=scrubSecretEnv\(\);/,'CRITICAL: scrub is the FIRST statement of main');
+  assert.match(runner,/createWindowsProtector\(\{baseEnv:childEnv\}\)/);
   assert.doesNotMatch(runner,/identity-admin|provision-listener|payload|signInWithPassword|password/i,'runner never touches admin identity or payloads');
   assert.doesNotMatch(runner,/emulator['"]?\s*[,:]|--emulator/,'the runner CLI has no emulator switch');
+  assert.doesNotMatch(runner,/fallback|listen=['"]poll['"]\s*;|listen='poll'(?!\?)/,'no automatic fallback to poll');
   assert.doesNotMatch(prov,/\.log\(|password['"]?\s*[:,]\s*password\b.*out|stdout\.write\([^)]*password/i);
-  for(const f of ['task-listener-run.mjs','provision-listener.mjs','listener/firestore-rest.mjs'])assert.doesNotMatch(readFileSync(new URL('./'+f,import.meta.url),'utf8'),/station-102|--force/,f);
+  for(const f of ['task-listener-run.mjs','provision-listener.mjs','listener/firestore-rest.mjs','listener/firestore-listen.mjs','listener/summarizer.mjs','listener/grpc-transport.mjs'])
+    assert.doesNotMatch(readFileSync(new URL('./'+f,import.meta.url),'utf8'),/station-102|--force/,f);
 });

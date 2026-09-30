@@ -3,7 +3,7 @@
 // Its only writes are owner dispatch requests (create queued / cancel own queued) and owner active tasks
 // (create PENDING / cancel own PENDING), enforced by Firestore Rules. It never writes progress or listener docs.
 // No GitHub token, no CI trigger and no executor call exists in the browser.
-import {mapTaskDoc,mapListenerDocs} from './active-tasks-model.mjs?v=20260930-grok-dispatch4';
+import {mapTaskDoc,mapListenerDocs,mapListenerMeta,mapAckSwitch} from './active-tasks-model.mjs?v=20260930-grok-dispatch5';
 export const PROJECT = 'resq-agent-control-20260928';
 export const APP_ID = '1:802712493259:web:5634c433be7c020b7c4f4e';
 
@@ -207,16 +207,17 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
           // silently dropping it; never render cached data as current. Snapshots with only local pending writes are ignored.
           if(snapshot.metadata.fromCache!==false){next(null,{fromCache:true});return;}
           if(snapshot.metadata.hasPendingWrites!==false)return;
-          let seen;try{seen=mapListenerDocs(snapshot.docs.map(d=>({id:d.id,data:d.data()})));}catch{error();return;}
-          next(seen);
+          let seen,meta;try{const docs=snapshot.docs.map(d=>({id:d.id,data:d.data()}));seen=mapListenerDocs(docs);meta=mapListenerMeta(docs);}catch{error();return;}
+          next(seen,{fromCache:false,meta});
         },()=>{if(!stopped)error();});
         return()=>{stopped=true;try{stop();}catch{}};
       },
       // Single create with a client-generated v4 taskId (== doc id); a retry reuses the same id.
       async create(task,timeoutMs=12000){
         if(!authorized()||task?.dispatchedBy!==authorizedUid)throw Error('SERVER_AUTHORIZATION_REQUIRED');
-        const data={taskId:task.taskId,dispatchedBy:task.dispatchedBy,payload:task.payload,targets:{...task.targets},status:'PENDING',
-          timestamp:sdk.serverTimestamp(),progress:{}};
+        if(!['TASK','MESSAGE'].includes(task.kind))throw Error('INVALID_KIND');
+        const data={taskId:task.taskId,dispatchedBy:task.dispatchedBy,payload:task.payload,kind:task.kind,targets:{...task.targets},status:'PENDING',
+          timestamp:sdk.serverTimestamp(),progress:{},acks:{}};
         let timer;
         try{await Promise.race([sdk.setDoc(sdk.doc(db,'active_tasks',task.taskId),data),
           new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACTIVE_TASK_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
@@ -226,13 +227,48 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
         if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
         const snap=await sdk.getDocFromServer(sdk.doc(db,'active_tasks',taskId));
         if(!snap.exists())return {exists:false};const x=snap.data();
-        return {exists:true,taskId:x.taskId,dispatchedBy:x.dispatchedBy,payload:x.payload,targets:x.targets,status:x.status};
+        return {exists:true,taskId:x.taskId,dispatchedBy:x.dispatchedBy,payload:x.payload,targets:x.targets,status:x.status,kind:x.kind??'TASK'};
       },
       async cancel(taskId,timeoutMs=12000){
         if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
         let timer;
         try{await Promise.race([sdk.updateDoc(sdk.doc(db,'active_tasks',taskId),{status:'CANCELLED'}),
           new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACTIVE_TASK_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
+      },
+      // C10: the owner's manual click (Rules atOwnerProgress): READY/delivered -> IN_PROGRESS, IN_PROGRESS -> COMPLETED.
+      // Resolves only after the server confirms (the SDK promise resolves on commit); timeout -> "לא אושר".
+      async markProgress(taskId,key,state,timeoutMs=12000){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        if(!['codex','grok','gemini'].includes(key)||!['IN_PROGRESS','COMPLETED'].includes(state))throw Error('INVALID_PROGRESS');
+        const entry={state,step:state==='IN_PROGRESS'?'started':'completed',updatedAt:sdk.serverTimestamp()};
+        let timer;
+        try{await Promise.race([sdk.updateDoc(sdk.doc(db,'active_tasks',taskId),{['progress.'+key]:entry}),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACTIVE_TASK_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
+        finally{clearTimeout(timer);}
+      },
+      // C5/C9: control/ack_switch (owner-only get; Rules: create only {enabled:false} with a fresh sign-in; no delete).
+      watchAckSwitch({next,error}){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        let stopped=false;
+        const stop=sdk.onSnapshot(sdk.doc(db,'control','ack_switch'),{includeMetadataChanges:true},snap=>{
+          if(stopped)return;if(!authorized()){error();return;}
+          if(snap.metadata.fromCache!==false){next(null,{fromCache:true});return;}
+          if(snap.metadata.hasPendingWrites!==false)return;
+          next(mapAckSwitch(snap.exists()?{exists:true,data:snap.data()}:{exists:false}),{fromCache:false});
+        },()=>{if(!stopped)error();});
+        return()=>{stopped=true;try{stop();}catch{}};
+      },
+      // enabled:false on a missing document seeds it (create); otherwise an update. Idempotent: the view skips a
+      // write when the server state already matches. Server confirmation only (no optimistic state).
+      async setAckSwitch(enabled,{exists},timeoutMs=12000){
+        if(!authorized())throw Error('SERVER_AUTHORIZATION_REQUIRED');
+        if(typeof enabled!=='boolean')throw Error('INVALID_SWITCH');
+        if(!exists&&enabled)throw Error('SWITCH_SEED_OFF_ONLY');
+        const ref=sdk.doc(db,'control','ack_switch');const data={enabled,updatedAt:sdk.serverTimestamp()};
+        let timer;
+        try{await Promise.race([exists?sdk.updateDoc(ref,data):sdk.setDoc(ref,data),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('ACK_SWITCH_TIMEOUT'),{code:'deadline-exceeded'})),timeoutMs);})]);}
         finally{clearTimeout(timer);}
       }
     },

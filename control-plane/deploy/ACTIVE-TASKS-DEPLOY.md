@@ -71,6 +71,7 @@ Rolling back removes every `active_tasks` and `task_listeners` permission at onc
 
 ## 5. Indexes (separate, owner-approved, additive; before any listener)
 The owner feed needs no composite index. The listener query `where(targets.<key>=='EXECUTE').orderBy(timestamp desc).limit(5)`
+(push trigger: `where(targets.<key> in ['EXECUTE','NOTIFY'])`, same fields — see section 8)
 needs one composite index per key. Run these one by one, with no `--force`:
 ```sh
 for k in codex grok gemini; do
@@ -99,4 +100,22 @@ Do these in order. Each one is independent.
   root must be a plain `C:\...` path; UNC, `\\?\`, 8.3 short names and junctions are rejected.
 - `delivery:false` is the default. Turning it on is an explicit per-agent owner decision.
 - Start manually only, in a foreground terminal. No autostart, service or scheduled task.
-- The `task_listeners` heartbeat is limited by the Rules to one write per 30 s. The listener beats every 60 s, and a failed beat only increases an error counter.
+- The `task_listeners` heartbeat is limited by the Rules to one write per 30 s. The listener beats every 120 s (t176u; the UI treats 165 s as fresh), and a failed beat only increases an error counter (two consecutive denials exit the runner).
+
+## 8. Push trigger (grok/push-trigger) — NOT deployed; every step needs Eldad's explicit approval
+A1 is amended (full text in `control-plane/ACTIVE-TASKS.md`): the only autonomous action is auto-read plus an ack with a
+summary of at most 280 characters, by a listener Eldad started in the foreground; everything else needs a session Eldad
+opened AND an explicit go. "הבנתי" is not a go.
+1. **Rules** (artifact `firestore.control-plane.rules`, sha256 in `firestore-active-tasks-provenance.json`): diff vs the live
+   358b4c0c in `firestore-push-trigger.diff`, a reason for each removed line in `FIRESTORE-PUSH-TRIGGER-REASONS.md`. Pre-check:
+   the live release must still be ruleset f7f2d208 / sha256 358b4c0c. Deploy only with approval, with `--project` explicit.
+2. **Rollback:** PATCH the release back to ruleset f7f2d208 (same command as section 4, with the full f7f2d208… ruleset name read
+   from the live release before deploying). The runner rollback is `--mode poll` (ack forced off).
+3. **Indexes:** before any push listener, list the live composite indexes and confirm that `targets.<key> ASC + timestamp DESC`
+   exists for grok/codex (an `in` equality filter uses the same index). Any NEW index is a separate approved step.
+4. **Seed the kill switch** from the dashboard ("יצירת המתג (כבוי)", fresh auth) — `control/ack_switch {enabled:false}`. Until it
+   exists every ack is denied. Re-enabling is a separate confirmed click.
+5. **UI** (`/status/`, token `20260930-grok-dispatch5`) is released only after the Rules are live — the new UI writes `kind`/`acks:{}`.
+6. **Measure one agent (Grok) for one day** (stream restarts, reads, LLM calls) before adding Codex. Restart cap 20/h, 150/day:
+   past it the runner exits (code 4) and does NOT fall back to poll.
+7. Hard kill for acks: dashboard "עצירת אישורי קבלה" (Rules deny at once) -> Ctrl+C -> `--ack off` -> `--revoke`.

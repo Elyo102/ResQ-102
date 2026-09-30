@@ -45,6 +45,7 @@ package-lock.json
 !functions/package-lock.json
 !tests/package-lock.json
 !rules-test/package-lock.json
+!control-plane/package-lock.json
 
 # --- firebase ---
 .firebase/

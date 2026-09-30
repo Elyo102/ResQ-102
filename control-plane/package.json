@@ -1,0 +1,10 @@
+{
+  "name": "resq-control-plane-listener",
+  "private": true,
+  "description": "LD listener push mode (gRPC Listen). Install ONLY with: npm ci --ignore-scripts",
+  "engines": {"node": ">=20"},
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
+    "@grpc/proto-loader": "0.8.1"
+  }
+}
