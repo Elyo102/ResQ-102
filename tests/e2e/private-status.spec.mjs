@@ -73,7 +73,7 @@ test.describe('private log stamps in Asia/Jerusalem from a UTC browser',()=>{
   const rows=[['2026-09-29T21:30:00Z','30/09/2026 00:30'],['2026-10-24T22:30:00Z','25/10/2026 01:30'],['2026-10-24T23:30:00Z','25/10/2026 01:30'],['2026-10-25T00:30:00Z','25/10/2026 02:30']];
   await sendAll(page,rows.map(([iso],i)=>({id:uid(i+1),agent:'Grok',kind:'test_passed',task:'swap_race_review',step:'passed',at:Date.parse(iso)})));
   const times=page.locator('#private-terminal .entry time');await expect(times).toHaveCount(rows.length);
-  for(const [i,[iso,shown]] of rows.entries()){
+  for(const [i,[iso,shown]] of [...rows].reverse().entries()){ // the log is newest first
    const t=times.nth(i);const text=await t.textContent();
    expect(text).toMatch(STAMP);expect(text).toBe(shown);
    expect(await t.getAttribute('datetime')).toBe(new Date(iso).toISOString());
@@ -152,5 +152,50 @@ test('clock skew: t+60000 heartbeat live with the rest of the log; t+60001 row d
  await expect(page.locator('.agent',{has:page.locator('h2',{hasText:'Gemini'})}).locator('.agent-status')).toHaveText('CONNECTED');
  await sendAll(page,[{id:uid(7),agent:'Codex',kind:'heartbeat',task:'unknown_task',step:'running',at:now}]);
  await expect(page.getByRole('status')).toContainText('החיבור הופסק'); // schema violation still fails closed
+ expect(errors).toEqual([]);
+});
+
+const hb=(n,at,extra={})=>({id:uid(n),agent:['Codex','Grok','Claude','Gemini'][n%4],kind:'test_passed',task:'local_tests',step:'passed',at,...extra});
+test('log is newest first; keyed rows keep identity, focus and scroll; announces only new ids',async({page})=>{
+ await page.clock.install({time:new Date('2026-09-30T06:00:00Z')});
+ await page.setViewportSize({width:390,height:700});
+ const errors=await mount(page,{css:'private'});await login(page);
+ const now=await page.evaluate(()=>Date.now());
+ // 50 events (the cap) delivered OLDEST FIRST; the newest must render on top.
+ const first=Array.from({length:50},(_,i)=>hb(i+1,now-100000+i*1000));
+ await sendAll(page,first);
+ const entries=page.locator('#private-terminal .entry');await expect(entries).toHaveCount(50);
+ expect(await entries.first().getAttribute('data-id')).toBe(uid(50));
+ expect(await entries.last().getAttribute('data-id')).toBe(uid(1));
+ const at=await page.locator('#private-terminal .entry time').evaluateAll(ts=>ts.map(t=>Date.parse(t.dateTime)));
+ for(let i=1;i<at.length;i++)expect(at[i-1]).toBeGreaterThanOrEqual(at[i]);
+ await expect(page.locator('#private-events-live')).toHaveText(''); // no announcement on the initial load
+ // Scrolled down: mark an existing row, focus the log, then a newer event arrives and the oldest drops at the cap.
+ const log=page.locator('#private-terminal');
+ expect(await log.evaluate(n=>n.scrollHeight>n.clientHeight+200)).toBe(true);
+ await log.evaluate(n=>{n.scrollTop=300;n.focus();});
+ const anchorId=await log.evaluate(n=>{const box=n.getBoundingClientRect();const row=[...n.querySelectorAll('.entry')].find(r=>r.getBoundingClientRect().top>=box.top);row.__marker='kept';return row.dataset.id;});
+ const top0=await page.locator(`[data-id="${anchorId}"]`).evaluate(r=>r.getBoundingClientRect().top);
+ const scroll0=await log.evaluate(n=>n.scrollTop);
+ await sendAll(page,[...first.slice(1),hb(51,now-1000)]);
+ await expect(entries.first()).toHaveAttribute('data-id',uid(51));await expect(entries).toHaveCount(50);
+ await expect(page.locator(`[data-id="${uid(1)}"]`)).toHaveCount(0); // oldest dropped at the cap
+ expect(await page.locator(`[data-id="${anchorId}"]`).evaluate(r=>r.__marker)).toBe('kept'); // same DOM node (keyed)
+ const top1=await page.locator(`[data-id="${anchorId}"]`).evaluate(r=>r.getBoundingClientRect().top);
+ expect(Math.abs(top1-top0)).toBeLessThanOrEqual(1); // visible rows did not jump
+ expect(await log.evaluate(n=>n.scrollTop)).toBeGreaterThan(scroll0);
+ expect(await page.evaluate(()=>document.activeElement?.id)).toBe('private-terminal');
+ await expect(page.locator('#private-events-live')).toHaveText(/^אירוע חדש: /);
+ // The same batch again announces nothing new.
+ await page.evaluate(()=>{document.getElementById('private-events-live').textContent='';});
+ await sendAll(page,[...first.slice(1),hb(51,now-1000)]);
+ await page.waitForTimeout(100);await expect(page.locator('#private-events-live')).toHaveText('');
+ // At the top: the new row simply appears first and the position stays at 0.
+ await log.evaluate(n=>{n.scrollTop=0;});
+ await sendAll(page,[...first.slice(2),hb(51,now-1000),hb(52,now-500)]);
+ await expect(entries.first()).toHaveAttribute('data-id',uid(52));
+ expect(await log.evaluate(n=>n.scrollTop)).toBe(0);
+ await expect(page.locator('#private-events-live')).toHaveText(/^אירוע חדש: /);
+ for(const width of [320,375,390]){await page.setViewportSize({width,height:700});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
  expect(errors).toEqual([]);
 });

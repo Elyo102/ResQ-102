@@ -2,8 +2,9 @@
 process.env.TZ='UTC'; // The stamp must not depend on the host zone.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {formatStamp,taskLabel,TASK_TEXT,detailText,CI_LIVE_TEXT} from './web/private-view.mjs';
-import {createPrivateController,heartbeatLive,heartbeatAge,LIVE_ENTER_MS,LIVE_EXIT_MS,MAX_FUTURE_SKEW_MS,TELEMETRY_TASKS} from './web/private-controller.mjs';
+import {createPrivateController,compareNewestFirst,newestFirst,latestEvent,heartbeatLive,heartbeatAge,LIVE_ENTER_MS,LIVE_EXIT_MS,MAX_FUTURE_SKEW_MS,TELEMETRY_TASKS} from './web/private-controller.mjs';
 import {TASK_LABELS} from './core.mjs';
 
 const STAMP=/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/;
@@ -107,7 +108,7 @@ test('controller: t+1 and t+60000 accepted and CONNECTED; t+60001 row dropped wi
   ev(3,{agent:'Claude',kind:'task_completed',task:'planner_draft_recovery',step:'completed',at:t0-4000}),ev(4,{agent:'Gemini',at:t0-10000})]);
  const last=h.renders.at(-1);
  assert.equal(last.phase,'connected');assert.equal(last.clockSkew,true);
- assert.deepEqual(last.events.map(e=>e.id),[ev(4).id,ev(2).id,ev(3).id]); // only the far-future row dropped, sort unchanged
+ assert.deepEqual(last.events.map(e=>e.id),[ev(3).id,ev(2).id,ev(4).id]); // only the far-future row dropped; newest first
  assert.equal(h.status('Codex'),'DISCONNECTED');assert.equal(h.status('Gemini'),'CONNECTED');
  h.send([ev(2,{agent:'Grok',kind:'test_passed',task:'swap_race_review',step:'passed',at:t0-5000})]);
  assert.equal(h.renders.at(-1).clockSkew,false);
@@ -141,4 +142,60 @@ test('detail text: CI note only for a heartbeat-derived CONNECTED Codex card',()
 test('dashboard card list is unchanged: exactly the 4 agents, in order',()=>{
  const t0=at('2026-09-30T06:00:00Z');const h=harness(t0);h.send([ev(1,{at:t0-1000})]);
  for(const r of h.renders)assert.deepEqual(r.agents.map(a=>a.agent),['Codex','Grok','Claude','Gemini']);
+});
+
+test('newest first: numeric at descending, deterministic id tiebreak, non-finite at dropped, input untouched',()=>{
+ const id=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+ const rows=[{id:id(1),at:1000},{id:id(10),at:3000},{id:id(2),at:3000},{id:id(3),at:NaN},{id:id(4),at:Infinity},{id:id(5),at:2000},{id:id(6),at:undefined},{id:id(7),at:'x'}];
+ const frozen=Object.freeze([...rows]);
+ assert.deepEqual(newestFirst(frozen).map(e=>e.id),[id(10),id(2),id(5),id(1)]); // tie at 3000: larger UUID first
+ assert.deepEqual(newestFirst([...frozen].reverse()).map(e=>e.id),[id(10),id(2),id(5),id(1)]); // arrival order irrelevant
+ assert.equal(frozen[0].id,id(1)); // sorted on a copy
+ // Numeric, not string: 9_000 vs 10_000 would sort the other way as strings.
+ assert.deepEqual(newestFirst([{id:id(1),at:9000},{id:id(2),at:10000}]).map(e=>e.id),[id(2),id(1)]);
+ assert.ok(compareNewestFirst({id:id(1),at:5},{id:id(2),at:5})>0);assert.equal(compareNewestFirst({id:id(1),at:5},{id:id(1),at:5}),0);
+ assert.equal(latestEvent([{id:id(1),at:1},{id:id(3),at:NaN},{id:id(2),at:2}]).id,id(2));assert.equal(latestEvent([]),undefined);
+ const src=readFileSync(new URL('./web/private-controller.mjs',import.meta.url),'utf8');
+ assert.doesNotMatch(src,/localeCompare|\.at\(-1\)|\[0\]|length-1/);
+});
+test('controller: card state and log order are identical for ascending vs descending input; log is newest first',()=>{
+ const t0=at('2026-09-30T06:00:00Z');
+ const batch=[ev(1,{at:t0-80000}),ev(2,{at:t0-20000}),ev(3,{agent:'Grok',at:t0-10000}),ev(4,{agent:'Grok',kind:'task_started',step:'started',task:'git_change',at:t0+1500}),
+  ev(5,{agent:'Grok',kind:'task_completed',step:'completed',task:'git_change',at:t0+500}),ev(6,{agent:'Claude',at:t0-200000}),ev(7,{agent:'Codex',kind:'task_started',step:'started',at:t0+2000})];
+ const asc=harness(t0);asc.send([...batch].sort((a,b)=>a.at-b.at));
+ const desc=harness(t0);desc.send([...batch].sort((a,b)=>b.at-a.at));
+ const a=asc.renders.at(-1),d=desc.renders.at(-1);
+ assert.deepEqual(a.agents,d.agents);assert.deepEqual(a.events,d.events);
+ assert.deepEqual(a.agents.map(x=>x.status),['RUNNING','RUNNING','DISCONNECTED','DISCONNECTED']);
+ assert.deepEqual(a.events.map(e=>e.id),[7,4,5,3,2,1,6].map(n=>ev(n).id));
+ for(let i=1;i<a.events.length;i++)assert.ok(a.events[i-1].at>=a.events[i].at);
+});
+test('source query: orderBy(createdAt desc) before limit(50) keeps the newest of 60 events and shows it first',async()=>{
+ const {createFirebaseAdapter}=await import('./web/firebase-adapter.mjs');
+ const {firebaseConfig}=await import('./web/firebase-config.mjs');
+ const t0=at('2026-09-30T06:00:00Z'),id=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+ // 60 synthetic events stored OLDEST FIRST, so an ascending or limit-first query would miss the newest ones.
+ const stored=Array.from({length:60},(_,i)=>({id:id(i+1),data:{agent:'Codex',kind:'heartbeat',task:'local_tests',step:'running',createdAt:{toMillis:()=>t0-60000+i*1000}}}));
+ const constraints=[];let emit=null;
+ const user={uid:'synthetic-owner',emailVerified:true,providerData:[{providerId:'google.com'}]};
+ const auth={currentUser:user};
+ const sdk={initializeApp:()=>({}),getAuth:()=>auth,setPersistence:async()=>{},browserSessionPersistence:'session',memoryLocalCache:()=>({}),initializeFirestore:()=>({}),
+  doc:()=>({}),getDocFromServer:async()=>({exists:()=>false}),collection:(db,name)=>({name}),
+  orderBy:(field,dir='asc')=>({type:'orderBy',field,dir}),limit:n=>({type:'limit',n}),where:()=>{throw Error('NO_WHERE_EXPECTED');},
+  query:(col,...cs)=>{constraints.push(...cs);return {col,cs};},
+  onIdTokenChanged:(a,fn)=>{fn(user);return()=>{};},
+  onSnapshot:(q,opts,next)=>{emit=()=>{let docs=[...stored];
+    for(const c of q.cs){if(c.type==='orderBy'){const k=d=>d.data[c.field].toMillis();docs.sort((a,b)=>c.dir==='desc'?k(b)-k(a):k(a)-k(b));}if(c.type==='limit')docs=docs.slice(0,c.n);}
+    next({metadata:{fromCache:false,hasPendingWrites:false},docs:docs.map(d=>({id:d.id,data:()=>d.data}))});};return()=>{};}};
+ const adapter=await createFirebaseAdapter({sdk,config:firebaseConfig,googleOauth:{initTokenClient:()=>({requestAccessToken(){}})}});
+ await new Promise(resolve=>adapter.auth.onIdentity(u=>{if(u?.backendAuthorized)resolve();}));
+ const renders=[];
+ const c=createPrivateController({now:()=>t0,render:s=>renders.push(s),schedule:()=>1,cancel:()=>{},subscribe:h=>adapter.subscribe(h)});
+ c.setIdentity({uid:'synthetic-owner',backendAuthorized:true});emit();
+ assert.deepEqual(constraints.map(x=>x.type),['orderBy','limit']); // orderBy precedes limit
+ assert.deepEqual(constraints[0],{type:'orderBy',field:'createdAt',dir:'desc'});assert.deepEqual(constraints[1],{type:'limit',n:50});
+ const last=renders.at(-1);assert.equal(last.phase,'connected');assert.equal(last.events.length,50);
+ assert.equal(last.events[0].id,id(60)); // the newest of 60 is first
+ assert.equal(last.events.at(-1).id,id(11)); // the 10 oldest are outside the limit
+ c.dispose();
 });

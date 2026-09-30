@@ -61,5 +61,5 @@ test('dispatch web code: textContent only, no statuses invented, no GitHub/CI tr
   // Token-shaped strings only: the secret BLOCK list in dispatch-model.mjs names the prefixes on purpose.
   assert.doesNotMatch(t,/api\.github\.com|workflow_dispatch|repository_dispatch|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}/i,f);}
  for(const f of ['dispatch-model.mjs','dispatch-view.mjs'])assert.doesNotMatch(read('control-plane/web/'+f),/RUNNING|CONNECTED|IN_PROGRESS|COMPLETED/,f);
- const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch2']);
+ const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch3']);
 });

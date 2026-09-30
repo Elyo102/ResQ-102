@@ -1,7 +1,7 @@
 // Pure Agent Dispatch Center model: no DOM, no SDK, no network. Unit-tested in control-plane/dispatch-model.test.mjs.
 // A dispatch request is a REQUEST shown to the owner, never an authorization. The note is display-only text:
 // it never flows into a prompt, shell, branch or commit name, or a routing decision.
-import {formatDisplayStamp,formatSecondsStamp,displayParts,renderStamp} from './private-view.mjs?v=20260930-grok-dispatch2';
+import {formatDisplayStamp,formatSecondsStamp,displayParts,renderStamp} from './private-view.mjs?v=20260930-grok-dispatch3';
 export {formatDisplayStamp,formatSecondsStamp,displayParts,renderStamp};
 
 // Fixed map, mirrored byte-for-byte in the deployed Rules (dispatchTaskMap) and checked by dispatch-drift.test.mjs.
