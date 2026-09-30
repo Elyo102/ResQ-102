@@ -173,7 +173,7 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
       }
     },
     // Active tasks (control-plane/ACTIVE-TASKS.md). Owner list: orderBy(timestamp desc) + limit 20 (single-field index).
-    // Server-confirmed snapshots only (fromCache/hasPendingWrites ignored), so progress is never optimistic.
+    // Server-confirmed snapshots only (cached snapshots are reported as {fromCache:true}, never as data), so progress is never optimistic.
     activeTasks:{
       uid(){return authorized()?authorizedUid:null;},
       async authTime(){
@@ -188,7 +188,10 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
         const q=sdk.query(sdk.collection(db,'active_tasks'),sdk.orderBy('timestamp','desc'),sdk.limit(20));
         const stop=sdk.onSnapshot(q,{includeMetadataChanges:true},snapshot=>{
           if(stopped)return;if(!authorized()){error();return;}
-          if(snapshot.metadata.fromCache!==false||snapshot.metadata.hasPendingWrites!==false)return;
+          // Cached/offline snapshot: tell the view explicitly (it keeps the last server state, marked stale) instead of
+          // silently dropping it; never render cached data as current. Snapshots with only local pending writes are ignored.
+          if(snapshot.metadata.fromCache!==false){next(null,{fromCache:true});return;}
+          if(snapshot.metadata.hasPendingWrites!==false)return;
           let rows;try{rows=snapshot.docs.map(map);}catch{error();return;}next(rows);
         },()=>{if(!stopped)error();});
         return()=>{stopped=true;try{stop();}catch{}};
@@ -200,7 +203,10 @@ export async function createFirebaseAdapter({sdk, config, googleOauth}) {
         const q=sdk.query(sdk.collection(db,'task_listeners'),sdk.orderBy('seenAt','desc'),sdk.limit(3));
         const stop=sdk.onSnapshot(q,{includeMetadataChanges:true},snapshot=>{
           if(stopped)return;if(!authorized()){error();return;}
-          if(snapshot.metadata.fromCache!==false||snapshot.metadata.hasPendingWrites!==false)return;
+          // Cached/offline snapshot: tell the view explicitly (it keeps the last server state, marked stale) instead of
+          // silently dropping it; never render cached data as current. Snapshots with only local pending writes are ignored.
+          if(snapshot.metadata.fromCache!==false){next(null,{fromCache:true});return;}
+          if(snapshot.metadata.hasPendingWrites!==false)return;
           let seen;try{seen=mapListenerDocs(snapshot.docs.map(d=>({id:d.id,data:d.data()})));}catch{error();return;}
           next(seen);
         },()=>{if(!stopped)error();});

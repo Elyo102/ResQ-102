@@ -52,6 +52,8 @@ test('panel stays hidden until backend authorization, with no flash; hiding foll
 test('preview is the exact payload; any edit invalidates it; in-flight disables send; success only after server confirmation',async({page})=>{
  const errors=await mount(page);await authorize(page);
  const send=page.locator('#dispatch-send');await expect(send).toBeDisabled();
+ await expect(page.locator('#dispatch-note')).toHaveAttribute('dir','auto');   // mixed Hebrew/English: per-paragraph direction
+ expect(await page.locator('#dispatch-note').evaluate(e=>getComputedStyle(e).unicodeBidi)).toBe('plaintext');
  await fill(page,{gemini:'docs'});await page.locator('#dispatch-preview').click();
  const shown=JSON.parse(await page.locator('#dispatch-preview-json').textContent());await expect(send).toBeEnabled();
  await page.locator('#dispatch-note').fill('בדיקה שנייה');await expect(send).toBeDisabled();await expect(page.locator('#dispatch-preview-box')).toBeHidden();

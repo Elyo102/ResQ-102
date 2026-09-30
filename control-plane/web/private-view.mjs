@@ -138,9 +138,13 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
   function renderCards(agents){
     cards.replaceChildren();
     for(const a of agents){const card=node('article',null,'agent');const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
-      card.append(node('h2',a.agent),status,node('small',detailText(a)));
       let line=null;try{line=listenerStatus?.text(a.agent)??null;}catch{line=null;}
-      if(typeof line==='string'&&line){const p=node('p',line,'agent-listener');p.dataset.listener=listenerStatus.state?.(a.agent)??'';card.append(p);}
+      if(typeof line==='string'&&line){
+        // With a task-listener line present, the telemetry status is labelled as CI so the two are not confused.
+        const row=node('div',null,'agent-status-row');row.append(node('span','CI:','agent-source'),status);
+        const p=node('p',line,'agent-listener');p.dataset.listener=listenerStatus.state?.(a.agent)??'';
+        card.append(node('h2',a.agent),row,node('small',detailText(a)),p);
+      }else card.append(node('h2',a.agent),status,node('small',detailText(a)));
       cards.append(card);}
   }
   function render(next){

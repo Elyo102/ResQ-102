@@ -28,20 +28,24 @@ export const SEND_TIMEOUT_MS=12000;
 
 export const TEXT=Object.freeze({
   ignore:'לא נבחר',waiting:'ממתין למאזין',delivered:'נמסר — טרם התחיל',deliveryOff:'מסירה כבויה, המשימה נשמרה בלבד',
-  inProgress:'בביצוע',noPulse:'בביצוע — אין דופק מאז ',noPulseEver:'בביצוע — אין דופק מהמאזין',stuck:'לא ידוע / תקוע',
+  inProgress:'בביצוע',noPulse:'בביצוע — אין דופק מאז ',noPulseEver:'בביצוע — אין דופק מהמאזין',pulseUnknown:'בביצוע — מצב המאזין לא ידוע (אין חיבור)',stuck:'לא ידוע / תקוע',
   completed:'הושלם',failed:'נכשל',unknown:'מצב לא מוכר',quiet:'ללא עדכון מאז ',
   rejected:{invalid:'נדחה — משימה לא תקינה',secret:'נדחה — נראה שיש סוד',limit:'נדחה — יותר מדי משימות פתוחות',declined:'נדחה ע"י הסוכן'},
-  listenerNone:'אין מאזין',listenerDown:'מנותק',listenerUp:'מאזין',
-  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע (לפי דיווח הסוכן)',delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין'}
+  listenerNone:'אין מאזין',listenerDown:'מנותק',listenerUp:'מאזין',listenerUnknown:'לא ידוע (אין חיבור)',
+  overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע (לפי דיווח הסוכן)',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',stuck:'לא ידוע / תקוע',
+    delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין'}
 });
 
 // Payload: same allowlist and size as the dispatch note (LF, printable ASCII, Hebrew letters and points; <= 10000).
 // No silent fix: only CRLF/CR -> LF (what a textarea already reports). A tab or any other character is BLOCKED and
 // reported with its code point, line and column. Widening (״ ׳ U+05F3/U+05F4, curly quotes) was suggested by the UI
 // review but NOT approved by security, so the allowlist is unchanged.
-const PAYLOAD_CHAR=/^[\u{000A}\u{0020}-\u{007E}\u{05D0}-\u{05EA}\u{05B0}-\u{05C7}]$/u;
+export const PAYLOAD_CHAR=/^[\u{000A}\u{0020}-\u{007E}\u{05D0}-\u{05EA}\u{05B0}-\u{05C7}]$/u;
 const VISIBLE=/^[\p{L}\p{N}\p{P}\p{S}]$/u;
 export function normalizePayload(raw){return typeof raw==='string'?raw.replace(/\r\n?/g,'\n'):raw;}
+// Threshold announcements (separate polite region): null below 9000, then '9000', '9900', '10000', 'over'.
+export function payloadThreshold(raw){const n=payloadLength(raw);if(n>PAYLOAD_MAX)return 'over';if(n===PAYLOAD_MAX)return '10000';if(n>=9900)return '9900';if(n>=9000)return '9000';return null;}
+export function payloadThresholdText(level){return {'9000':'התוכן הגיע ל-9000 תווים מתוך 10000.','9900':'התוכן הגיע ל-9900 תווים מתוך 10000.','10000':'התוכן הגיע למגבלה של 10000 תווים.',over:'התוכן חורג מ-10000 תווים. השמירה חסומה עד לקיצור.'}[level]??'';}
 export function payloadLength(raw){return typeof raw==='string'?[...normalizePayload(raw)].length:0;}
 // [{cp:'U+2019',glyph:'’'|null,line,column}] — first `limit` findings, 1-based line and column in code points.
 export function blockedChars(raw,limit=5){
@@ -79,7 +83,8 @@ export function buildTask({taskId,uid,payload,targets}){
   return Object.freeze({taskId,dispatchedBy:uid,payload:normalizePayload(payload),
     targets:Object.freeze(Object.fromEntries(TARGET_KEYS.map(k=>[k,targets[k]]))),status:'PENDING',progress:Object.freeze({})});
 }
-export function previewDoc(task){return {taskId:task.taskId,dispatchedBy:task.dispatchedBy,targets:{...task.targets},status:task.status,timestamp:'ייקבע בשרת',progress:{},payloadLength:[...task.payload].length};}
+// Exactly the stored fields (payload shown separately as text); timestamp is filled by the server.
+export function previewDoc(task){return {taskId:task.taskId,dispatchedBy:task.dispatchedBy,targets:{...task.targets},status:task.status,timestamp:'ייקבע בשרת',progress:{}};}
 export function draftKey(payload,targets){return JSON.stringify([normalizePayload(payload),TARGET_KEYS.map(k=>targets?.[k]??'')]);}
 // Server snapshot of one of our own tasks (getDocFromServer after a failed or unconfirmed create).
 export function reconcileTask(task,found){
@@ -98,16 +103,18 @@ export function validTaskRow(r){
 }
 // Listener liveness from task_listeners/{key}.seenAt (ms): 'none' | 'down' | 'up'. Only a listener identity can write
 // that document (Rules); CI telemetry heartbeats never reach it.
-export function listenerState(seenAt,now){
+// known=false (listener stream failed or only a cached snapshot) -> 'unknown', never "אין מאזין".
+export function listenerState(seenAt,now,known=true){
+  if(!known)return 'unknown';
   if(!Number.isSafeInteger(seenAt))return 'none';
   if(seenAt-now>CLOCK_SKEW_MS)return 'down';
   return now-seenAt<=HEARTBEAT_FRESH_MS?'up':'down';
 }
-export function listenerText(seenAt,now){return {none:TEXT.listenerNone,down:TEXT.listenerDown,up:TEXT.listenerUp}[listenerState(seenAt,now)];}
+export function listenerText(seenAt,now,known=true){return {none:TEXT.listenerNone,down:TEXT.listenerDown,up:TEXT.listenerUp,unknown:TEXT.listenerUnknown}[listenerState(seenAt,now,known)];}
 const hhmm=ms=>{const s=formatDisplayStamp(ms);return s==='—'?'—':s.slice(11);};
 // One chip per target agent: {key, agent, kind, text, updatedAt|null, quiet:boolean}.
 // kind: ignore | waiting | delivered | delivery_off | rejected | in_progress | no_pulse | stuck | completed | failed | unknown
-export function chipFor(row,key,{now,seenAt}){
+export function chipFor(row,key,{now,seenAt,pulseKnown=true}){
   const agent=TARGET_AGENTS.find(([,k])=>k===key)[0];
   if(row.targets[key]!=='EXECUTE')return Object.freeze({key,agent,kind:'ignore',text:TEXT.ignore,updatedAt:null,quiet:false});
   const raw=row.progress[key];
@@ -123,16 +130,20 @@ export function chipFor(row,key,{now,seenAt}){
   if(raw.state==='FAILED')return Object.freeze({...base,kind:'failed',text:TEXT.failed,updatedAt:at});
   // IN_PROGRESS: reported by that agent's own listener identity. Stale -> unknown/stuck; no fresh heartbeat -> say so.
   if(now-at>STUCK_MS)return Object.freeze({...base,kind:'stuck',text:TEXT.stuck+' · '+TEXT.quiet+hhmm(at),updatedAt:at,quiet:true});
+  if(!pulseKnown)return Object.freeze({...base,kind:'no_pulse',text:TEXT.pulseUnknown,updatedAt:at});
   const live=listenerState(seenAt,now);
   if(live!=='up')return Object.freeze({...base,kind:'no_pulse',text:Number.isSafeInteger(seenAt)?TEXT.noPulse+hhmm(seenAt):TEXT.noPulseEver,updatedAt:at});
   return Object.freeze({...base,kind:'in_progress',text:TEXT.inProgress,updatedAt:at});
 }
-// Derived overall status (never stored). 'בביצוע' only if some agent itself reported IN_PROGRESS.
+// Derived overall status (never stored). 'בביצוע' only if some agent itself reported IN_PROGRESS AND its listener
+// heartbeat is fresh; a report without a pulse (no_pulse) or a stale one (stuck) gets its own "unknown" kind.
 export function overallStatus(row,chips){
   if(row.status==='CANCELLED')return {kind:'CANCELLED',text:TEXT.overall.CANCELLED};
   const active=chips.filter(c=>c.kind!=='ignore');
   if(active.length&&active.every(c=>['completed','failed','rejected'].includes(c.kind)))return {kind:'done',text:TEXT.overall.done};
-  if(active.some(c=>['in_progress','no_pulse','stuck'].includes(c.kind)))return {kind:'running',text:TEXT.overall.running};
+  if(active.some(c=>c.kind==='in_progress'))return {kind:'running',text:TEXT.overall.running};
+  if(active.some(c=>c.kind==='no_pulse'))return {kind:'no_pulse',text:TEXT.overall.no_pulse};
+  if(active.some(c=>c.kind==='stuck'))return {kind:'stuck',text:TEXT.overall.stuck};
   if(active.some(c=>c.kind==='delivered'))return {kind:'delivered',text:TEXT.overall.delivered};
   if(active.some(c=>c.kind==='delivery_off'))return {kind:'saved',text:TEXT.overall.saved};
   return {kind:'waiting',text:TEXT.overall.waiting};

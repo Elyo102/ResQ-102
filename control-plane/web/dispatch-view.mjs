@@ -43,7 +43,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     for(const type of DISPATCH_TASKS[agent]){const o=node('option',taskTypeText(type));o.value=type;select.append(o);}
     selects[agent]=select;wrap.append(label,select);fields.append(wrap);
   }
-  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=12;noteLabel.htmlFor=note.id;note.setAttribute('spellcheck','false');
+  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=12;note.dir='auto';noteLabel.htmlFor=note.id;note.setAttribute('spellcheck','false');
   // Visible counter updates on every input (no live region); a SEPARATE polite region announces threshold crossings only.
   const counter=node('p','','dispatch-counter');counter.id='dispatch-counter';note.setAttribute('aria-describedby','dispatch-counter dispatch-error dispatch-note-banner');
   const limitLive=node('p','','dispatch-limit-live');limitLive.id='dispatch-limit-live';limitLive.setAttribute('aria-live','polite');limitLive.setAttribute('role','status');
