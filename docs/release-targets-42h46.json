@@ -124,6 +124,20 @@
     "getAttendanceCourseMonth",
     "getAttendanceOrderContext"
   ],
+  "new_service_invoker": {
+    "project": "station-102",
+    "region": "europe-west1",
+    "services": [
+      "projects/station-102/locations/europe-west1/services/getattendancecoursemonth",
+      "projects/station-102/locations/europe-west1/services/getattendanceordercontext"
+    ],
+    "role": "roles/run.invoker",
+    "member": "allUsers",
+    "allow_project_iam": false,
+    "allow_service_account_iam": false,
+    "allow_existing_service_iam": false,
+    "retain_on_admission_rollback": true
+  },
   "activation_targets": [
     "mutateMyAttendanceDay",
     "mutateMyAttendanceMonth",
