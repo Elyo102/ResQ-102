@@ -1,0 +1,62 @@
+name: Reserve schedule isolated diagnostic
+on:
+  push:
+    branches: [codex/reserve-schedule-diagnostic]
+permissions:
+  contents: read
+jobs:
+  schedule:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test dependencies
+        working-directory: tests
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm ci --no-audit --no-fund
+      - name: Actual schedule fixture only
+        working-directory: tests
+        env:
+          GCLOUD_PROJECT: demo-resq
+          GOOGLE_CLOUD_PROJECT: demo-resq
+          FIREBASE_CONFIG: '{"projectId":"demo-resq"}'
+          METADATA_SERVER_DETECTION: none
+          npm_config_script_shell: /bin/sh
+        run: |
+          evidence=$(mktemp -d)
+          echo "RESQ_DIAGNOSTIC_EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          export RESQ_CONTAINMENT_DIR="$evidence"
+          export NODE_OPTIONS="--require $PWD/lib/network-guard.cjs"
+          node schedule-management-browser.mjs
+      - name: Bounded category diagnostics
+        if: always()
+        working-directory: tests
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const directory=process.env.RESQ_DIAGNOSTIC_EVIDENCE;
+          if(!directory){console.log('diagnostic-not-started');process.exit(0);}
+          const file=path.join(directory,'violations.log');
+          if(!fs.existsSync(file)){console.log('no-ledger-violations');process.exit(0);}
+          const known=new Set(['browser-proxy-invalid-drain-timeout','browser-proxy-http-drain-timeout','browser-proxy-upstream-timeout','browser-proxy-unexpected-upstream-reset','browser-proxy-denied-destination','browser-proxy-malformed-request','browser-launch-override-denied','browser-context-proxy-override-denied','browser-uncontained-entrypoint-denied','unregistered-or-nonloopback-socket','unapproved-child-executable','external-dns']);
+          const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(16384);
+          let count;try{count=fs.readSync(fd,buffer,0,buffer.length,0);}finally{fs.closeSync(fd);}
+          const lines=buffer.subarray(0,count).toString('utf8').split('\n');lines.pop();
+          const categories=new Set();
+          for(const line of lines.slice(0,32)){
+            try{const reason=JSON.parse(line).reason;const token=typeof reason==='string'?reason.split(' ')[0]:'';categories.add(reason==='Unexpected browser request'?'unexpected-browser-request':known.has(token)?token:'unknown');}
+            catch{categories.add('unknown');}
+          }
+          console.log(JSON.stringify({categories:[...categories],truncated:count===buffer.length||lines.length>32}));
+          process.exitCode=1;
+          NODE

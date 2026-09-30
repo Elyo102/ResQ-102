@@ -96,7 +96,7 @@
       "launch": 0,
       "context": 0,
       "server": 0,
-      "child": 1
+      "child": 2
     },
     {
       "file": "tests/containment-negative.test.mjs",

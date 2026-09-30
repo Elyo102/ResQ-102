@@ -38,7 +38,19 @@ if (violations) {
   const known = new Set(['implicit-child-shell', 'unapproved-child-executable',
     'unapproved-posix-shell-command', 'unapproved-shell-command', 'child-stripped-containment',
     'external-dns', 'external-dns-query', 'external-resolver-query', 'socket-path-not-authorized',
-    'git-command-not-readonly', 'browser-without-containment-proxy', 'unapproved-shell-exec']);
+    'git-command-not-readonly', 'browser-without-containment-proxy', 'unapproved-shell-exec',
+    'invalid-loopback-registration', 'unregistered-or-nonloopback-socket', 'udp-send', 'udp-connect',
+    'non-tcp-listener', 'nonloopback-listener', 'nonloopback-listener-address',
+    'unsafe-owned-emulator-environment', 'unsafe-emulator-environment', 'owned-diagnostic-integration',
+    'fork-executable-override', 'owned-launcher-entry', 'owned-probe-pin', 'owned-stale-capability',
+    'owned-nested-permit', 'owned-probe-target', 'owned-probe-failed', 'owned-creation-outside-spawn',
+    'owned-probe-child-exited', 'owned-spawn-repeated', 'owned-stop-no-live-identity',
+    'owned-force-repeated', 'owned-force-failed', 'owned-readiness-without-owner', 'owned-activation-precondition',
+    'browser-proxy-invalid-drain-timeout', 'browser-proxy-http-drain-timeout',
+    'browser-proxy-upstream-timeout', 'browser-proxy-unexpected-upstream-reset',
+    'browser-proxy-denied-destination', 'browser-proxy-malformed-request',
+    'browser-launch-override-denied', 'browser-context-proxy-override-denied',
+    'browser-uncontained-entrypoint-denied', 'unexpected-browser-request']);
   let fd;
   try {
     fd = fs.openSync(poison, 'r');
@@ -50,7 +62,8 @@ if (violations) {
     for (const line of lines.slice(0, 32)) {
       try {
         const reason = JSON.parse(line).reason;
-        const token = typeof reason === 'string' ? reason.split(' ')[0] : '';
+        const token = reason === 'Unexpected browser request' ? 'unexpected-browser-request'
+          : typeof reason === 'string' ? reason.split(' ')[0] : '';
         categories.add(known.has(token) ? token : 'unknown');
       } catch { categories.add('unknown'); }
     }
