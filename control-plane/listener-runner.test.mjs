@@ -648,3 +648,10 @@ test('static guard (ACL hardening): no auto-restart/repair in the runner; store 
   const ps=readSrc(new URL('./listener/win-protect.mjs',import.meta.url));
   assert.equal((ps.match(/spawnSync\(|spawn\(/g)||[]).length,1,'still exactly one process start');
 });
+test('static guard (t192u): acl-watch.ps1 is read-only, ASCII, and accepts an inheriting file only under a locked parent',()=>{
+  const ps=readSrc(new URL('./listener/acl-watch.ps1',import.meta.url));
+  assert.doesNotMatch(ps.replace(/^\s*#.*$/gm,''),/Set-Acl|SetAccessRule|AddAccessRule|RemoveAccessRule|icacls[^\n]*\/(grant|remove|reset|inheritance|setowner|deny)|takeown|Remove-Item|Register-ScheduledTask|schtasks|New-Item|Set-Content|Out-File/i,'read-only');
+  assert.ok(/^[\x00-\x7F]*$/.test(ps),'ASCII only (Windows PowerShell 5.1 reads BOM-less scripts as ANSI)');
+  assert.match(ps,/\$parentProblems = Check-Item \$parent \$true/,'file inheritance is judged by the parent folder rule');
+  assert.match(ps,/exit 3/);assert.match(ps,/exit 2/);assert.match(ps,/exit 0/);
+});

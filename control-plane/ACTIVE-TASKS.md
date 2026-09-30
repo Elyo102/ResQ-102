@@ -194,7 +194,9 @@ so the allowlist is unchanged; the UI names each blocked character with its line
 - **UI (MUST_NOT):** no new heartbeat fields; the card never infers a cause. A stopped listener simply stops writing, so the
   card shows "מנותק" by age alone: detection window ≈ 60 s (tick) + 165 s (`HEARTBEAT_FRESH_MS`) ≈ 4 min (UI 4).
   Playwright "ACL UI 5 FRESH+1" pins the boundary (fresh at +165000 ms, "מנותק" at +165001 ms, server time via liveOffset).
-- **Watch (B):** run `acl-watch.ps1 -Path %LOCALAPPDATA%\resq-listeners` every 12 h and after every Codex update/reinstall.
+- **Watch (B):** run `powershell -NoProfile -File control-plane\listener\acl-watch.ps1 -Path %LOCALAPPDATA%\resq-listeners`
+  every 12 h and after every Codex update/reinstall (read-only; exit 0 clean, 2 violation, 3 missing). A file that inherits only
+  the account from the locked folder is OK; a file under a parent with inheritance ON is a violation (fixed false positive).
 - **Residual risk (documented, accepted by the security review):** Codex commands that run OUTSIDE the sandbox or escalated
   run as User and can decrypt the DPAPI credential regardless of any ACL. The ACL only protects against sandboxed reads.
 - **Migration (owner approval required for each step, D):** `provision-listener.mjs --project resq-agent-control-20260928

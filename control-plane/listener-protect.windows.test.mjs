@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {createWindowsProtector} from './listener/win-protect.mjs';
 import {createCredentialStore} from './listener/credential-store.mjs';
 
@@ -62,6 +63,19 @@ test('Windows listener credential: DPAPI CurrentUser round trip, ACL lock-down, 
       assert.equal(store.inboxFinding([inbox]),null);
       icacls([inbox,'/grant','*S-1-5-32-545:(OI)(CI)(M)']);
       const f=store.inboxFinding([inbox]);assert.equal(f.code,'INBOX_ACL_WRITABLE');assert.equal(f.sid,'S-1-5-32-545');assert.equal(f.path,inbox);
+    });
+    await t.test('acl-watch.ps1 (read-only): locked folder 0; a file inheriting from the locked folder 0; extra principal on the file 2; file under an unlocked parent 2; missing 3',()=>{
+      const store=createCredentialStore({home:top,accountHome:top,protector:p});
+      const script=new URL('./listener/acl-watch.ps1',import.meta.url);
+      const watch=path=>{try{execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',fileURLToPath(script),'-Path',path],{stdio:'ignore',windowsHide:true});return 0;}catch(e){return e.status;}};
+      const file=store.paths('Codex').credential;
+      assert.equal(watch(store.dir),0);
+      assert.equal(watch(file),0,'a file that inherits only the account from the locked folder is OK (t192u false positive fixed)');
+      icacls([file,'/grant','*S-1-1-0:(R)']);assert.equal(watch(file),2);assert.equal(watch(store.dir),2);
+      icacls([file,'/remove:g','*S-1-1-0']);assert.equal(watch(file),0);
+      const loose=join(top,'loose');fs.mkdirSync(loose);const lf=join(loose,'x.txt');fs.writeFileSync(lf,'x');
+      assert.equal(watch(lf),2,'inheriting from a parent with inheritance ON is not OK');
+      assert.equal(watch(join(top,'nope-'+randomUUID())),3);
     });
   }finally{
     try{icacls([top,'/reset','/T','/Q']);}catch{}
