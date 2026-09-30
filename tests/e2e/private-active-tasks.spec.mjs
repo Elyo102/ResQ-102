@@ -71,7 +71,7 @@ test('DELIVERED is never shown as בביצוע; delivery-off text; IGNORE chip; 
  await expect(chip(page,1,'gemini')).toContainText('לא נבחר');await expect(page.locator('.active-chip')).toHaveCount(3);
  // status/chips never say בביצוע; only the owner's manual button (C10) carries that word, as an action
  await expect(page.locator('.active-chips')).not.toContainText('בביצוע');await expect(page.locator('.active-status')).not.toContainText('בביצוע');
- await expect(page.locator('.active-owner-btn')).toHaveText(['Grok: בביצוע']);
+ await expect(page.locator('.active-owner-btn')).toHaveText(['סמן: Grok בביצוע']);
  await expect(page.locator('.active-row .active-status')).toHaveText('סטטוס: נמסר — טרם התחיל');
  await expect(chip(page,1,'grok').locator('bdi > time[datetime]')).toHaveCount(1);expect(errors).toEqual([]);
 });
@@ -298,7 +298,7 @@ test('cancel hidden when every selected agent finished; cancel failure texts (de
 // ---------------- push trigger: UI review C12 (review/push-trigger-verdicts.md) ----------------
 const ackEl=(page,n,agent)=>rowEl(page,n).locator(`.active-ack[data-agent="${agent}"]`);
 const onSwitch=page=>page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-1000}));
-test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the bdi + visible frame + label + quote + go; card line on the target card only, linked to the row',async({page})=>{
+test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the bdi + ONE visible frame line next to the quote + go; card line on the target card only, linked to the row',async({page})=>{
  const errors=await mount(page);await authorize(page);await events(page);await onSwitch(page);
  const summary='אבדוק את הבדיקות ואחזור עם תוצאה';
  await page.evaluate(summary=>{hbNext({grok:Date.now(),codex:Date.now()},{meta:{grok:{ack:'on',mode:'push'},codex:{ack:'on',mode:'push'}}});
@@ -307,7 +307,8 @@ test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the
    row(3,{acks:{grok:A('UNREADABLE')}}),row(4,{targets:{grok:'IGNORE',codex:'EXECUTE',gemini:'IGNORE'},acks:{}})]);},summary);
  const u=ackEl(page,1,'grok');await expect(u).toHaveAttribute('data-kind','understood');
  await expect(u.locator('.active-ack-state')).toHaveText('הבנתי:');
- await expect(u.locator('.active-ack-label')).toHaveText('סיכום אוטומטי, אינו אישור');await expect(u.locator('.active-ack-label')).toBeVisible();
+ await expect(u.locator('.active-ack-label')).toHaveCount(0);                                     // UI 25572dc condition 5: the pill is gone, ONE frame line
+ expect(await u.locator('.active-ack-frame').evaluate(e=>e.nextElementSibling?.matches('blockquote.active-ack-summary'))).toBe(true);
  await expect(u.locator('.active-ack-frame')).toHaveText('סיכום אוטומטי של Grok — אינו אישור ואינו התחלת עבודה');await expect(u.locator('.active-ack-frame')).toBeVisible();
  await expect(u.locator('blockquote.active-ack-summary > div.clamp > bdi[dir="rtl"]')).toHaveText(summary);
  await expect(u.locator('bdi')).not.toContainText('הבנתי');
@@ -324,7 +325,12 @@ test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the
  await expect(card(page,'Gemini').locator('.agent-ack')).toHaveCount(0);await expect(card(page,'Claude').locator('.agent-ack')).toHaveCount(0);
  await expect(card(page,'Grok').locator('.agent-ack a')).toHaveAttribute('href','#active-row-'+rid(3));
  await expect(page.locator('.agent .active-ack-summary, .agent .active-chip')).toHaveCount(0);   // chips and summary live in the feed only
- await card(page,'Grok').locator('.agent-ack a').click();await expect(rowEl(page,3)).toBeFocused();expect(errors).toEqual([]);
+ await card(page,'Grok').locator('.agent-ack a').click();await expect(rowEl(page,3)).toBeFocused();
+ // condition 5: the card frames an understood ack as automatic; minor: a newer CANCELLED row is skipped by the card line
+ await page.evaluate(summary=>{const A=(state,s='')=>({state,summary:s,updatedAt:Date.now()-1000});
+  feedNext([row(1,{acks:{grok:A('UNDERSTOOD',summary)}}),row(9,{status:'CANCELLED',acks:{grok:A('UNREADABLE')}})]);},summary);
+ await expect(card(page,'Grok').locator('.agent-ack')).toHaveText(/^אחרון: הבנתי \(אוטומטי\) · משימה \d\d:\d\d$/);
+ await expect(card(page,'Grok').locator('.agent-ack a')).toHaveAttribute('href','#active-row-'+rid(1));expect(errors).toEqual([]);
 });
 test('C12 kill switch: missing doc -> blocked + seed (off only); off banner "מאז HH:mm" from server updatedAt; re-enable confirm; success only after the server; timeout -> לא אושר; stale auth -> re-auth',async({page})=>{
  const errors=await mount(page);await authorize(page);
@@ -367,6 +373,7 @@ test('C12 clock skew: "no answer" is computed from SERVER time (offset), never t
  await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק — קורא');
  await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');
  await page.evaluate(()=>hbNext({grok:S+100000},{meta:{grok:{ack:'on',mode:'push'}}}));   // server time advanced 100 s
+ await events(page);await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מאזין');   // UI 25572dc condition 3: liveness on server time (fresh heartbeat)
  await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');
  await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');   // 110 s < 180 s
  await page.evaluate(()=>hbNext({grok:S+185000},{meta:{grok:{}}}));
@@ -378,7 +385,10 @@ test('C12 clock skew: "no answer" is computed from SERVER time (offset), never t
  // client clock 1 h BEHIND the server: a client-clock computation would never say "no answer"
  await page.evaluate(()=>setIdentity(null));await authorize(page);
  await page.evaluate(H=>{const S=Date.now()+H;swNext({state:'on',updatedAt:S-60000});feedNext([row(1,{timestamp:S,acks:{grok:{state:'LIT',summary:'',updatedAt:S+1000}}})]);hbNext({grok:S+96000});},H);
- await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');expect(errors).toEqual([]);
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');
+ await page.evaluate(H=>hbNext({grok:Date.now()+H+97000}),H);                                   // the next heartbeat arrives (a fresh server stamp)
+ await events(page);await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מאזין');   // a client-clock check would say מנותק
+ await expect(chip(page,1,'grok').locator('.active-chip-text')).not.toContainText('אין דופק');expect(errors).toEqual([]);
 });
 test('C12 cache/stale feed: ack marked "לא עדכני" and "no answer" is never computed; card line stale too',async({page})=>{
  const errors=await mount(page);await authorize(page);await events(page);await onSwitch(page);
@@ -480,7 +490,7 @@ test('C12 owner buttons: shown only when the transition is allowed; double-click
  const errors=await mount(page);await authorize(page);await onSwitch(page);
  await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1,{progress:{grok:entry('READY','delivered')}}),row(2,{progress:{grok:entry('READY','delivery_off')}}),
   row(3,{dispatchedBy:'someone-else',progress:{grok:entry('READY','delivered')}}),row(4,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'}}),row(5,{progress:{grok:entry('COMPLETED','completed')}})]);});
- await expect(page.locator('.active-owner-btn')).toHaveCount(1);const start=page.locator(`#active-start-${rid(1)}-grok`);await expect(start).toHaveText('Grok: בביצוע');
+ await expect(page.locator('.active-owner-btn')).toHaveCount(1);const start=page.locator(`#active-start-${rid(1)}-grok`);await expect(start).toHaveText('סמן: Grok בביצוע');
  await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('נמסר — טרם התחיל');
  await page.evaluate(()=>{window.progressImpl=()=>new Promise(()=>{});});
  await page.evaluate(id=>{const b=document.getElementById(id);b.click();b.click();b.click();},`active-start-${rid(1)}-grok`);
@@ -493,8 +503,68 @@ test('C12 owner buttons: shown only when the transition is allowed; double-click
  await start.click();await expect(page.locator('#active-result')).toHaveText('הסימון אושר על ידי השרת.');
  await page.evaluate(()=>feedNext([row(1,{progress:{grok:entry('IN_PROGRESS','started')}})]));
  await expect(chip(page,1,'grok').locator('.active-chip-text')).toHaveText('בביצוע');
- await expect(page.locator(`#active-start-${rid(1)}-grok`)).toHaveCount(0);const done=page.locator(`#active-complete-${rid(1)}-grok`);await expect(done).toHaveText('Grok: הסתיים');
- await done.click();await expect(page.locator('#active-result')).toHaveText('הסימון אושר על ידי השרת.');
+ await expect(page.locator(`#active-start-${rid(1)}-grok`)).toHaveCount(0);const done=page.locator(`#active-complete-${rid(1)}-grok`);await expect(done).toHaveText('סמן: Grok הסתיים');
+ // UI 25572dc minor: הסתיים cannot be undone -> confirm first; "לא" writes nothing and returns focus
+ await done.click();await expect(rowEl(page,1).locator('.active-owner-confirm')).toHaveText('לסמן ש-Grok הסתיים? לא ניתן לבטל את הסימון.');
+ await expect(page.locator(`#active-complete-yes-${rid(1)}-grok`)).toBeFocused();expect(await page.evaluate(()=>progressWrites.length)).toBe(3);
+ await page.locator(`#active-complete-no-${rid(1)}-grok`).click();await expect(done).toBeFocused();expect(await page.evaluate(()=>progressWrites.length)).toBe(3);
+ await page.evaluate(()=>{window.progressImpl=()=>new Promise(r=>setTimeout(r,300));});
+ await done.click();await page.locator(`#active-complete-yes-${rid(1)}-grok`).click();await expect(rowEl(page,1)).toBeFocused();   // focus on the row while pending
+ await expect(page.locator('#active-result')).toHaveText('הסימון אושר על ידי השרת.');
  await page.evaluate(()=>feedNext([row(1,{progress:{grok:entry('COMPLETED','completed')}})]));await expect(page.locator('.active-owner-btn')).toHaveCount(0);
  expect(await page.evaluate(()=>progressWrites.map(w=>w[2]))).toEqual(['IN_PROGRESS','IN_PROGRESS','IN_PROGRESS','COMPLETED']);expect(errors).toEqual([]);
+});
+
+// ---------------- UI review of 25572dc: conditions 1-4 (review/push-trigger/ui-verdict-25572dc.md) ----------------
+test('25572dc-1 switch stream error: "עצירה" stays available (enabled:false as an update, no fresh sign-in), reconnect restarts the switch stream',async({page})=>{
+ const errors=await mount(page);await authorize(page);await onSwitch(page);
+ await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1)]);});
+ await expect(page.locator('#active-reconnect')).toBeHidden();expect(await page.evaluate(()=>swStarts)).toBe(1);
+ await page.evaluate(()=>swError());
+ await expect(page.locator('#active-ack-switch-text')).toHaveText('מצב אישורי הקבלה לא ידוע (אין חיבור)');await expect(page.locator('#active-ack-switch')).toHaveAttribute('data-state','unknown');
+ await expect(page.locator('#active-ack-stop')).toBeVisible();await expect(page.locator('#active-ack-stop')).toBeEnabled();
+ for(const id of ['#active-ack-enable','#active-ack-seed'])await expect(page.locator(id)).toBeHidden();
+ await expect(page.locator('#active-reconnect')).toBeVisible();
+ await page.evaluate(()=>{window.authImpl=async()=>Date.now()-20*60000;});                    // stale sign-in does NOT block stopping
+ await page.locator('#active-ack-stop').click();await expect(page.locator('#active-ack-switch-result')).toHaveText('השינוי אושר על ידי השרת.');
+ expect(await page.evaluate(()=>switchWrites)).toEqual([{enabled:false,exists:true}]);
+ await page.evaluate(()=>{window.switchImpl=()=>Promise.reject(Object.assign(Error('nf'),{code:'not-found'}));});
+ await page.locator('#active-ack-stop').click();await expect(page.locator('#active-ack-switch-result')).toHaveText('המתג לא קיים בשרת — אישורי קבלה חסומים ממילא. אין צורך בעצירה.');
+ await page.locator('#active-reconnect').click();expect(await page.evaluate(()=>swStarts)).toBe(2);
+ await expect(page.locator('#active-reconnect')).toBeHidden();                                  // stream running again (no snapshot yet)
+ await page.evaluate(()=>swNext({state:'off',updatedAt:Date.now()-1000}));
+ await expect(page.locator('#active-ack-switch-text')).toHaveText(/^אישורי קבלה כבויים מאז \d\d:\d\d$/);await expect(page.locator('#active-ack-stop')).toBeHidden();
+ await expect(page.locator('#active-ack-enable')).toBeVisible();expect(errors).toEqual([]);
+});
+test('25572dc-2 LIT with the switch off shows "נעצר — אישורי קבלה כבויים", never "נדלק, אין תשובה"',async({page})=>{
+ const errors=await mount(page);await authorize(page);
+ await page.evaluate(()=>{swNext({state:'off',updatedAt:Date.now()-600000});hbNext({grok:Date.now()},{meta:{grok:{ack:'on',mode:'push'}}});
+  feedNext([row(1,{acks:{grok:{state:'LIT',summary:'',updatedAt:Date.now()-300000}}})]);});
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נעצר — אישורי קבלה כבויים');
+ await expect(page.locator('#active-tasks-panel')).not.toContainText('אין תשובה');
+ await page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-1000}));
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');expect(errors).toEqual([]);
+});
+test('25572dc-3 card liveness and the kind defaults follow SERVER time: client clock 1 h ahead still shows "מאזין" and MESSAGE defaults to NOTIFY; old stamps never make a dead listener look alive',async({page})=>{
+ const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);
+ const H=3600000;
+ // a DEAD listener whose last heartbeat is 1 h old, with only old stamps on screen: must stay "מנותק" (no stale-offset bias)
+ await page.evaluate(H=>{const T=Date.now();swNext({state:'on',updatedAt:T-2*H});hbNext({grok:T-H});feedNext([row(1,{timestamp:T-2*H})]);},H);
+ await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מנותק');
+ await page.evaluate(()=>setIdentity(null));await authorize(page);await events(page);
+ // client clock 1 h AHEAD: the first snapshot is old by the client clock; the next heartbeat (a fresh server stamp) fixes the offset
+ await page.evaluate(H=>{const S=Date.now()-H;window.S=S;swNext({state:'on',updatedAt:S-1000});hbNext({grok:S-5000});feedNext([row(1,{timestamp:S-10000})]);},H);
+ await page.evaluate(()=>hbNext({grok:S+1000}));
+ await expect(card(page,'Grok').locator('.agent-listener')).toHaveText('משימות: מאזין');
+ await expect(card(page,'Grok').locator('.agent-listener')).toHaveAttribute('data-listener','up');
+ await page.locator('#active-kind').selectOption('MESSAGE');await expect(page.locator('#active-target-grok')).toHaveValue('NOTIFY');
+ await expect(page.locator('#active-target-codex')).toHaveValue('IGNORE');expect(errors).toEqual([]);
+});
+test('25572dc-4 clamp re-measured on resize: wide -> no expand button; narrower viewport -> the button appears (and back)',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});const errors=await mount(page);await authorize(page);await onSwitch(page);
+ let summary='';while([...summary].length<200)summary+='אבדוק את הבדיקות ';summary=[...summary].slice(0,200).join('');
+ await page.evaluate(summary=>{hbNext({grok:Date.now()});feedNext([row(1,{acks:{grok:{state:'UNDERSTOOD',summary,updatedAt:Date.now()-1000}}})]);},summary);
+ const btn=page.locator(`#active-ack-more-${rid(1)}-grok`);await expect(page.locator(`#active-ack-sum-${rid(1)}-grok`)).toBeVisible();await expect(btn).toBeHidden();
+ await page.setViewportSize({width:320,height:740});await expect(btn).toBeVisible();
+ await page.setViewportSize({width:1280,height:800});await expect(btn).toBeHidden();expect(errors).toEqual([]);
 });

@@ -11,6 +11,8 @@
 //   folder, same ACL check, fail closed. One host per agent: Grok -> api.x.ai, Codex -> api.openai.com (fixed map).
 //   The key is entered via hidden stdin by provision-listener.mjs (never argv) and is never returned by status().
 // - <key>.acks.json {v:1, ids:[uuid...]}: the ack ledger, UUIDs only (no content), capped, same folder/ACL check.
+// - <key>.stream.json {v:1, restartsLastHour, restartsLastDay, at}: stream restart counts only (condition 3 of the
+//   25572dc code review), written by the runner on each status tick, read by provision-listener --status.
 // - <key>.config.json may carry ack:boolean (default false). Older configs without it stay valid.
 import * as nodeFs from 'node:fs';
 import {join,dirname,parse,resolve,sep} from 'node:path';
@@ -29,7 +31,7 @@ const UUID_V4=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{
 const keyOf=agent=>{if(!Object.hasOwn(LISTENER_AGENTS,agent))fail('AGENT_REJECTED');return LISTENER_AGENTS[agent];};
 export function listenerPaths(home,agent){
   const key=keyOf(agent);const dir=join(home,DIR_NAME);
-  return Object.freeze({dir,credential:join(dir,key+'.credential.json'),config:join(dir,key+'.config.json'),llm:join(dir,key+'.llm.json'),acks:join(dir,key+'.acks.json')});
+  return Object.freeze({dir,credential:join(dir,key+'.credential.json'),config:join(dir,key+'.config.json'),llm:join(dir,key+'.llm.json'),acks:join(dir,key+'.acks.json'),stream:join(dir,key+'.stream.json')});
 }
 // protector: {protect(Buffer)->Buffer, unprotect(Buffer)->Buffer, checkAcl(path,{directory})->void|throws, lockDown(dir)->void}
 export function createCredentialStore({home,fs=nodeFs,protector}){
@@ -140,6 +142,19 @@ export function createCredentialStore({home,fs=nodeFs,protector}){
       if(!Array.isArray(ids)||!ids.every(x=>typeof x==='string'&&UUID_V4.test(x)))fail('LEDGER_SHAPE');
       const kept=[...new Set(ids)].slice(-LEDGER_MAX);
       return {path:p.acks,sha256:writeFile(p.acks,JSON.stringify({v:1,ids:kept})+'\n')};
+    },
+    // Stream restart counts (numbers only; no content, no token). Missing file -> null.
+    readStreamStats(agent){
+      const p=listenerPaths(home,agent);
+      try{fs.lstatSync(p.stream);}catch(e){if(e?.code==='ENOENT'){checkDir();return null;}throw e;}
+      const d=readJson(p.stream,4096);const n=v=>Number.isSafeInteger(v)&&v>=0;
+      if(!d||typeof d!=='object'||Object.keys(d).length!==4||d.v!==1||!n(d.restartsLastHour)||!n(d.restartsLastDay)||!n(d.at))fail('STREAM_STATS_SHAPE');
+      return Object.freeze({restartsLastHour:d.restartsLastHour,restartsLastDay:d.restartsLastDay,at:d.at});
+    },
+    writeStreamStats(agent,{restartsLastHour,restartsLastDay,at}){
+      const p=listenerPaths(home,agent);checkDir();const n=v=>Number.isSafeInteger(v)&&v>=0;
+      if(!n(restartsLastHour)||!n(restartsLastDay)||!n(at))fail('STREAM_STATS_SHAPE');
+      return {path:p.stream,sha256:writeFile(p.stream,JSON.stringify({v:1,restartsLastHour,restartsLastDay,at})+'\n')};
     },
     readConfig(agent){
       const p=listenerPaths(home,agent);const d=readJson(p.config,4096);

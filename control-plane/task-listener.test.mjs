@@ -112,13 +112,14 @@ test('agent session: decline only (IN_PROGRESS/COMPLETED are owner-click only, t
   rmSync(root,{recursive:true});
 });
 const NOWMS=Date.parse('2026-09-30T18:00:00Z');
+const EARLY=NOWMS-3*86400000; // runner start / switch ON long before the fixtures (condition 2 cut-off tested separately)
 const ts=(msAgo=60000)=>({timestamp:new Date(NOWMS-msAgo).toISOString()});
 function ledgerFake(ids=[]){const set=new Set(ids);return {set,has:id=>set.has(id),add:id=>set.add(id)};}
 function summFake({take=true,result={state:'UNDERSTOOD',summary:'סיכום קצר'}}={}){const f={calls:0,take:()=>take,async summarize(p){f.calls++;f.last=p;return typeof result==='function'?result(p):result;}};return f;}
 const denied=()=>Object.assign(Error('PERMISSION_DENIED'),{code:'PERMISSION_DENIED',status:403});
 test('ack flow (push, ack on): LIT -> summary -> UNDERSTOOD, ledger; EXECUTE target also gets READY progress, NOTIFY target never gets progress',async()=>{
   const ops=fakeOps();const root=tmp();const ledger=ledgerFake();const summ=summFake();
-  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,...noTimer});l.start();
+  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,ackSince:EARLY,...noTimer});l.start();
   await l.idle();await new Promise(r=>setImmediate(r));assert.deepEqual(ops.info,{ack:'on',mode:'push'});
   const msg=task(uuid(1),{kind:'MESSAGE',acks:{},targets:{grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},timestamp:ts()});
   const tsk=task(uuid(2),{kind:'TASK',acks:{},timestamp:ts()});
@@ -128,7 +129,7 @@ test('ack flow (push, ack on): LIT -> summary -> UNDERSTOOD, ledger; EXECUTE tar
   assert.deepEqual([...ledger.set],[uuid(1),uuid(2)]);assert.equal(summ.calls,2);
   // replay (same snapshot, or a restart with the ledger) -> nothing new
   ops.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(1),data:{...msg,acks:{grok:{state:'LIT'}}}}]});await l.idle();assert.equal(ops.acks.length,4);
-  const ops2=fakeOps();const l2=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:ops2,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,...noTimer});l2.start();
+  const ops2=fakeOps();const l2=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:ops2,summarizer:summ,ledger,mode:'push',now:()=>NOWMS,ackSince:EARLY,...noTimer});l2.start();
   ops2.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(1),data:msg}]});await l2.idle();assert.deepEqual(ops2.acks,[]);
   const st=l.status();assert.equal(st.lit,2);assert.equal(st.understood,2);assert.equal(st.received,2);assert.doesNotMatch(JSON.stringify(st),/סיכום|בדיקה/);
   await l.stop();await l2.stop();rmSync(root,{recursive:true});
@@ -140,18 +141,18 @@ test('ack flow: not targeted / IGNORE / cancelled / >24h / already final / ack o
     task(uuid(4),{acks:{grok:{state:'UNDERSTOOD',summary:'x'}},timestamp:ts()}),task(uuid(5),{acks:{grok:{state:'UNREADABLE',summary:''}},timestamp:ts()}),
     task(uuid(6),{timestamp:{}})];
   const ops=fakeOps();const summ=summFake();
-  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,...noTimer});l.start();
+  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,ackSince:EARLY,...noTimer});l.start();
   ops.next({fromCache:false,hasPendingWrites:false,docs:cases.slice(0,5).map(d=>({id:d.taskId,data:d}))});
   ops.next({fromCache:false,hasPendingWrites:false,docs:cases.slice(5).map(d=>({id:d.taskId,data:d}))});await l.idle();
   assert.deepEqual(ops.acks,[]);assert.equal(summ.calls,0);
   for(const [cfg,mode] of [[{ack:false},'push'],[{ack:true},'poll']]){
-    const o=fakeOps();const lx=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,...cfg},ops:o,summarizer:summ,ledger:ledgerFake(),mode,now:()=>NOWMS,...noTimer});lx.start();
+    const o=fakeOps();const lx=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,...cfg},ops:o,summarizer:summ,ledger:ledgerFake(),mode,now:()=>NOWMS,ackSince:EARLY,...noTimer});lx.start();
     o.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(7),data:task(uuid(7),{timestamp:ts()})}]});await lx.idle();
     assert.deepEqual(o.acks,[]);assert.equal(lx.status().ack,'off');await lx.stop();
   }
   // ack_switch off / revoked: the LIT write is denied -> counted, never retried, no model call, no ledger entry
   const od=fakeOps();od.ackFail=()=>denied();const led=ledgerFake();
-  const ld=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:od,summarizer:summ,ledger:led,mode:'push',now:()=>NOWMS,...noTimer});ld.start();
+  const ld=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:od,summarizer:summ,ledger:led,mode:'push',now:()=>NOWMS,ackSince:EARLY,...noTimer});ld.start();
   od.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(8),data:task(uuid(8),{timestamp:ts()})}]});
   od.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(8),data:task(uuid(8),{timestamp:ts()})}]});await ld.idle();
   assert.equal(ld.status().ackDenied,1);assert.equal(summ.calls,0);assert.equal(led.set.size,0);
@@ -159,7 +160,7 @@ test('ack flow: not targeted / IGNORE / cancelled / >24h / already final / ack o
 });
 test('ack flow: S0 (no key), rate-limited, secret/invalid payload and model failure -> UNREADABLE with an empty summary',async()=>{
   const root=tmp();
-  const run=async(summarizer,data)=>{const o=fakeOps();const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:o,summarizer,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,...noTimer});
+  const run=async(summarizer,data)=>{const o=fakeOps();const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:o,summarizer,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,ackSince:EARLY,...noTimer});
     l.start();o.next({fromCache:false,hasPendingWrites:false,docs:[{id:data.taskId,data}]});await l.idle();await l.stop();return {acks:o.acks,status:l.status()};};
   let r=await run(null,task(uuid(1),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(r.acks[1][3],'');
   const lim=summFake({take:false});r=await run(lim,task(uuid(2),{timestamp:ts()}));assert.deepEqual(r.acks.map(a=>a[2]),['LIT','UNREADABLE']);assert.equal(lim.calls,0);assert.equal(r.status.rateLimited,1);
@@ -240,4 +241,20 @@ test('static guard: listener/inbox never spawn, eval, import dynamically, fetch,
   const code=inbox.replace(/^\s*\/\/.*$/gm,'');
   assert.match(code,/openSync\(tmp,'wx'/);assert.match(code,/linkSync\(tmp,file\)/);assert.doesNotMatch(code,/renameSync|copyFileSync|openSync\(file|writeFileSync\(file/);
   assert.match(code,/realpathSync\.native/);assert.match(code,/realpathSync/);assert.match(code,/lstatSync/);assert.doesNotMatch(code,/recursive\s*:/);assert.match(code,/fs\.mkdirSync\(dir\);/);
+});
+
+test('no retroactive ack (25572dc condition 2): only tasks at/after ackSince (runner start / token iat) are acked; default = start time; invalid ackSince rejected',async()=>{
+  const root=tmp();const ops=fakeOps();const summ=summFake();const since=NOWMS-60000;
+  const l=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops,summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,ackSince:since,...noTimer});l.start();
+  assert.equal(l.ackSince,since);
+  const old=task(uuid(1),{acks:{},timestamp:ts(60001)}),edge=task(uuid(2),{acks:{},timestamp:ts(60000)}),fresh=task(uuid(3),{acks:{},timestamp:ts(1000)});
+  ops.next({fromCache:false,hasPendingWrites:false,docs:[old,edge,fresh].map(d=>({id:d.taskId,data:d}))});await l.idle();
+  assert.deepEqual(ops.acks.filter(a=>a[2]==='LIT').map(a=>a[0]),[uuid(2),uuid(3)],'1 ms before the cut-off -> no ack; at/after -> ack');
+  assert.equal(summ.calls,2);await l.stop();
+  const ops2=fakeOps();const l2=createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:ops2,summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,...noTimer});l2.start();
+  assert.equal(l2.ackSince,NOWMS,'default cut-off = listener start');
+  ops2.next({fromCache:false,hasPendingWrites:false,docs:[{id:uuid(3),data:fresh}]});await l2.idle();assert.deepEqual(ops2.acks,[],'a PENDING task from before the start stays unacked');
+  await l2.stop();
+  for(const bad of ['1',1.5,NaN,Infinity])assert.throws(()=>createListener({config:{agent:'Grok',machine:'LD',inboxRoot:root,ack:true},ops:fakeOps(),summarizer:summ,ledger:ledgerFake(),mode:'push',now:()=>NOWMS,ackSince:bad,...noTimer}),/LISTENER_ACK_SINCE/);
+  rmSync(root,{recursive:true});
 });

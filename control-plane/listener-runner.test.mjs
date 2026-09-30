@@ -12,7 +12,7 @@ import {firestoreBase,encodeValue,decodeFields,createListenerOps,createFirestore
 import {createCredentialStore,listenerPaths} from './listener/credential-store.mjs';
 import {aclVerdict,createWindowsProtector,SCRIPTS,POWERSHELL} from './listener/win-protect.mjs';
 import {createIdentityAdmin} from './listener/identity-admin.mjs';
-import {provisionListener,parseProvisionArgs,listenerEmail} from './provision-listener.mjs';
+import {provisionListener,parseProvisionArgs,listenerEmail,STREAM_THRESHOLD} from './provision-listener.mjs';
 import {startRunner,parseRunnerArgs,EXIT,MAX_POLL_FAILURES} from './task-listener-run.mjs';
 import {HEARTBEAT_MS} from './task-listener.mjs';
 // Source files are read LF-normalized: a Windows checkout (core.autocrlf=true) must pass the same static checks.
@@ -332,6 +332,24 @@ test('provisioning: provider must be enabled and client sign-up blocked (PROVIDE
   await assert.rejects(provisionListener({op:'create',agent:'Gemini',deps:{...b,...f,store}}),code('AGENT_REJECTED'));
 });
 
+test('condition 3 (25572dc): stream restart counts persisted (numbers only, strict shape); provision status shows them against the 75/day | 8/hour threshold',async()=>{
+  const home=tmp();const store=createCredentialStore({home,protector:fakeProtector()});store.ensureDir();
+  assert.equal(store.readStreamStats('Grok'),null);
+  const w=store.writeStreamStats('Grok',{restartsLastHour:3,restartsLastDay:40,at:NOW});assert.equal(w.path,join(home,'.resq-listeners','grok.stream.json'));
+  assert.deepEqual({...store.readStreamStats('Grok')},{restartsLastHour:3,restartsLastDay:40,at:NOW});
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(w.path,'utf8'))),['v','restartsLastHour','restartsLastDay','at']);
+  for(const bad of [{restartsLastHour:-1,restartsLastDay:0,at:NOW},{restartsLastHour:1.5,restartsLastDay:0,at:NOW},{restartsLastHour:0,restartsLastDay:'9',at:NOW}])
+    assert.throws(()=>store.writeStreamStats('Grok',bad),code('STREAM_STATS_SHAPE'));
+  writeFileSync(w.path,JSON.stringify({v:1,restartsLastHour:1,restartsLastDay:1,at:NOW,token:'x'}));assert.throws(()=>store.readStreamStats('Grok'),code('STREAM_STATS_SHAPE'));
+  assert.deepEqual(STREAM_THRESHOLD,{perDay:75,perHour:8});
+  const f=provisionFakes();const deps={mode:'production',projectId:PROJECT,getCerts,now:()=>NOW,sleep:async()=>{},home,...f,store};
+  for(const [h,d,over] of [[8,75,false],[9,10,true],[1,76,true]]){
+    store.writeStreamStats('Grok',{restartsLastHour:h,restartsLastDay:d,at:NOW});
+    const st=await provisionListener({op:'status',agent:'Grok',deps});
+    assert.equal(st.stream.restartsLastHour,h);assert.equal(st.stream.restartsLastDay,d);assert.equal(st.stream.overThreshold,over,h+'/'+d);
+    assert.match(st.stream.threshold,/>75\/day or >8\/hour: do not add Codex/);
+  }
+});
 test('runner: fail-closed startup (config/credential/token), counters-only output, stops on a dead credential and on repeated poll failures',async()=>{
   const home=tmp();const prot=fakeProtector();const store=createCredentialStore({home,protector:prot});store.ensureDir();
   const deps0={mode:'production',projectId:PROJECT,store,getCerts,now:()=>NOW,out:()=>{}};
@@ -373,7 +391,10 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
   const HOSTS=['securetoken.googleapis.com','www.googleapis.com','firestore.googleapis.com','identitytoolkit.googleapis.com','securetoken.google.com'];
   const LLM_HOSTS=['api.x.ai','api.openai.com'];
   for(const [f,allow] of Object.entries(files)){
-    const src=readSrc(new URL('./'+f,import.meta.url));const code=src.replace(/^\s*\/\/.*$/gm,'');
+    const src=readSrc(new URL('./'+f,import.meta.url));let code=src.replace(/^\s*\/\/.*$/gm,'');
+    // condition 1 (25572dc): the ONE allowed dynamic import = grpc-transport, loaded only after the unsafe-env check
+    if(f==='task-listener-run.mjs'){assert.equal(code.split("import('./listener/grpc-transport.mjs')").length-1,1,'exactly one dynamic import of grpc-transport');
+      code=code.replace("import('./listener/grpc-transport.mjs')","");}
     assert.doesNotMatch(code,/\beval\s*\(|new Function|Function\s*\(|\bimport\s*\(|console\.|require\s*\(\s*['"]|marked|markdown/,f);
     if(!allow.spawn)assert.doesNotMatch(code,/child_process|\bspawn|\bexec(?:Sync|File)?\s*\(/,f);
     if(!allow.env)assert.doesNotMatch(code,/process\.env/,f);
@@ -409,7 +430,13 @@ test('static guard: runner/adapter/auth/store never spawn (except the fixed DPAP
   assert.match(scrub,/delete env\[name\]/);
   const runnerSrc=readSrc(new URL('./task-listener-run.mjs',import.meta.url));
   const runner=runnerSrc.replace(/^\s*\/\/.*$/gm,'');
-  assert.match(runner,/async function main\(\)\{\n\s*const \{childEnv\}=scrubSecretEnv\(\);/,'CRITICAL: scrub is the FIRST statement of main');
+  assert.match(runner,/async function main\(\)\{\n\s*const unsafe=unsafeEnvNames\(\);[^\n]*\n\s*if\(unsafe\.length\)\{process\.stderr\.write\(JSON\.stringify\(\{status:'FAILED',code:'UNSAFE_ENV',names:unsafe\}\)\+'\\n'\);process\.exitCode=EXIT\.STARTUP;return;\}[^\n]*\n\s*const \{childEnv\}=scrubSecretEnv\(\);/,
+    'CRITICAL: the unsafe-env refusal is the FIRST statement of main, the scrub the second');
+  // grpc (whose tls-helpers read GRPC_* env at import time) is never imported statically by the runner or anything it imports
+  for(const f of ['task-listener-run.mjs','task-listener.mjs','task-inbox.mjs','listener/listener-auth.mjs','listener/firestore-rest.mjs','listener/firestore-listen.mjs',
+    'listener/summarizer.mjs','listener/credential-store.mjs','listener/win-protect.mjs','listener/env-scrub.mjs'])
+    assert.doesNotMatch(readSrc(new URL('./'+f,import.meta.url)).replace(/^\s*\/\/.*$/gm,''),/from\s+['"][^'"]*(?:grpc-transport|@grpc\/)/,f+': no static gRPC import');
+  assert.match(prov,/async function main\(\)\{\n\s*if\(unsafeEnvNames\(\)\.length\)fail\('UNSAFE_ENV'\);[^\n]*\n\s*if\(process\.platform!=='win32'\)/,'provisioning refuses an unsafe env first too');
   assert.match(runner,/createWindowsProtector\(\{baseEnv:childEnv\}\)/);
   assert.doesNotMatch(runner,/identity-admin|provision-listener|payload|signInWithPassword|password/i,'runner never touches admin identity or payloads');
   assert.doesNotMatch(runner,/emulator['"]?\s*[,:]|--emulator/,'the runner CLI has no emulator switch');

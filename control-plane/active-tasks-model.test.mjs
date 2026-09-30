@@ -107,6 +107,10 @@ test('PAYLOAD_CHAR is exactly the dispatch NOTE_PATTERN alphabet; thresholds ann
   for(const c of ['\u{1F600}','\uFEFF','\u202E','\u200F'])assert.equal(PAYLOAD_CHAR.test(c),NOTE_PATTERN.test(c));
   assert.equal(payloadThreshold('a'.repeat(8999)),null);assert.equal(payloadThreshold('a'.repeat(9000)),'9000');assert.equal(payloadThreshold('a'.repeat(9900)),'9900');
   assert.equal(payloadThreshold('a'.repeat(10000)),'10000');assert.equal(payloadThreshold('a'.repeat(10001)),'over');assert.match(payloadThresholdText('over'),/חסומה/);
+  // UI 25572dc minor: MESSAGE announcements follow the 2000 limit
+  assert.equal(payloadThreshold('a'.repeat(1799),'MESSAGE'),null);assert.equal(payloadThreshold('a'.repeat(1800),'MESSAGE'),'m1800');
+  assert.equal(payloadThreshold('a'.repeat(2000),'MESSAGE'),'m2000');assert.equal(payloadThreshold('a'.repeat(2001),'MESSAGE'),'mover');
+  assert.match(payloadThresholdText('mover'),/2000/);assert.equal(payloadThreshold('a'.repeat(9000),'TASK'),'9000');
 });
 
 // ---- push trigger (UI review C1-C11) ----
@@ -144,6 +148,12 @@ test('C1-C5: ack lines only for targets; stale feed never computes "no answer"; 
   assert.equal(ackFor(row({...r,acks:{grok:U('UNDERSTOOD','')}}),'grok',{serverNowMs:t0}).kind,'waiting');    // malformed ack ignored
   assert.equal(validAck(U('UNDERSTOOD','א'.repeat(SUMMARY_MAX))),true);assert.equal(validAck(U('UNDERSTOOD','א'.repeat(SUMMARY_MAX+1))),false);
   assert.equal(ackFor(row({...r,status:'CANCELLED'}),'grok',{serverNowMs:t0+10**7}).kind,'closed');
+  // UI 25572dc condition 2: switch off/missing is checked BEFORE the LIT timeout; final states and closed rows unchanged
+  assert.equal(ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1,switchState:'off'}).text,'נעצר — אישורי קבלה כבויים');
+  assert.equal(ackFor(lit,'grok',{serverNowMs:t0+2000,switchState:'missing'}).kind,'switch_missing');
+  assert.equal(ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1,switchState:'on'}).kind,'lit_no_answer');
+  assert.equal(ackFor(row({...r,acks:{grok:U('UNDERSTOOD','תקציר')}}),'grok',{serverNowMs:t0,switchState:'off'}).kind,'understood');
+  assert.equal(ackFor(row({...r,status:'CANCELLED'}),'grok',{serverNowMs:t0,switchState:'off'}).kind,'closed');
   // C3: offset from server stamps, never the client clock alone
   let off=null;off=learnOffset(off,t0,t0+3600000);off=learnOffset(off,t0+5000,t0+3600000);assert.equal(off,-3595000);assert.equal(serverNow(t0+3600000,off),t0+5000);assert.equal(serverNow(1,null),null);
   assert.deepEqual(mapListenerMeta([{id:'grok',data:{agent:'grok',seenAt:{toMillis:()=>1},ack:'on',mode:'push'}},{id:'codex',data:{agent:'codex',seenAt:{toMillis:()=>1}}}]),{grok:{ack:'on',mode:'push'},codex:{ack:null,mode:null}});

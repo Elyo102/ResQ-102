@@ -7,7 +7,9 @@ import {generateKeyPairSync,createSign} from 'node:crypto';
 import {mkdtempSync,realpathSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {scrubSecretEnv,SECRET_ENV} from './listener/env-scrub.mjs';
+import {scrubSecretEnv,SECRET_ENV,UNSAFE_ENV,unsafeEnvNames} from './listener/env-scrub.mjs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {createWindowsProtector,minimalChildEnv,CHILD_ENV_KEYS,POWERSHELL} from './listener/win-protect.mjs';
 import {createListenWatch,structuredPushQuery,decodeProtoFields,RESTART_CAPS,BACKOFF,STABLE_MS,WATCHDOG_MS,TARGET_ID,TOKEN_MARGIN_S} from './listener/firestore-listen.mjs';
 import {createSummarizer,sanitizeSummary,assertRequestBody,buildRequestBody,extractText,createRateLimiter,preparePayload,PROVIDERS,SYSTEM_PROMPT,
@@ -37,6 +39,25 @@ test('env scrub: keys, tokens, cloud creds and proxies are deleted; child env is
   for(const n of ['XAI_API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY','GEMINI_API_KEY','GH_TOKEN'])assert.ok(SECRET_ENV.test(n),n);
   assert.deepEqual(minimalChildEnv({Path:'x',SYSTEMROOT:'y',XAI_API_KEY:'k'}),{SystemRoot:'y',PATH:'x'});
   assert.deepEqual(CHILD_ENV_KEYS,['SystemRoot','windir','TEMP','USERPROFILE','PATH']);
+});
+test('condition 1 (25572dc): TLS/proxy/GRPC_* env is detected by NAME (any case), never by value; scrub also removes it',()=>{
+  const names=['GRPC_VERBOSITY','GRPC_TRACE','GRPC_DEFAULT_SSL_ROOTS_FILE_PATH','GRPC_SSL_CIPHER_SUITES','NODE_TLS_REJECT_UNAUTHORIZED','NODE_EXTRA_CA_CERTS',
+    'SSL_CERT_FILE','SSL_CERT_DIR','NODE_OPTIONS','HTTPS_PROXY','HTTP_PROXY','GRPC_PROXY','ALL_PROXY','https_proxy','grpc_proxy','Node_Extra_Ca_Certs'];
+  for(const n of names)assert.ok(UNSAFE_ENV.test(n),n);
+  for(const n of ['PATH','TEMP','SystemRoot','NO_PROXY','MY_GRPC','SSL_CERT'])assert.ok(!UNSAFE_ENV.test(n),n);
+  const env={PATH:'x',GRPC_DEFAULT_SSL_ROOTS_FILE_PATH:'C:\\evil-ca.pem',node_tls_reject_unauthorized:'0',SSL_CERT_FILE:'VALUE-SECRET'};
+  const r=unsafeEnvNames(env);assert.deepEqual(r,['GRPC_DEFAULT_SSL_ROOTS_FILE_PATH','SSL_CERT_FILE','node_tls_reject_unauthorized']);
+  assert.doesNotMatch(JSON.stringify(r),/evil|VALUE-SECRET|"0"/);assert.deepEqual(unsafeEnvNames({PATH:'x'}),[]);
+  scrubSecretEnv(env);assert.deepEqual(Object.keys(env),['PATH'],'scrub also deletes TLS/proxy/GRPC env');
+});
+test('condition 1: the runner refuses an unsafe env BEFORE gRPC is loaded (child process; exit 1; names only, value never printed)',()=>{
+  const runner=fileURLToPath(new URL('./task-listener-run.mjs',import.meta.url));
+  for(const [name,value] of [['GRPC_VERBOSITY','secret-value-1'],['NODE_TLS_REJECT_UNAUTHORIZED','0'],['https_proxy','http://secret-proxy:1']]){
+    const r=spawnSync(process.execPath,[runner,'--agent','Grok'],{env:{PATH:process.env.PATH,...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),[name]:value},encoding:'utf8',timeout:20000});
+    assert.equal(r.status,EXIT.STARTUP,name);assert.equal(r.stdout,'');
+    const e=JSON.parse(r.stderr.trim());assert.deepEqual(e,{status:'FAILED',code:'UNSAFE_ENV',names:[name]});
+    if(value.length>1)assert.ok(!r.stderr.includes(value),'value never printed');
+  }
 });
 test('DPAPI helper: spawnSync gets ONLY the minimal env (never the parent env or a key)',()=>{
   const calls=[];
@@ -226,6 +247,20 @@ test('runner: ack on without an LLM key -> S0; with a key -> S1; poll mode force
   const r2=await startRunner({agent:'Grok',listen:'poll',deps:{...e2.deps,out:l=>out2.push(l)}});await flush();
   const f2=JSON.parse(out2[0]);assert.equal(f2.ack,'off');assert.equal(f2.mode,'poll');assert.equal(f2.summarizer,'none');assert.deepEqual(e2.seen.heartbeats[0].mode,{stringValue:'poll'});
   assert.ok(e2.seen.runQuery>=1);await r2.stop();
+});
+
+test('runner (conditions 2+3): ackSince = max(start, token iat) on the started line; restart counts written to the stream file on status ticks and stop',async()=>{
+  const e=runnerEnv({ack:true,llm:true});const out=[];const st=[];
+  const r=await startRunner({agent:'Grok',deps:{...e.deps,now:()=>NOW-60000,grpc:fakeGrpc(),out:l=>out.push(l),statusTimer:{setTimer:fn=>{st.push(fn);return 1;},clearTimer:()=>{}}}});await flush();
+  const first=JSON.parse(out[0]);assert.equal(first.ackSince,(S-10)*1000,'token iat later than the clock -> iat wins');
+  await r.stop();
+  const stats=e.store.readStreamStats('Grok');assert.equal(stats.restartsLastHour,0);assert.equal(stats.restartsLastDay,0);
+  for(const l of out)if(!('started' in JSON.parse(l)))assert.ok('restartsLastDay' in JSON.parse(l)||JSON.parse(l).stopped,l);
+  const e2=runnerEnv({ack:true,llm:true});const out2=[];
+  const r2=await startRunner({agent:'Grok',deps:{...e2.deps,now:()=>NOW+60000,grpc:fakeGrpc(),out:l=>out2.push(l)}});await flush();
+  assert.equal(JSON.parse(out2[0]).ackSince,NOW+60000,'clock later than iat -> start time wins');await r2.stop();
+  const e3=runnerEnv({ack:false});const out3=[];const r3=await startRunner({agent:'Grok',deps:{...e3.deps,grpc:fakeGrpc(),out:l=>out3.push(l)}});await flush();
+  assert.equal(JSON.parse(out3[0]).ackSince,undefined,'ack off -> no cut-off printed');await r3.stop();
 });
 
 // ---------- summarizer S1 ----------

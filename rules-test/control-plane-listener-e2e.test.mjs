@@ -210,6 +210,8 @@ try{
     await provisionListener({op:'ack-on',agent:'Grok',deps});assert.equal(store.readConfig('Grok').ack,true);
     store.writeLlmKey('Grok',{apiKey:'xai-'+'E2E'.repeat(10),model:'grok-4-fast'});
     await setSwitch(true);
+    // condition 2 (25572dc): a PENDING task created BEFORE the runner starts is never acked (no retroactive ack)
+    const preStart=await createTask({grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},'נוצרה לפני הפעלת המאזין',{kind:'MESSAGE',acks:{}});
     await sleep(31000);
     const lines=[];const r=await runPush('Grok',lines);
     try{
@@ -233,15 +235,18 @@ try{
       assert.equal((await waitFor('tool UNREADABLE',async()=>{const a=await ackOf(tool,'grok');return a?.state==='UNREADABLE'&&a;})).summary,'');
       await sleep(500);assert.equal(await ackOf(other,'grok'),undefined);assert.equal(await progress(other,'grok'),undefined);
       for(const c of llmCalls){assert.equal(c.url,'https://api.x.ai/v1/chat/completions');assert.deepEqual(c.keys,['max_tokens','messages','model','stream','temperature']);}
-      // the 2 PENDING EXECUTE tasks from the earlier checks (< 24 h) are acknowledged too: 4 corpus + 2 earlier
-      assert.equal(llmCalls.length,6);
+      // condition 2 (25572dc): NO retroactive ack. The 2 PENDING EXECUTE tasks from the earlier checks and the task created
+      // after the switch went ON but before the runner started stay unacked: only the 4 corpus tasks reach the model.
+      assert.ok(Number.isSafeInteger(JSON.parse(lines[0]).ackSince),'started line carries the cut-off');
+      assert.equal(llmCalls.length,4);assert.equal(await ackOf(preStart,'grok'),undefined,'pre-start task: no ack');
       // kill switch off: the LIT write is denied by the Rules; no model call; no ack
       await setSwitch(false);const before=llmCalls.length;
       const off=await createTask({grok:'NOTIFY',codex:'IGNORE',gemini:'IGNORE'},'אחרי כיבוי',{kind:'MESSAGE',acks:{}});
       await waitFor('ackDenied',()=>r.listener.status().ackDenied>=1);
       assert.equal(await ackOf(off,'grok'),undefined);assert.equal(llmCalls.length,before);
-      const st=r.listener.status();assert.equal(st.understood,4);assert.equal(st.unreadable,2);assert.equal(r.watch.stats().fatal,null);
-      const led=store.readLedger('Grok');for(const id of [tsk,msg,url,tool])assert.ok(led.includes(id));assert.ok(!led.includes(other)&&!led.includes(off));
+      const st=r.listener.status();assert.equal(st.understood,2,"only the 2 corpus tasks (no retroactive ack of earlier PENDING tasks)");assert.equal(st.unreadable,2);assert.equal(r.watch.stats().fatal,null);
+      const led=store.readLedger('Grok');for(const id of [tsk,msg,url,tool])assert.ok(led.includes(id));assert.ok(!led.includes(other)&&!led.includes(off)&&!led.includes(preStart));
+      // (Rules side of condition 2 — task older than the switch's last ON is denied — is covered in control-plane-active-tasks.test.mjs)
       for(const l of lines)assert.doesNotMatch(l,/משימה|הודעה|אושרה|CORPUS|xai-|rt-|eyJ/);
     }finally{await r.stop();}
     assert.equal(await r.done,EXIT.OK);

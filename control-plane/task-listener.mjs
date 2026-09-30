@@ -76,13 +76,18 @@ export function taskTimeMs(data){const t=data?.timestamp?.timestamp;const ms=typ
 // summarizer (ack on): {summarize(payload)->Promise<{state:'UNDERSTOOD',summary}|{state:'UNREADABLE',reason}>, take()->bool}
 //   or null (no key: S0, every ack is UNREADABLE and no model is called).
 // ledger (ack on): {has(taskId)->bool, add(taskId)->void} persisted by the runner (UUIDs only).
-export function createListener({config,ops,inbox=null,summarizer=null,ledger=null,mode='poll',now=Date.now,setTimer=setInterval,clearTimer=clearInterval,onHeartbeat=()=>{}}){
+// ackSince (ms, condition 2 of the 25572dc code review): NO retroactive ack. Only tasks whose server timestamp is
+// >= the moment this listener started with ack on are acknowledged (default: now() at creation). The Rules add the
+// second cut-off: task.timestamp >= control/ack_switch.updatedAt while the switch is ON.
+export function createListener({config,ops,inbox=null,summarizer=null,ledger=null,mode='poll',now=Date.now,setTimer=setInterval,clearTimer=clearInterval,onHeartbeat=()=>{},ackSince=null}){
   const cfg=validateConfig(config);const key=cfg.key;
   if(mode!=='poll'&&mode!=='push')throw Error('LISTENER_MODE');
   const ackOn=cfg.ack&&mode==='push';                 // poll mode (rollback) never acknowledges
   if(!ops||typeof ops.watchTasks!=='function'||typeof ops.writeProgress!=='function'||typeof ops.writeHeartbeat!=='function')throw Error('LISTENER_OPS');
   if(ackOn&&(typeof ops.writeAck!=='function'||!ledger||typeof ledger.has!=='function'||typeof ledger.add!=='function'))throw Error('LISTENER_ACK_OPS');
   if(ackOn&&summarizer!==null&&(typeof summarizer.summarize!=='function'||typeof summarizer.take!=='function'))throw Error('LISTENER_SUMMARIZER');
+  const since=ackSince===null?now():ackSince;
+  if(ackOn&&!Number.isSafeInteger(since))throw Error('LISTENER_ACK_SINCE');
   if(cfg.delivery&&(!inbox||typeof inbox.deliver!=='function'||typeof inbox.markCancelled!=='function'))throw Error('LISTENER_INBOX_REQUIRED');
   const handled=new Set(),markerWritten=new Set(),acked=new Set();
   const counts={ready:0,delivered:0,rejected:0,cancelledMarkers:0,errors:0,received:0,lit:0,understood:0,unreadable:0,ackDenied:0,rateLimited:0,llmFail:0};
@@ -127,7 +132,7 @@ export function createListener({config,ops,inbox=null,summarizer=null,ledger=nul
     const data=d?.data;if(!ackOn||!data||data.status!=='PENDING'||!UUID_V4.test(d.id??''))return false;
     if(!['EXECUTE','NOTIFY'].includes(data.targets?.[key])||acked.has(d.id)||ledger.has(d.id))return false;
     const mine=data.acks?.[key];if(mine!==undefined&&mine?.state!=='LIT')return false;
-    const at=taskTimeMs(data);return at!==null&&now()-at<ACK_MAX_AGE_MS;
+    const at=taskTimeMs(data);return at!==null&&at>=since&&now()-at<ACK_MAX_AGE_MS;   // never retroactive
   };
   async function processDocs(docs){
     const open={n:docs.filter(d=>d?.data?.status==='PENDING'&&openState(d.data.progress?.[key])).length};
@@ -145,7 +150,7 @@ export function createListener({config,ops,inbox=null,summarizer=null,ledger=nul
   }
   const heartbeatInfo=Object.freeze({ack:ackOn?'on':'off',mode});
   return Object.freeze({
-    config:cfg,ackOn,
+    config:cfg,ackOn,ackSince:ackOn?since:null,
     start(){
       if(running)return;running=true;
       const beat=()=>Promise.resolve().then(()=>ops.writeHeartbeat(key,heartbeatInfo)).then(()=>{try{onHeartbeat(true);}catch{}},e=>{counts.errors++;try{onHeartbeat(false,e);}catch{}});

@@ -63,8 +63,12 @@ export const PAYLOAD_CHAR=/^[\u{000A}\u{0020}-\u{007E}\u{05D0}-\u{05EA}\u{05B0}-
 const VISIBLE=/^[\p{L}\p{N}\p{P}\p{S}]$/u;
 export function normalizePayload(raw){return typeof raw==='string'?raw.replace(/\r\n?/g,'\n'):raw;}
 // Threshold announcements (separate polite region): null below 9000, then '9000', '9900', '10000', 'over'.
-export function payloadThreshold(raw){const n=payloadLength(raw);if(n>PAYLOAD_MAX)return 'over';if(n===PAYLOAD_MAX)return '10000';if(n>=9900)return '9900';if(n>=9000)return '9000';return null;}
-export function payloadThresholdText(level){return {'9000':'התוכן הגיע ל-9000 תווים מתוך 10000.','9900':'התוכן הגיע ל-9900 תווים מתוך 10000.','10000':'התוכן הגיע למגבלה של 10000 תווים.',over:'התוכן חורג מ-10000 תווים. השמירה חסומה עד לקיצור.'}[level]??'';}
+export function payloadThreshold(raw,kind='TASK'){const n=payloadLength(raw);
+  // UI 25572dc minor: in MESSAGE mode the announcements follow the 2000 limit ('m1800' | 'm2000' | 'mover').
+  if(kind==='MESSAGE'){if(n>MESSAGE_MAX)return 'mover';if(n===MESSAGE_MAX)return 'm2000';if(n>=1800)return 'm1800';return null;}
+  if(n>PAYLOAD_MAX)return 'over';if(n===PAYLOAD_MAX)return '10000';if(n>=9900)return '9900';if(n>=9000)return '9000';return null;}
+export function payloadThresholdText(level){return {'9000':'התוכן הגיע ל-9000 תווים מתוך 10000.','9900':'התוכן הגיע ל-9900 תווים מתוך 10000.','10000':'התוכן הגיע למגבלה של 10000 תווים.',over:'התוכן חורג מ-10000 תווים. השמירה חסומה עד לקיצור.',
+  m1800:'ההודעה הגיעה ל-1800 תווים מתוך 2000.',m2000:'ההודעה הגיעה למגבלה של 2000 תווים.',mover:'ההודעה חורגת מ-2000 תווים. השמירה חסומה עד לקיצור.'}[level]??'';}
 export function payloadLength(raw){return typeof raw==='string'?[...normalizePayload(raw)].length:0;}
 // [{cp:'U+2019',glyph:'’'|null,line,column}] — first `limit` findings, 1-based line and column in code points.
 export function blockedChars(raw,limit=5){
@@ -161,13 +165,15 @@ export function ackFor(row,key,{serverNowMs=null,fresh=true,switchState='unknown
   if(a?.state==='UNDERSTOOD')return out('understood',TEXT.ack.understood,{summary:a.summary});
   if(a?.state==='UNREADABLE')return out('unreadable',TEXT.ack.unreadable);
   const t=fresh?serverNowMs:null;
+  // UI 25572dc condition 2: a stopped / missing switch explains a silent listener better than the LIT timeout does,
+  // so it is checked BEFORE the LIT state (final UNDERSTOOD/UNREADABLE above stay as they are).
+  if(row.status==='PENDING'&&switchState==='off')return out('switch_off',TEXT.ack.switchOff);
+  if(row.status==='PENDING'&&switchState==='missing')return out('switch_missing',TEXT.ack.switchMissing);
   if(a?.state==='LIT'){
     if(t!==null&&t-a.updatedAt>ACK_LIT_TIMEOUT_MS)return out('lit_no_answer',TEXT.ack.litNoAnswer);
     return out('lit',TEXT.ack.lit);
   }
   if(row.status!=='PENDING')return out('closed',TEXT.ack.closed);
-  if(switchState==='off')return out('switch_off',TEXT.ack.switchOff);
-  if(switchState==='missing')return out('switch_missing',TEXT.ack.switchMissing);
   if(listenerAck==='off')return out('listener_off',TEXT.ack.listenerOff);
   if(t!==null&&t-row.timestamp>ACK_NONE_TIMEOUT_MS)return listenerAck==='on'?out('no_ack',TEXT.ack.noAck):out('no_ack_maybe_off',TEXT.ack.noAckMaybeOff);
   return out('waiting',TEXT.ack.waiting);

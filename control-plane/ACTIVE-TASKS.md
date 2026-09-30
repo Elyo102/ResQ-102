@@ -95,29 +95,55 @@ A2 is unchanged (fixed 9-line inbox header; MESSAGE never creates an inbox file)
   Immediate revoke without a process: `provision-listener.mjs ... --revoke`, or set `private_listeners/{uid}.enabled=false` (or raise `revokedAfter`). The Rules deny at once.
 
 ## Push trigger (local, not deployed)
-- **Runner:** `task-listener-run.mjs --agent Grok|Codex [--mode push|poll]`. `scrubSecretEnv()` is the first statement of `main`
-  (secrets, proxies and NODE_OPTIONS deleted from `process.env`); every child (`icacls`/DPAPI via `win-protect.mjs`) gets only
-  `SystemRoot, windir, TEMP, USERPROFILE, PATH`.
+- **Runner:** `task-listener-run.mjs --agent Grok|Codex [--mode push|poll]`. The FIRST statement of `main` refuses an unsafe
+  env (security review 25572dc, condition 1): if any of `GRPC_*`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`,
+  `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_OPTIONS`, `https_proxy`/`http_proxy`/`grpc_proxy`/`all_proxy` (any case) is set, it
+  exits 1 (`EXIT.STARTUP`) with `{"status":"FAILED","code":"UNSAFE_ENV","names":[…]}` — names only, never values.
+  `provision-listener.mjs` refuses the same env (`UNSAFE_ENV`). **Correction:** an earlier note said "no module reads env at
+  import time" — that was wrong: `@grpc/grpc-js` (`tls-helpers.js`) reads `GRPC_SSL_CIPHER_SUITES` and
+  `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` when it is imported, and Node reads `NODE_OPTIONS`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_*`
+  at process start. So the runner no longer imports gRPC statically: `listener/grpc-transport.mjs` is loaded with ONE
+  dynamic `import()` after the check (static guard in `listener-runner.test.mjs`). `scrubSecretEnv()` is the second statement
+  (secrets, proxies, NODE_OPTIONS and the TLS/GRPC names above deleted from `process.env`); every child (`icacls`/DPAPI via
+  `win-protect.mjs`) gets only `SystemRoot, windir, TEMP, USERPROFILE, PATH`.
 - **Push:** `listener/firestore-listen.mjs` over `@grpc/grpc-js` 1.14.5 (exact pin, lockfile, `npm ci --ignore-scripts`), protos
   vendored at googleapis 93d6085 with sha256 (`listener/protos/protos.sha256.json`, verified before use). Target
   `firestore.googleapis.com:443`, TLS default roots, `grpc.enable_http_proxy:0`; insecure only for the emulator on 127.0.0.1.
   Bearer = the listener's Firebase ID token only (no ADC). Query `targets.<key> in [EXECUTE,NOTIFY]`, `orderBy timestamp desc`, limit 5.
-  **Stream restart cap: 20/h and 150/day; past it the runner exits (code 4) with NO automatic fallback to poll.** Backoff 1 s -> 60 s
+  **Stream restart cap: 20/h and 150/day; past it the runner exits (code 4) with NO automatic fallback to poll.** Proactive token
+  rotation (`TOKEN_ROTATE`, ~24/day) stays counted. The status line shows `restartsLastHour` and `restartsLastDay`; the runner also
+  writes them (numbers only) to `%USERPROFILE%\.resq-listeners\<key>.stream.json`, and `provision-listener.mjs --project resq-agent-control-20260928 --agent Grok --status`
+  shows them with `overThreshold`. **Threshold (condition 3): more than 75/day or more than 8/hour -> do NOT add Codex; back to
+  the security reviewer.** Backoff 1 s -> 60 s
   with jitter, reset only after 5 min of stable CURRENT. REMOVE with code 7 (PERMISSION_DENIED) is fatal (exit 5); two consecutive
   heartbeat denials exit too.
 - **Ack (`--ack off` by default):** LIT -> summarize (S1: Grok -> api.x.ai only, Codex -> api.openai.com only, request-body key
   allowlist, no tools/functions/search, `store:false`, rate 6/min + 100/day, breaker, sanitizer on input and output) ->
   UNDERSTOOD (<= 280 chars) or UNREADABLE. Without a key (S0) the listener writes UNREADABLE only. Ledger `<key>.acks.json` (UUIDs only).
   The heartbeat reports the ack mode.
+  **No retroactive ack (condition 2):** only tasks whose server `timestamp` is at or after the runner's cut-off
+  (`ackSince` = max(start time, the listener token's `iat`), printed on the started line) are acked; the Rules additionally
+  require `task.timestamp >= control/ack_switch.updatedAt` while the switch is ON (`atAckOn`), so turning the switch OFF and ON
+  again moves the cut-off. PENDING tasks from before the start (or from before the last switch-ON) are never acked, even if
+  under 24 h old (this replaces the earlier note that such tasks get acked). A task left at LIT by a runner that stopped
+  stays LIT and the dashboard shows "נדלק, אין תשובה" after the timeout.
+  **xAI retention:** xAI chat completions has no `store` field (only OpenAI Responses gets `store:false`). Before ack is turned
+  on for Grok, check xAI's current data-retention policy for API inputs and record the result (OPEN).
 - **LLM key:** dedicated, spend-capped key per agent, entered through hidden stdin (`provision-listener.mjs --agent Grok --llm-key set --model <m>`),
   stored DPAPI-encrypted next to the identity with the same ACL check. Never in Firestore, auth, logs or stack traces.
-- **Kill switch:** `control/ack_switch {enabled, updatedAt}` — the Rules deny every ack write unless it exists and is `true`.
-  Owner-only; create is `enabled:false` only with fresh auth; no delete; a missing doc denies. The dashboard banner has
-  "עצירת אישורי קבלה" (server-confirmed) and a confirmed re-enable. Other stops: Ctrl+C, `--ack off`, `--revoke`.
+- **Kill switch:** `control/ack_switch {enabled, updatedAt}` — the Rules deny every ack write unless it exists and is `true`
+  (and the task is not older than `updatedAt`, see above). Owner-only; create is `enabled:false` only with fresh auth; no
+  delete; a missing doc denies. The dashboard banner has "עצירת אישורי קבלה" (server-confirmed) and a confirmed re-enable.
+  "עצירת אישורי קבלה" stays available when the switch stream failed (state unknown): it sends a plain update to
+  `enabled:false` (no fresh sign-in needed), and "התחברות מחדש לפיד" restarts the switch stream too (UI review 25572dc,
+  condition 1). Other stops: Ctrl+C, `--ack off`, `--revoke`.
 - **Rollback:** runner `--mode poll` (ack forced off); Rules: PATCH the release back to ruleset f7f2d208 (see `deploy/ACTIVE-TASKS-DEPLOY.md`).
 - **Rules diff:** `deploy/firestore-push-trigger.diff` vs 358b4c0c, reasons per removed line in `deploy/FIRESTORE-PUSH-TRIGGER-REASONS.md`.
-- **Before any deploy (Eldad's approval each time):** confirm the live index list covers the `in` query (any new index is a separate
-  step); run one agent for one day and measure stream restarts/reads before adding Codex.
+  The artifact changed with condition 2 (`atAckOn` cut-off): sha256 is now **790ffc36…** (was 5b743f81…).
+- **Before any deploy (Eldad's approval each time):** follow `deploy/ACTIVE-TASKS-DEPLOY.md` §8 (security review 25572dc deploy
+  conditions 4–9: live-ruleset pre-check, live index check + dedicated config with explicit `--project`, post-deploy sha
+  790ffc36, switch seeded OFF from the UI, push `--ack off` first, revoke procedure); run one agent for one day and measure
+  stream restarts/reads before adding Codex.
 
 ## Not approved (UI suggestion only)
 Widening the payload allowlist to ״ ׳ (U+05F3/U+05F4) and curly quotes was suggested by the UI review. Security did not approve it,

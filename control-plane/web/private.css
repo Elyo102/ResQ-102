@@ -64,7 +64,6 @@ button:focus-visible{outline:3px solid #7fdad6;outline-offset:3px}button:disable
 .active-ack[data-kind="understood"]{border-inline-start-color:#75e2d4}.active-ack[data-kind="unreadable"],.active-ack[data-kind="lit_no_answer"],.active-ack[data-kind="no_ack"]{border-inline-start-color:#ffb4a8}
 .active-ack[data-kind="lit"]{border-inline-start-color:#ffd48a}.active-ack[data-stale="true"]{opacity:.8;border-style:dashed}
 .active-ack-head{margin:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
-.active-ack-label{display:inline-block;margin:4px 0;font-size:.8rem;border:1px solid #ffd48a;color:#ffd48a;border-radius:999px;padding:1px 8px}
 .active-ack-frame{margin:2px 0;font-size:.85rem;color:#ffd48a}
 .active-ack-summary{margin:4px 0;padding:4px 10px;border-inline-start:3px solid #617797;color:#dfe8f7;font-style:italic;min-width:0}
 .active-ack-summary .clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere;word-break:normal;white-space:normal}

@@ -1,8 +1,9 @@
 # Rules diff vs live 358b4c0c — reason for every removed line (push trigger)
 
 Base: live artifact sha256 `358b4c0cf9bef8a49508828f1d4060864583677544ff0a449dbb545246691c7f` (ruleset f7f2d208, deployed
-30/09/2026 16:51 IL). New artifact: `firestore.control-plane.rules` sha256 `5b743f8110ed0da48e592eb57f73aacfd41b7f55290332b204c80d0dd3b7888c`
-(**LOCAL_ARTIFACT_NOT_DEPLOYED**). Full unified diff: `firestore-push-trigger.diff` (17 removed lines, 101 added lines; all
+30/09/2026 16:51 IL). New artifact: `firestore.control-plane.rules` sha256 `790ffc360121a7c0f1a3d60b4d1ecca053dcec4486b3cae42c21b10ef90d921e`
+(**LOCAL_ARTIFACT_NOT_DEPLOYED**). Full unified diff: `firestore-push-trigger.diff` (17 removed lines, 104 added lines; the artifact reviewed at 25572dc was 5b743f81 — the only change since is the
+no-retroactive-ack cut-off in `atAckOn`, condition 2 of that review; all
 changes are inside the `active_tasks` / `task_listeners` block; events, dispatch-request and budget rules are byte-identical).
 Rollback: PATCH the `cloud.firestore` release back to ruleset f7f2d208 (section 8 of `ACTIVE-TASKS-DEPLOY.md`).
 
@@ -26,7 +27,7 @@ Rollback: PATCH the `cloud.firestore` release back to ruleset f7f2d208 (section 
 Added (no removed counterpart): `atTaskTargets`, `atMessageTargets`, `atOwnerTransition`, `atOwnerProgressFor`,
 `atOwnerProgress`, `atAckEntry` (exact 3 keys, state enum, summary `size() <= 280` BEFORE the RE2 allowlist without newline,
 UNDERSTOOD <=> non-empty summary, `updatedAt == request.time`), `atAckTransition` (none -> any; LIT -> UNDERSTOOD|UNREADABLE;
-terminal otherwise), `atAckOn`, `atAck` (PENDING, EXECUTE/NOTIFY target, within 24 h, only `acks.<own key>`), and
+terminal otherwise), `atAckOn(taskTime)` (switch `enabled == true` AND `task.timestamp >= switch.updatedAt`: no retroactive ack), `atAck` (PENDING, EXECUTE/NOTIFY target, within 24 h, only `acks.<own key>`), and
 `match /control/ack_switch` (owner get; no list; create only `{enabled:false, updatedAt}` with fresh auth; update owner,
 ON needs fresh auth, OFF always allowed; no delete; listeners have no access).
 

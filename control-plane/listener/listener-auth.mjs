@@ -108,7 +108,7 @@ export function createTokenSource({mode='production',projectId,uid,agent,refresh
   if(typeof uid!=='string'||!/^[A-Za-z0-9_-]{6,128}$/.test(uid))fail('UID_FORMAT');
   if(typeof refreshToken!=='string'||refreshToken.length<20||refreshToken.length>8192)fail('CREDENTIAL_FORMAT');
   const certs=getCerts||createCertCache({fetcher,now});
-  let refresh=refreshToken,idToken=null,exp=0,authTime=null,fatal=null,inflight=null;
+  let refresh=refreshToken,idToken=null,exp=0,iat=0,authTime=null,fatal=null,inflight=null;
   async function exchange(){
     let r;
     try{
@@ -120,7 +120,7 @@ export function createTokenSource({mode='production',projectId,uid,agent,refresh
     const t=r.id_token;
     const at=await verifyIdToken(t,{mode,projectId,uid,agent,getCerts:certs,now:now()});
     if(authTime!==null&&at!==authTime)fail('AUTH_TIME_CHANGED');
-    authTime=at;idToken=t;exp=decodeJwt(t).body.exp;
+    authTime=at;idToken=t;const b=decodeJwt(t).body;exp=b.exp;iat=Number.isSafeInteger(b.iat)?b.iat:0;
     if(typeof r.refresh_token==='string'&&r.refresh_token.length>=20&&r.refresh_token.length<=8192)refresh=r.refresh_token; // memory only
     return t;
   }
@@ -133,7 +133,8 @@ export function createTokenSource({mode='production',projectId,uid,agent,refresh
     },
     get authTime(){return authTime;},
     get fatal(){return fatal;},
-    get expiresAt(){return exp;},   // seconds; the push stream restarts before it (firestore-listen.mjs)
+    get expiresAt(){return exp;},
+    get issuedAt(){return iat;},    // seconds, SERVER time of the last verified ID token (ack cut-off, condition 2)   // seconds; the push stream restarts before it (firestore-listen.mjs)
     uid,agent,projectId,mode
   });
 }

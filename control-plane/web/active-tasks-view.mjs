@@ -44,7 +44,7 @@ export const TEXT=Object.freeze({
   notifyDropped:'המעבר למשימה איפס את הסוכנים שסומנו "להודיע" ל"לא נבחר".',
   noNotify:'יש לבחור "להודיע" לסוכן אחד לפחות — כל הסוכנים במצב "לא נבחר".',
   messageLength:'הודעה מוגבלת ל-2000 תווים — יש לקצר לפני שמירה (לא נחתך אוטומטית).',
-  ackTitle:'אישורי קבלה',understoodLead:'הבנתי:',autoLabel:'סיכום אוטומטי, אינו אישור',
+  ackTitle:'אישורי קבלה',understoodLead:'הבנתי:',cardUnderstood:'הבנתי (אוטומטי)',
   frame:a=>`סיכום אוטומטי של ${a} — אינו אישור ואינו התחלת עבודה`,waitGo:'ממתין ל-go שלך בסשן',
   expand:'הצג את כל הסיכום',collapse:'הצג פחות',
   announceUnderstood:a=>`${a}: הבנתי — סיכום אוטומטי, אינו אישור`,announceUnreadable:a=>`${a}: לא הצליח לקרוא`,
@@ -55,8 +55,8 @@ export const TEXT=Object.freeze({
   confirmEnable:'להפעיל מחדש אישורי קבלה? מאזין שרץ ידנית יקרא משימות חדשות ויכתוב סיכום אוטומטי. זה אינו אישור לביצוע.',
   yesEnable:'כן, להפעיל',switchSaving:'שומר… ממתין לאישור השרת.',switchConfirmed:'השינוי אושר על ידי השרת.',
   switchUnconfirmed:'לא אושר — ייתכן שהשינוי עוד יחול. המצב יתעדכן רק מהשרת.',switchDenied:'השרת דחה את השינוי. המצב לא השתנה.',
-  switchSame:'המתג כבר במצב הזה — לא נשלח דבר.',switchReauth:'נדרשת התחברות טרייה (עד 15 דקות) להפעלה או ליצירת המתג. לחץ "התחברות מחדש לאישור" ונסה שוב.',
-  start:'בביצוע',complete:'הסתיים',progressSaving:'שומר… ממתין לאישור השרת.',progressConfirmed:'הסימון אושר על ידי השרת.',
+  switchSame:'המתג כבר במצב הזה — לא נשלח דבר.',switchStopMissing:'המתג לא קיים בשרת — אישורי קבלה חסומים ממילא. אין צורך בעצירה.',switchReauth:'נדרשת התחברות טרייה (עד 15 דקות) להפעלה או ליצירת המתג. לחץ "התחברות מחדש לאישור" ונסה שוב.',
+  start:'בביצוע',complete:'הסתיים',markPrefix:'סמן: ',confirmComplete:a=>`לסמן ש-${a} הסתיים? לא ניתן לבטל את הסימון.`,yesComplete:'כן, הסתיים',progressSaving:'שומר… ממתין לאישור השרת.',progressConfirmed:'הסימון אושר על ידי השרת.',
   progressUnconfirmed:'לא אושר — הסטטוס יתעדכן רק מהשרת.',progressDenied:'השרת דחה את הסימון. הסטטוס לא השתנה.'
 });
 
@@ -112,7 +112,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   const cancelPending=new Set(),confirming=new Set(),expanded=new Set(),changeFns=new Set(),rowNodes=new Map(),rowSigs=new Map();
   // push trigger state
   let offset=null,listenerMeta={},switchState='idle',switchAt=null,stopSwitch=null,switchWriting=false,switchConfirming=false;
-  const ackExpanded=new Set(),ackKinds=new Map(),ackAnnounced=new Set(),sessionTasks=new Set(),progressPending=new Set();
+  const ackExpanded=new Set(),ackKinds=new Map(),ackAnnounced=new Set(),sessionTasks=new Set(),progressPending=new Set(),completeConfirming=new Set(),ackTimers=new Set();
   const reducedMotion=()=>!!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
   const draft=()=>({kind,payload:payload.value,targets:Object.fromEntries(TARGET_KEYS.map(k=>[k,selects[k].value]))});
   const online=()=>win?.navigator?.onLine!==false;
@@ -121,6 +121,14 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   const noTarget=d=>!TARGET_KEYS.some(k=>d.targets[k]===(d.kind==='MESSAGE'?'NOTIFY':'EXECUTE'));
   const hhmm=ms=>{const t=formatDisplayStamp(ms);return t==='—'?'—':t.slice(11);};
   const listenersKnown=()=>listenersState==='live';
+  // UI 25572dc condition 3: liveness/ageing against SERVER time. `offset` (a lower bound from every stamp, used for the
+  // ack "no answer" timeouts) can lag far behind when every stamp on screen is old, which would make a DEAD listener
+  // look alive. So liveness uses `liveOffset`, learned only from stamps that MOVED FORWARD in a live snapshot (a write
+  // that just happened: a newer heartbeat, a newer ack/progress stamp on the same task+agent, a switch flip). New rows are
+  // not used (an old task can enter the window). Until the first such stamp: client clock.
+  let liveOffset=null;
+  const freshStamp=(ms,prev)=>{if(Number.isSafeInteger(ms)&&Number.isSafeInteger(prev)&&ms>prev)liveOffset=learnOffset(liveOffset,ms,now());};
+  const liveNow=()=>serverNow(now(),liveOffset)??now();
   function problemText(d){
     const p=payloadProblem(d.payload);
     if(p==='secret')return SECRET_TEXT;               // never echoes the matched text
@@ -135,7 +143,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     if(disposed)return;
     const d=draft();const n=payloadLength(d.payload);const max=d.kind==='MESSAGE'?MESSAGE_MAX:PAYLOAD_MAX;
     counter.textContent=n>max?`${n}/${max} — חריגה של ${n-max} תווים`:`${n}/${max}`;
-    const level=payloadThreshold(d.payload);if(level!==lastThreshold){lastThreshold=level;limitLive.textContent=level?payloadThresholdText(level):'';}
+    const level=payloadThreshold(d.payload,d.kind);if(level!==lastThreshold){lastThreshold=level;limitLive.textContent=level?payloadThresholdText(level):'';}
     const payloadIssue=payloadProblem(d.payload)||kindProblem(d.kind,d.payload);
     error.textContent=payloadIssue&&payloadIssue!=='empty'?problemText(d):'';
     const locked=busy()||phase==='unconfirmed';
@@ -148,7 +156,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     reauth.hidden=phase!=='reauth';reset.hidden=taskId===null||busy();
   }
   function listenerLine(key){
-    const st=listenerState(seen[key],now(),listenersKnown());
+    const st=listenerState(seen[key],liveNow(),listenersKnown());
     if(listenersState==='idle')return TEXT.listenerLoadingLine;
     return st==='none'?TEXT.listenerNoneLine:st==='down'?TEXT.listenerDownLine:st==='unknown'?TEXT.listenerUnknownLine:null;
   }
@@ -248,7 +256,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   // while any agent is EXECUTE (no silent conversion).
   kindSel.addEventListener('change',()=>{
     const want=kindSel.value;const cur=Object.fromEntries(TARGET_KEYS.map(k=>[k,selects[k].value]));
-    const live=Object.fromEntries(TARGET_KEYS.map(k=>[k,listenerState(seen[k],now(),listenersKnown())]));
+    const live=Object.fromEntries(TARGET_KEYS.map(k=>[k,listenerState(seen[k],liveNow(),listenersKnown())]));
     const next=kindSwitch(kind,want,cur,live);
     if(!next){kindSel.value=kind;kindNote.textContent=TEXT.kindBlocked;render();return;}
     setKind(want);for(const k of TARGET_KEYS)selects[k].value=next.targets[k];
@@ -259,7 +267,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
 
   // ---- feed: keyed rows (by task id). A snapshot rebuilds only rows whose server data changed; the tick updates only
   // chip/status texts and stamps in place, so focus, selection, <details> state and scroll position survive. ----
-  const chipsFor=r=>{const t=now();return TARGET_KEYS.map(k=>chipFor(r,k,{now:t,seenAt:seen[k],pulseKnown:listenersKnown()}));};
+  const chipsFor=r=>{const t=liveNow();return TARGET_KEYS.map(k=>chipFor(r,k,{now:t,seenAt:seen[k],pulseKnown:listenersKnown()}));};
   function payloadParts(r){
     const snip=noteSnippet(r.payload);const short=node('div',null,'active-payload-text');short.dir='auto';short.textContent=snip.text||'—';
     if(!snip.truncated)return [short];
@@ -276,7 +284,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   function noteAckChange(r,a,el){
     const id=r.id+':'+a.key;const prev=ackKinds.get(id);ackKinds.set(id,a.kind);
     if(prev===undefined||prev===a.kind)return;
-    if(!reducedMotion()){el.classList.add('ack-changed');setTimeout(()=>el.classList.remove('ack-changed'),ACK_ANNOUNCE_MS);}
+    if(!reducedMotion()){el.classList.add('ack-changed');const t=setTimeout(()=>{ackTimers.delete(t);el.classList.remove('ack-changed');},ACK_ANNOUNCE_MS);ackTimers.add(t);}
     if((a.kind==='understood'||a.kind==='unreadable')&&sessionTasks.has(r.id)&&!ackAnnounced.has(id)){
       ackAnnounced.add(id);ackLive.textContent=a.kind==='understood'?TEXT.announceUnderstood(a.agent):TEXT.announceUnreadable(a.agent);}
   }
@@ -294,35 +302,55 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
       btn.hidden=!(clamp.scrollHeight>clamp.clientHeight+1);}};
     (win?.requestAnimationFrame??setTimeout)(run);
   }
+  // UI 25572dc condition 4: re-measure after width changes (rotation, zoom, window resize) and once fonts are loaded.
+  let lastFeedWidth=null,remeasureQueued=false;
+  function remeasureAll(){if(disposed||remeasureQueued)return;remeasureQueued=true;
+    (win?.requestAnimationFrame??setTimeout)(()=>{remeasureQueued=false;if(disposed)return;for(const li of rowNodes.values())if(li.querySelector('.active-ack-summary'))measureClamps(li);});}
+  const RO=win?.ResizeObserver;let resizeObs=null;
+  if(typeof RO==='function'){resizeObs=new RO(entries=>{for(const e of entries){const w=Math.round(e.contentRect?.width??0);if(w!==lastFeedWidth){lastFeedWidth=w;remeasureAll();}}});resizeObs.observe(feedList);}
+  const onResize=()=>remeasureAll();win?.addEventListener('resize',onResize);win?.addEventListener('orientationchange',onResize);
+  try{doc.fonts?.ready?.then(()=>remeasureAll(),()=>{});}catch{}
   function ackBlock(r,a){
     const el=node('div',null,'active-ack');el.dataset.agent=a.key;el.dataset.kind=a.kind;el.dataset.stale=String(a.stale);
     const head=node('p',null,'active-ack-head');head.append(node('strong',a.agent+' '));
     const st=node('span',a.kind==='understood'?(a.stale?TEXT.understoodLead+' · '+TEXT.stale:TEXT.understoodLead):a.text,'active-ack-state');head.append(st);el.append(head);
     if(a.kind==='understood'&&typeof a.summary==='string'){
       const id=r.id+':'+a.key;const domId='active-ack-sum-'+r.id+'-'+a.key;
-      el.append(node('p',TEXT.autoLabel,'active-ack-label'),node('p',TEXT.frame(a.agent),'active-ack-frame'));
-      const quote=node('blockquote',null,'active-ack-summary');const clamp=node('div',null,'clamp');clamp.id=domId;
+      // UI 25572dc condition 5: ONE frame line directly above the quote. It carries the security-required wording
+      // ("סיכום אוטומטי … אינו אישור") in visible text, so the separate pill was removed.
+      const frame=node('p',TEXT.frame(a.agent),'active-ack-frame');frame.id='active-ack-frame-'+r.id+'-'+a.key;
+      const quote=node('blockquote',null,'active-ack-summary');quote.setAttribute('aria-describedby',frame.id);const clamp=node('div',null,'clamp');clamp.id=domId;
       const bdi=doc.createElement('bdi');bdi.setAttribute('dir','rtl');bdi.textContent=a.summary;clamp.append(bdi);quote.append(clamp);
       const open=ackExpanded.has(id);if(open)clamp.classList.add('clamp-open');
       const btn=button(open?TEXT.collapse:TEXT.expand,'active-ack-more-'+r.id+'-'+a.key,'active-ack-expand');btn.dataset.ack=id;
       btn.setAttribute('aria-controls',domId);btn.setAttribute('aria-expanded',String(open));btn.hidden=!open;
       btn.onclick=()=>{const now2=!ackExpanded.has(id);if(now2)ackExpanded.add(id);else ackExpanded.delete(id);
         clamp.classList.toggle('clamp-open',now2);btn.setAttribute('aria-expanded',String(now2));btn.textContent=now2?TEXT.collapse:TEXT.expand;if(!now2)measureClamps(el.closest('li')??el);};
-      el.append(quote,btn);
+      el.append(frame,quote,btn);
       if(rowKind(r)==='TASK'&&r.targets[a.key]==='EXECUTE')el.append(node('p',TEXT.waitGo,'active-ack-go'));
     }
     return el;
   }
+  // C10 + UI 25572dc minor: "סמן: Grok בביצוע" / "סמן: Grok הסתיים"; הסתיים cannot be undone, so it asks first;
+  // while the write is pending focus moves to the row (the disabled button cannot keep it).
   function ownerButtons(r){
     const box=node('div',null,'active-owner');
     for(const [agent,key] of TARGET_AGENTS){
       const act=ownerAction(r,key);if(!act||r.dispatchedBy!==uid)continue;
-      const pk=r.id+':'+key;const b=button(`${agent}: ${act==='start'?TEXT.start:TEXT.complete}`,`active-${act}-${r.id}-${key}`,'active-owner-btn');b.dataset.agent=key;b.dataset.action=act;
-      b.disabled=progressPending.has(pk);
-      b.onclick=async()=>{if(progressPending.has(pk))return;progressPending.add(pk);renderFeed();say(TEXT.progressSaving);
+      const pk=r.id+':'+key;
+      const write=async()=>{if(progressPending.has(pk))return;progressPending.add(pk);completeConfirming.delete(pk);renderFeed();rowNodes.get(r.id)?.focus({preventScroll:true});say(TEXT.progressSaving);
         try{await withTimeout(api.markProgress(r.id,key,act==='start'?'IN_PROGRESS':'COMPLETED',sendTimeoutMs));if(!disposed)say(TEXT.progressConfirmed);}
         catch(e){if(!disposed)say(classifyFailure(e)==='denied'?TEXT.progressDenied:TEXT.progressUnconfirmed);}
         finally{progressPending.delete(pk);renderFeed();rowNodes.get(r.id)?.focus({preventScroll:true});}};
+      if(act==='complete'&&completeConfirming.has(pk)){
+        const yes=button(TEXT.yesComplete,`active-complete-yes-${r.id}-${key}`,'active-owner-yes'),no=button(TEXT.no,`active-complete-no-${r.id}-${key}`,'active-owner-no');
+        yes.disabled=progressPending.has(pk);yes.onclick=()=>{void write();};
+        no.onclick=()=>{completeConfirming.delete(pk);renderFeed();doc.getElementById(`active-complete-${r.id}-${key}`)?.focus();};
+        box.append(node('p',TEXT.confirmComplete(agent),'active-owner-confirm'),yes,no);continue;
+      }
+      const b=button(`${TEXT.markPrefix}${agent} ${act==='start'?TEXT.start:TEXT.complete}`,`active-${act}-${r.id}-${key}`,'active-owner-btn');b.dataset.agent=key;b.dataset.action=act;
+      b.disabled=progressPending.has(pk);
+      b.onclick=act==='start'?()=>{void write();}:()=>{if(progressPending.has(pk))return;completeConfirming.add(pk);renderFeed();doc.getElementById(`active-complete-yes-${r.id}-${key}`)?.focus();};
       box.append(b);
     }
     return box.childElementCount?box:null;
@@ -372,7 +400,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   // After a cancel attempt: the row's cancel button if it is still offered, else the row itself (tabindex -1), else the result line.
   function focusAfterCancel(id){const target=doc.getElementById('active-cancel-'+id)??rowNodes.get(id)??result;target?.focus?.({preventScroll:true});}
   const sigOf=r=>JSON.stringify([r.status,r.dispatchedBy===uid,r.timestamp,r.payload,r.kind,r.targets,r.progress,r.acks,cancelPending.has(r.id),confirming.has(r.id),
-    TARGET_KEYS.map(k=>progressPending.has(r.id+':'+k))]);
+    TARGET_KEYS.map(k=>progressPending.has(r.id+':'+k)),TARGET_KEYS.map(k=>completeConfirming.has(r.id+':'+k))]);
   function rowFor(r){
     let li=rowNodes.get(r.id);if(!li){li=node('li',null,'active-row');li.dataset.id=r.id;li.id='active-row-'+r.id;li.tabIndex=-1;rowNodes.set(r.id,li);}
     li.dataset.status=r.status;const sig=sigOf(r);
@@ -389,8 +417,9 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     if(feedState==='cache')parts.push(at?TEXT.feedCache+at:TEXT.feedCacheNone);
     else if(feedState==='error')parts.push(at?TEXT.feedErrorAt+at+TEXT.feedErrorSuffix:TEXT.feedErrorNone);
     if(uid&&listenersState!=='live'&&listenersState!=='idle')parts.push(TEXT.listenersUnknown);
-    feedError.textContent=parts.join(' ');
-    reconnect.hidden=!(feedState==='error'||listenersState==='error');
+    const fe=parts.join(' ');if(feedError.textContent!==fe)feedError.textContent=fe;     // write only on change (screen readers)
+    // UI 25572dc condition 1: a failed switch stream is reconnected too.
+    reconnect.hidden=!(feedState==='error'||listenersState==='error'||switchStreamDown());
     feedList.classList.toggle('active-feed-stale',feedState!=='live');
   }
   function renderFeed(){
@@ -408,18 +437,26 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     for(const k of TARGET_KEYS){const a=r.acks?.[k];if(a&&Number.isSafeInteger(a.updatedAt))offset=learnOffset(offset,a.updatedAt,t);
       const p=r.progress?.[k];if(p&&Number.isSafeInteger(p.updatedAt))offset=learnOffset(offset,p.updatedAt,t);}}}
   // ---- C5/C9: ack kill switch ----
+  const switchStreamDown=()=>!!uid&&switchState==='unknown'&&!stopSwitch;
   function renderSwitch(){
     if(disposed)return;
     const known=['on','off','missing'].includes(switchState);
-    swText.textContent=switchState==='idle'?TEXT.switchLoading:switchState==='on'?TEXT.switchOn
+    const text=switchState==='idle'?TEXT.switchLoading:switchState==='on'?TEXT.switchOn
       :switchState==='off'?TEXT.switchOffSince+(switchAt===null?'—':hhmm(switchAt)):switchState==='missing'?TEXT.switchMissing:TEXT.switchUnknown;
+    if(swText.textContent!==text)swText.textContent=text;                        // write only on change (role=status)
     sw.dataset.state=switchState;
-    swStop.hidden=switchState!=='on';swEnable.hidden=switchState!=='off'||switchConfirming;swSeed.hidden=switchState!=='missing';
+    // UI 25572dc condition 1: "עצירה" stays available while the state is unknown (writing enabled:false is always safe).
+    const stopOffered=switchState==='on'||switchState==='unknown';
+    swStop.hidden=!stopOffered;swEnable.hidden=switchState!=='off'||switchConfirming;swSeed.hidden=switchState!=='missing';
     swConfirm.hidden=!(switchConfirming&&switchState==='off');
-    for(const b of [swStop,swEnable,swSeed,swYes,swNo])b.disabled=switchWriting||!known;
+    for(const b of [swEnable,swSeed,swYes,swNo])b.disabled=switchWriting||!known;
+    swStop.disabled=switchWriting||!stopOffered;
   }
   async function writeSwitch(enabled){
     if(switchWriting)return;
+    if(switchState==='unknown'&&enabled)return;                                  // never enable blind
+    // unknown -> assume the document exists: a plain update to enabled:false (no fresh sign-in needed); if it does not
+    // exist the server answers not-found and acks are blocked anyway (Rules: missing switch = no ack).
     const exists=switchState!=='missing';
     if((switchState==='on'&&enabled)||(switchState==='off'&&!enabled&&exists)){swResult.textContent=TEXT.switchSame;return;}
     switchWriting=true;swReauth.hidden=true;swResult.textContent=TEXT.switchSaving;renderSwitch();
@@ -428,7 +465,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
         if(disposed)return;if(at===null||needsReauth(at,now())){swResult.textContent=TEXT.switchReauth;swReauth.hidden=false;return;}}
       await withTimeout(api.setAckSwitch(enabled,{exists},sendTimeoutMs));
       if(!disposed){swResult.textContent=TEXT.switchConfirmed;switchConfirming=false;}
-    }catch(e){if(!disposed)swResult.textContent=classifyFailure(e)==='denied'?TEXT.switchDenied:TEXT.switchUnconfirmed;}
+    }catch(e){if(!disposed)swResult.textContent=e?.code==='not-found'&&!enabled?TEXT.switchStopMissing:classifyFailure(e)==='denied'?TEXT.switchDenied:TEXT.switchUnconfirmed;}
     finally{switchWriting=false;renderSwitch();refreshAll();}
   }
   swStop.onclick=()=>{void writeSwitch(false);};
@@ -442,6 +479,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     try{stopSwitch=api.watchAckSwitch({
       next(v,meta){if(disposed)return;
         if(meta?.fromCache===true||!v){if(switchState==='idle')switchState='unknown';else if(switchState!=='unknown')switchState='unknown';refreshAll();return;}
+        if(['on','off','missing'].includes(switchState))freshStamp(v.updatedAt,switchAt);
         switchState=v.state;switchAt=v.updatedAt??null;if(Number.isSafeInteger(switchAt))offset=learnOffset(offset,switchAt,now());refreshAll();notify();},
       error(){if(disposed)return;switchState='unknown';const s=stopSwitch;stopSwitch=null;try{s?.();}catch{}refreshAll();}});}
     catch{switchState='unknown';refreshAll();}
@@ -453,7 +491,11 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
       next(list,meta){if(disposed)return;
         // A cached / offline snapshot is never shown as current: keep the last server rows, marked stale, with their time.
         if(meta?.fromCache===true||!Array.isArray(list)){feedState='cache';refreshAll();return;}
-        rows=list;feedAt=now();feedState='live';learnFromRows(orderTasks(list));renderFeed();notify();},
+        const first=feedAt===null;const prevRows=new Map(rows.map(r=>[r.id,r]));
+        rows=list;feedAt=now();feedState='live';const ordered=orderTasks(list);learnFromRows(ordered);
+        if(!first)for(const r of ordered){const p=prevRows.get(r.id);if(!p)continue;
+          for(const k of TARGET_KEYS){freshStamp(r.acks?.[k]?.updatedAt,p.acks?.[k]?.updatedAt);freshStamp(r.progress?.[k]?.updatedAt,p.progress?.[k]?.updatedAt);}}
+        renderFeed();notify();},
       error(){if(disposed)return;feedState='error';const s=stopFeed;stopFeed=null;try{s?.();}catch{}refreshAll();}});}
     catch{feedState='error';refreshAll();}
   }
@@ -462,7 +504,8 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     try{stopListeners=api.watchListeners({
       next(map,meta){if(disposed)return;
         if(meta?.fromCache===true||!map||typeof map!=='object'){listenersState='cache';}
-        else{seen={...map};listenerMeta=meta?.meta&&typeof meta.meta==='object'?{...meta.meta}:{};listenersState='live';const t=now();for(const v of Object.values(seen))offset=learnOffset(offset,v,t);}
+        else{const wasLive=listenersState==='live',prev=seen;if(wasLive)for(const [k,v] of Object.entries(map))freshStamp(v,prev[k]);
+          seen={...map};listenerMeta=meta?.meta&&typeof meta.meta==='object'?{...meta.meta}:{};listenersState='live';const t=now();for(const v of Object.values(seen))offset=learnOffset(offset,v,t);}
         refreshAll();notify();},
       error(){if(disposed)return;listenersState='error';const s=stopListeners;stopListeners=null;try{s?.();}catch{}refreshAll();notify();}});}
     catch{listenersState='error';refreshAll();notify();}
@@ -474,10 +517,12 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   reconnect.onclick=()=>{if(!uid)return;
     if(feedState==='error'){feedState='idle';startFeed();}
     if(listenersState==='error'){listenersState='idle';startListeners();}
+    if(switchStreamDown())startSwitch();
     refreshAll();notify();};
   function stop(){for(const s of [stopFeed,stopListeners,stopSwitch]){try{s?.();}catch{}}stopFeed=stopListeners=stopSwitch=null;clearInterval(tick);tick=null;
     rows=[];seen={};feedState='idle';feedAt=null;listenersState='idle';confirming.clear();cancelPending.clear();rowNodes.clear();rowSigs.clear();expanded.clear();
-    offset=null;listenerMeta={};switchState='idle';switchAt=null;switchWriting=false;switchConfirming=false;ackExpanded.clear();ackKinds.clear();ackAnnounced.clear();sessionTasks.clear();progressPending.clear();
+    offset=null;liveOffset=null;listenerMeta={};switchState='idle';switchAt=null;switchWriting=false;switchConfirming=false;ackExpanded.clear();ackKinds.clear();ackAnnounced.clear();sessionTasks.clear();progressPending.clear();completeConfirming.clear();
+    for(const t of ackTimers)clearTimeout(t);ackTimers.clear();
     ackLive.textContent='';swResult.textContent='';renderSwitch();
     feedList.replaceChildren();renderState();notify();}
   renderSwitch();
@@ -486,14 +531,16 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     // listener stream failed — never "אין מאזין" for an unknown state.
     listenerStatus:{
       text(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;
-        return TEXT.listenerPrefix+(listenersState==='idle'?TEXT.loading:listenerText(seen[pair[1]],now(),listenersKnown()));},
-      state(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;return listenersState==='idle'?'loading':listenerState(seen[pair[1]],now(),listenersKnown());},
+        return TEXT.listenerPrefix+(listenersState==='idle'?TEXT.loading:listenerText(seen[pair[1]],liveNow(),listenersKnown()));},
+      state(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;return listenersState==='idle'?'loading':listenerState(seen[pair[1]],liveNow(),listenersKnown());},
       // C1: the TARGET card's second line only: "אחרון: <ack state> · משימה HH:mm", linked to its feed row. Chips and the
       // summary stay in the feed (the cards are rebuilt with replaceChildren on every tick).
       ackLine(agent){const pair=TARGET_AGENTS.find(([a])=>a===agent);if(!pair||!uid)return null;const key=pair[1];
-        const r=orderTasks(rows).find(x=>['EXECUTE','NOTIFY'].includes(x.targets[key]));if(!r)return null;
+        // UI 25572dc minor: CANCELLED / closed rows are skipped; condition 5: understood reads "הבנתי (אוטומטי)".
+        const r=orderTasks(rows).find(x=>x.status==='PENDING'&&['EXECUTE','NOTIFY'].includes(x.targets[key]));if(!r)return null;
         const a=ackFor(r,key,ackOpts(key));if(!a)return null;
-        return {text:TEXT.cardLast+a.text+TEXT.cardTask+hhmm(r.timestamp),href:'#active-row-'+r.id,rowId:r.id,kind:a.kind,stale:a.stale};},
+        const label=a.kind==='understood'?(a.stale?TEXT.cardUnderstood+' · '+TEXT.stale:TEXT.cardUnderstood):a.text;
+        return {text:TEXT.cardLast+label+TEXT.cardTask+hhmm(r.timestamp),href:'#active-row-'+r.id,rowId:r.id,kind:a.kind,stale:a.stale};},
       focusRow(id){const li=rowNodes.get(id);if(li){li.scrollIntoView?.({block:'center'});li.focus({preventScroll:true});}},
       onChange(fn){changeFns.add(fn);return()=>changeFns.delete(fn);}
     },
@@ -505,7 +552,8 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
       if(uid!==null&&uid!==next)stop();                 // a different identity never sees the previous feed
       draftUid=next;uid=next;panel.hidden=false;start();render();renderFeed();renderSwitch();
     },
-    dispose(){disposed=true;flight++;win?.removeEventListener('online',netChange);win?.removeEventListener('offline',netChange);stop();changeFns.clear();},
-    debugState(){return {phase,taskId,previewKey:preview?.key??null,feedState,listenersState,rows:rowNodes.size,kind,offset,switchState};}
+    dispose(){disposed=true;flight++;win?.removeEventListener('online',netChange);win?.removeEventListener('offline',netChange);
+      win?.removeEventListener('resize',onResize);win?.removeEventListener('orientationchange',onResize);try{resizeObs?.disconnect();}catch{}stop();changeFns.clear();},
+    debugState(){return {phase,taskId,previewKey:preview?.key??null,feedState,listenersState,rows:rowNodes.size,kind,offset,liveOffset,switchState};}
   };
 }

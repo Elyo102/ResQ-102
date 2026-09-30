@@ -8,7 +8,8 @@
 // writes the raw payload to the hardened inbox (delivery:true), and with ack:true (default false) writes
 // acks[own key] = LIT -> UNDERSTOOD|UNREADABLE with a sanitized summary from the no-tools summarizer (S1), or
 // UNREADABLE without any model call (S0: no LLM key). It never executes, spawns, evaluates or forwards a task.
-// Fail-closed startup: secret env scrubbed FIRST; fixed agent (Grok|Codex); config + credential (+ LLM key) from
+// Fail-closed startup: FIRST an unsafe TLS/proxy/GRPC_* environment is refused (UNSAFE_ENV, names only), then the
+// secret env is scrubbed; fixed agent (Grok|Codex); config + credential (+ LLM key) from
 // %USERPROFILE%\.resq-listeners (DPAPI and ACL checks); the ID token verified BEFORE anything is read or written.
 // Stops on Ctrl+C, a dead credential, PERMISSION_DENIED on the stream (ACL_DENIED) or on 2 heartbeats in a row,
 // the stream restart cap (no automatic fallback to poll), or MAX_POLL_FAILURES failed polls (poll mode).
@@ -23,8 +24,10 @@ import {createListenWatch} from './listener/firestore-listen.mjs';
 import {createSummarizer} from './listener/summarizer.mjs';
 import {createCredentialStore} from './listener/credential-store.mjs';
 import {createWindowsProtector} from './listener/win-protect.mjs';
-import {scrubSecretEnv} from './listener/env-scrub.mjs';
-import {createFirestoreGrpc} from './listener/grpc-transport.mjs';
+import {scrubSecretEnv,unsafeEnvNames} from './listener/env-scrub.mjs';
+// grpc-transport (and with it @grpc/grpc-js, whose tls-helpers read GRPC_* env at import time) is loaded ONLY by the
+// dynamic import below, i.e. after main() has refused an unsafe environment (condition 1, 25572dc code review).
+const loadGrpcTransport=()=>import('./listener/grpc-transport.mjs');
 
 export const MAX_POLL_FAILURES=5;
 export const MAX_HEARTBEAT_DENIALS=2;
@@ -60,7 +63,7 @@ export async function startRunner({agent,listen='push',deps}){
     onPoll:(ok,e)=>{if(ok){failures=0;lastCode=null;}else{failures++;lastCode=safeCode(e);}}});
   let watch=null,ops=restOps,grpc=null;
   if(listen==='push'){
-    grpc=deps.grpc??createFirestoreGrpc({mode,projectId,emulatorHost:deps.emulatorHost});
+    grpc=deps.grpc??(await loadGrpcTransport()).createFirestoreGrpc({mode,projectId,emulatorHost:deps.emulatorHost});
     const lt=deps.listenTimers??{};
     watch=createListenWatch({grpc,projectId,key:config.key,token:()=>tokens.getIdToken(),tokenExpiresAt:()=>tokens.expiresAt,now:deps.now,
       setTimer:lt.setTimer,clearTimer:lt.clearTimer,random:lt.random,onFatal});
@@ -74,17 +77,25 @@ export async function startRunner({agent,listen='push',deps}){
     lastCode=safeCode(e);
     if(safeCode(e)==='PERMISSION_DENIED'){hbDenied++;if(hbDenied>=MAX_HEARTBEAT_DENIALS&&stopFn)void stopFn(EXIT.ACL_DENIED,'heartbeat_denied');}
   };
+  // Condition 2 (no retroactive ack): cut-off = max(local clock, iat of the ID token just verified at startup = server
+  // time). A local clock that runs behind cannot pull older tasks in; one that runs ahead only skips (fail safe).
+  const ackSince=Math.max((deps.now??Date.now)(),(tokens.issuedAt||0)*1000);
   const listener=createListener({config:rawConfig,ops,inbox,summarizer,ledger:ackWanted?ledger:null,mode:listen,now:deps.now,
-    setTimer:hb.setTimer,clearTimer:hb.clearTimer,onHeartbeat});
+    setTimer:hb.setTimer,clearTimer:hb.clearTimer,onHeartbeat,ackSince});
   let resolveDone;const done=new Promise(r=>{resolveDone=r;});let finished=false,statusTimer=null;
   const summ=summarizer?'S1':'S0';
   const line=extra=>{
     const w=watch?watch.stats():null;
     out(JSON.stringify({...listener.status(),summarizer:ackWanted?summ:'none',pollFailures:failures,heartbeatDenied:hbDenied,lastError:lastCode,
-      ...(w?{streams:w.streams,streamRestarts:w.restarts,restartsLastHour:w.restartsLastHour,streamCurrent:w.current,streamError:w.lastErrorCode}:{}),...extra}));
+      ...(w?{streams:w.streams,streamRestarts:w.restarts,restartsLastHour:w.restartsLastHour,restartsLastDay:w.restartsLastDay,streamCurrent:w.current,streamError:w.lastErrorCode}:{}),...extra}));
+  };
+  // Condition 3: restart counts (TOKEN_ROTATE included) persisted for provision-listener --status. Numbers only.
+  const saveStreamStats=()=>{
+    if(!watch||typeof store.writeStreamStats!=='function')return;
+    const w=watch.stats();try{store.writeStreamStats(agent,{restartsLastHour:w.restartsLastHour,restartsLastDay:w.restartsLastDay,at:(deps.now??Date.now)()});}catch{}
   };
   async function stop(code,reason){
-    if(finished)return;finished=true;clearT(statusTimer);await listener.stop();try{grpc?.close?.();}catch{}line({stopped:reason});resolveDone(code);
+    if(finished)return;finished=true;clearT(statusTimer);await listener.stop();saveStreamStats();try{grpc?.close?.();}catch{}line({stopped:reason});resolveDone(code);
   }
   stopFn=stop;
   const check=()=>{
@@ -93,10 +104,10 @@ export async function startRunner({agent,listen='push',deps}){
     else if(fatalCode)void stop(fatalCode==='ACL_DENIED'?EXIT.ACL_DENIED:EXIT.STREAM_RESTARTS,fatalCode.toLowerCase());
     else if(listen==='poll'&&failures>=MAX_POLL_FAILURES)void stop(EXIT.POLL_FAILURES,'poll_failures');
     else if(hbDenied>=MAX_HEARTBEAT_DENIALS)void stop(EXIT.ACL_DENIED,'heartbeat_denied');
-    else line({});
+    else{line({});saveStreamStats();}
   };
   listener.start();
-  line({started:true,heartbeatMs:HEARTBEAT_MS,...(listen==='poll'?{pollMs:deps.pollMs??POLL_MS}:{})});
+  line({started:true,heartbeatMs:HEARTBEAT_MS,...(listener.ackOn?{ackSince:listener.ackSince}:{}),...(listen==='poll'?{pollMs:deps.pollMs??POLL_MS}:{})});
   for(const c of pending.splice(0))onFatal(c);
   statusTimer=setT(check,deps.statusMs??STATUS_MS);
   return Object.freeze({listener,tokens,done,check,stop:()=>stop(EXIT.OK,'requested'),watch});
@@ -110,7 +121,9 @@ export function parseRunnerArgs(argv){
   return {agent:argv[1],listen:argv.length===4?argv[3]:'push'};
 }
 async function main(){
-  const {childEnv}=scrubSecretEnv();                             // FIRST: before any config, credential or key read
+  const unsafe=unsafeEnvNames();                                 // FIRST (condition 1): TLS/proxy/GRPC_* env -> refuse, names only
+  if(unsafe.length){process.stderr.write(JSON.stringify({status:'FAILED',code:'UNSAFE_ENV',names:unsafe})+'\n');process.exitCode=EXIT.STARTUP;return;}
+  const {childEnv}=scrubSecretEnv();                             // then: before any config, credential or key read
   if(process.platform!=='win32')fail('RUNNER_WINDOWS_ONLY');
   const {agent,listen}=parseRunnerArgs(process.argv.slice(2));
   const store=createCredentialStore({home:homedir(),protector:createWindowsProtector({baseEnv:childEnv})});

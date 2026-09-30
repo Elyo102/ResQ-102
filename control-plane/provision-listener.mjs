@@ -32,10 +32,12 @@ import {createFirestoreClient,encodeValue,structuredListenerQuery,FIRESTORE_URL}
 import {createIdentityAdmin} from './listener/identity-admin.mjs';
 import {createCredentialStore} from './listener/credential-store.mjs';
 import {createWindowsProtector,minimalChildEnv} from './listener/win-protect.mjs';
+import {unsafeEnvNames} from './listener/env-scrub.mjs';
 
 export const OWNER_EMAIL='eldad50@gmail.com';
 export const listenerEmail=(key,projectId)=>`listener-${key}@${projectId}.invalid`;
 export const randomPassword=()=>randomBytes(32).toString('base64url');
+export const STREAM_THRESHOLD=Object.freeze({perDay:75,perHour:8});
 const OPS=['create','rotate','revoke','status','delivery-on','delivery-off','ack-on','ack-off','llm-key-set','llm-key-status','llm-key-remove'];
 
 // deps: {mode, projectId, idtk, ownerDb, store, listenerClientFor(tokenSource), fetcher, getCerts, now, sleep, fs, home, inboxRoot?,
@@ -85,7 +87,14 @@ export async function provisionListener({op,agent,deps}){
     return {op,agent,email,uid:u?.uid??null,authDisabled:u?.disabled??null,claimsOk:u?claimsOk(u.claims):null,
       listenerDoc:d?{enabled:d.data.enabled===true,revokedAfter:d.data.revokedAfter??null}:null,
       credentialFile:store.hasCredential(agent),delivery:config?config.delivery:null,ack:config?config.ack:null,configError,
-      llmKey:llmStatus()};
+      llmKey:llmStatus(),stream:streamStatus()};
+  }
+  // Condition 3: last restart counts written by the runner (TOKEN_ROTATE counted). Threshold for adding Codex.
+  function streamStatus(){
+    let st;try{st=typeof store.readStreamStats==='function'?store.readStreamStats(agent):null;}catch(e){return {error:safeCode(e)};}
+    if(!st)return null;
+    return {...st,overThreshold:st.restartsLastDay>STREAM_THRESHOLD.perDay||st.restartsLastHour>STREAM_THRESHOLD.perHour,
+      threshold:`>${STREAM_THRESHOLD.perDay}/day or >${STREAM_THRESHOLD.perHour}/hour: do not add Codex; back to the security reviewer`};
   }
   function llmStatus(){try{return store.llmKeyStatus(agent);}catch(e){return {present:null,error:safeCode(e)};}}
   if(op==='delivery-on'||op==='delivery-off'){
@@ -231,6 +240,7 @@ export function readHiddenLine({stdin,stderr,max=400}){
   });
 }
 async function main(){
+  if(unsafeEnvNames().length)fail('UNSAFE_ENV');                // condition 1: TLS/proxy/GRPC_* env changes the owner's TLS too
   if(process.platform!=='win32')fail('PROVISION_WINDOWS_ONLY');
   const args=parseProvisionArgs(process.argv.slice(2));
   const ownerToken=ownerTokenSource();const home=homedir();

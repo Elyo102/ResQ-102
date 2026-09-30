@@ -261,7 +261,8 @@ await check('heartbeat carries the ack mode (on|off) and transport (push|poll); 
 // ---------------- push trigger: kind / NOTIFY / acks / ack_switch ----------------
 const ack=(db,id,key,value)=>updateDoc(doc(db,'active_tasks/'+id),{['acks.'+key]:value});
 const ackEntry=(state,summary='',extra={})=>({state,summary,updatedAt:serverTimestamp(),...extra});
-const setSwitch=enabled=>environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),{enabled,updatedAt:Timestamp.now()}));
+// Default: the switch has been ON since 48 h ago, so tasks seeded "now" are after its updatedAt (condition 2 tests move it).
+const setSwitch=(enabled,updatedAt=Timestamp.fromMillis(Date.now()-48*3600000))=>environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),{enabled,updatedAt}));
 const MSG=(id,extra={})=>task(id,{kind:'MESSAGE',targets:{grok:'NOTIFY',codex:'NOTIFY',gemini:'IGNORE'},acks:{},payload:'הודעה לכולם',...extra});
 async function seedMessages(){
  await seed();
@@ -349,6 +350,26 @@ await check('ack_switch: missing document or enabled:false denies every ack; ena
  await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),{enabled:'true',updatedAt:Timestamp.now()}));
  await assertFails(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
  await setSwitch(true);await assertSucceeds(ack(listener(),M_ALL,'grok',ackEntry('LIT')));
+});
+await check('no retroactive ack (25572dc condition 2): task.timestamp >= control/ack_switch.updatedAt while ON; re-enabling moves the cut-off',async()=>{
+ await seedMessages();const db=listener();
+ const at=ms=>Timestamp.fromMillis(ms);const cut=Date.now()+60000;
+ const msgAt=async ms=>{const id=randomUUID();await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'active_tasks/'+id),{...MSG(id),timestamp:at(ms)}));return id;};
+ await setSwitch(true,at(cut));                                                        // switched ON after M_ALL was created
+ await assertFails(ack(db,M_ALL,'grok',ackEntry('LIT')));                              // older task: never acked
+ await assertFails(ack(db,await msgAt(cut-1),'grok',ackEntry('LIT')));                 // 1 ms before the cut-off
+ await assertSucceeds(ack(db,await msgAt(cut),'grok',ackEntry('LIT')));                // exactly at the cut-off
+ await assertSucceeds(ack(db,await msgAt(cut+1000),'grok',ackEntry('LIT')));
+ for(const bad of [{enabled:true},{enabled:true,updatedAt:'2026-09-30'},{enabled:true,updatedAt:0}]){   // no/invalid updatedAt -> denied
+  await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'control/ack_switch'),bad));
+  await assertFails(ack(db,await msgAt(Date.now()),'grok',ackEntry('LIT')),JSON.stringify(bad));}
+ // real owner flow: OFF, then ON by the owner (fresh sign-in) stamps updatedAt = request.time
+ await setSwitch(false);const before=await msgAt(Date.now()-1000);
+ const o=owner({auth_time:Math.floor(Date.now()/1000)});
+ await assertSucceeds(updateDoc(doc(o,'control/ack_switch'),{enabled:true,updatedAt:serverTimestamp()}));
+ await assertFails(ack(db,before,'grok',ackEntry('LIT')));                             // created while OFF / before ON
+ await new Promise(r=>setTimeout(r,20));
+ await assertSucceeds(ack(db,await msgAt(Date.now()+1000),'grok',ackEntry('LIT')));    // created after ON
 });
 await check('ack_switch document: owner-only seed with enabled:false + fresh sign-in; OFF always allowed, ON needs a fresh sign-in; no listener access, no list, no delete',async()=>{
  await seed();

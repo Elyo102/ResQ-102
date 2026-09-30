@@ -1,6 +1,6 @@
 --- live/f30d3d85/source-0.rules
 +++ control-plane/deploy/firestore.control-plane.rules
-@@ -159,6 +159,201 @@
+@@ -159,6 +159,204 @@
        allow update: if owner() && dispatchCancel();
        allow delete: if false;
      }
@@ -124,7 +124,7 @@
 +    // Acknowledgement (the ONLY autonomous agent write, A1 amended): acks[own key] only, EXECUTE or NOTIFY targets,
 +    // PENDING, within 24 h of the task, LIT -> UNDERSTOOD | UNREADABLE (terminal), summary <= 280 allowlisted chars
 +    // (no newline, no bidi/zero-width), non-empty only for UNDERSTOOD. Denied unless control/ack_switch.enabled is
-+    // true (a missing switch document fails the get and denies).
++    // true AND the task was created at/after the switch's updatedAt (a missing switch document fails the get and denies).
 +    function atAckEntry(e) {
 +      return e is map && e.keys().hasAll(['state', 'summary', 'updatedAt'])
 +        && e.keys().hasOnly(['state', 'summary', 'updatedAt'])
@@ -138,8 +138,11 @@
 +      return (prev == null && next in ['LIT', 'UNDERSTOOD', 'UNREADABLE'])
 +        || (prev != null && prev.get('state', '') == 'LIT' && next in ['UNDERSTOOD', 'UNREADABLE']);
 +    }
-+    function atAckOn() {
-+      return get(/databases/$(database)/documents/control/ack_switch).data.enabled == true;
++    // No retroactive ack (25572dc review, condition 2): the task must be created at or after the switch's last change
++    // (switching ON stamps updatedAt = request.time), so tasks older than the current ON period are never acknowledged.
++    function atAckOn(taskTime) {
++      let sw = get(/databases/$(database)/documents/control/ack_switch).data;
++      return sw.enabled == true && sw.updatedAt is timestamp && taskTime >= sw.updatedAt;
 +    }
 +    function atAck() {
 +      let k = atKey();
@@ -152,7 +155,7 @@
 +        && after.acks.diff(prev).affectedKeys().hasOnly([k])
 +        && atAckEntry(after.acks.get(k, null))
 +        && atAckTransition(prev.get(k, null), after.acks.get(k, {}).get('state', ''))
-+        && atAckOn();
++        && atAckOn(before.timestamp);
 +    }
 +    function atHeartbeat(agentKey) {
 +      let d = request.resource.data;

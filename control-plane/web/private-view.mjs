@@ -135,7 +135,12 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
   }
   const panelIdentity=user=>{try{dispatchPanel?.setIdentity(user);}catch{if(panel)panel.hidden=true;}
     try{activeTasksPanel?.setIdentity(user);}catch{if(tasksPanel)tasksPanel.hidden=true;}};
+  // UI 25572dc minor: the cards are rebuilt only when what they show changed (keeps focus on the "אחרון:" link).
+  let cardsSig=null;
   function renderCards(agents){
+    const safe=f=>{try{return f();}catch{return null;}};
+    const sig=JSON.stringify(agents.map(a=>[a.agent,a.status,detailText(a),safe(()=>listenerStatus?.text(a.agent)??null),safe(()=>listenerStatus?.state?.(a.agent)??null),safe(()=>listenerStatus?.ackLine?.(a.agent)??null)]));
+    if(sig===cardsSig&&cards.childElementCount)return;cardsSig=sig;
     cards.replaceChildren();
     for(const a of agents){const card=node('article',null,'agent');const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
       let line=null;try{line=listenerStatus?.text(a.agent)??null;}catch{line=null;}
@@ -162,7 +167,7 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
     login.hidden=allowed;logout.hidden=!allowed;pause.hidden=!allowed;clear.hidden=!allowed;
     // Periodic refresh re-renders the agent status cards only; the log is rebuilt only for new data.
     if(statusOnly){if(allowed)renderCards(next.agents);return;}
-    if(!allowed){cards.replaceChildren();clearLog();seen.clear();primed=false;eventsLive.textContent='';hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
+    if(!allowed){cards.replaceChildren();cardsSig=null;clearLog();seen.clear();primed=false;eventsLive.textContent='';hidden.clear();paused=false;pause.textContent='השהיית תצוגה';return;}
     hidden=new Set([...hidden].filter(id=>next.events.some(e=>e.id===id)));
     renderCards(next.agents);
     // next.events arrives newest first from the controller (explicit numeric sort on a copy).
