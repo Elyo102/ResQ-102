@@ -154,6 +154,17 @@ test('C1-C5: ack lines only for targets; stale feed never computes "no answer"; 
   assert.equal(ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1,switchState:'on'}).kind,'lit_no_answer');
   assert.equal(ackFor(row({...r,acks:{grok:U('UNDERSTOOD','תקציר')}}),'grok',{serverNowMs:t0,switchState:'off'}).kind,'understood');
   assert.equal(ackFor(row({...r,status:'CANCELLED'}),'grok',{serverNowMs:t0,switchState:'off'}).kind,'closed');
+  // UI delta 536d253: Rules atAckOn (task.timestamp >= switch.updatedAt) -> a task older than the last switch-ON never gets an ack
+  const B='נוצרה לפני הפעלת אישורי קבלה — לא תאושר';
+  const late=ackFor(r,'grok',{serverNowMs:t0+ACK_NONE_TIMEOUT_MS+1,switchState:'on',switchAt:r.timestamp+1,listenerAck:'on'});assert.equal(late.kind,'before_switch');assert.equal(late.text,B);
+  assert.equal(ackFor(lit,'grok',{serverNowMs:t0+1000+ACK_LIT_TIMEOUT_MS+1,switchState:'on',switchAt:lit.timestamp+1}).kind,'before_switch');   // LIT too (not final)
+  assert.equal(ackFor(r,'grok',{serverNowMs:t0+1000,switchState:'on',switchAt:r.timestamp,listenerAck:'on'}).kind,'waiting');                   // at the cut-off: allowed
+  for(const bad of [null,undefined,'1',1.5,NaN])assert.equal(ackFor(r,'grok',{serverNowMs:t0+1000,switchState:'on',switchAt:bad,listenerAck:'on'}).kind,'waiting',String(bad));
+  assert.equal(ackFor(row({...r,acks:{grok:U('UNDERSTOOD','תקציר')}}),'grok',{switchState:'on',switchAt:r.timestamp+1}).kind,'understood');       // final acks stay
+  assert.equal(ackFor(row({...r,acks:{grok:U('UNREADABLE')}}),'grok',{switchState:'on',switchAt:r.timestamp+1}).kind,'unreadable');
+  assert.equal(ackFor(r,'grok',{switchState:'off',switchAt:r.timestamp+1}).kind,'switch_off');
+  assert.equal(ackFor(row({...r,status:'CANCELLED'}),'grok',{switchState:'on',switchAt:r.timestamp+1}).kind,'closed');
+  assert.match(ackFor(r,'grok',{fresh:false,switchState:'on',switchAt:r.timestamp+1}).text,/^נוצרה לפני הפעלת אישורי קבלה — לא תאושר · לא עדכני$/);
   // C3: offset from server stamps, never the client clock alone
   let off=null;off=learnOffset(off,t0,t0+3600000);off=learnOffset(off,t0+5000,t0+3600000);assert.equal(off,-3595000);assert.equal(serverNow(t0+3600000,off),t0+5000);assert.equal(serverNow(1,null),null);
   assert.deepEqual(mapListenerMeta([{id:'grok',data:{agent:'grok',seenAt:{toMillis:()=>1},ack:'on',mode:'push'}},{id:'codex',data:{agent:'codex',seenAt:{toMillis:()=>1}}}]),{grok:{ack:'on',mode:'push'},codex:{ack:null,mode:null}});

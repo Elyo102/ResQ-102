@@ -8,8 +8,8 @@
 // manual בביצוע/הסתיים clicks (C10). An automatic summary is framed in VISIBLE text as "אינו אישור" (never a tooltip).
 import {TARGET_AGENTS,TARGET_KEYS,payloadProblem,payloadLength,payloadThreshold,payloadThresholdText,blockedChars,blockedCharText,buildTask,previewDoc,draftKey,reconcileTask,
   chipFor,overallStatus,orderTasks,listenerText,listenerState,needsReauth,classifyFailure,renderStamp,PAYLOAD_MAX,SEND_TIMEOUT_MS,
-  KINDS,KIND_VALUES,kindSwitch,kindProblem,ackFor,ownerAction,learnOffset,serverNow,MESSAGE_MAX,rowKind,ACK_ANNOUNCE_MS} from './active-tasks-model.mjs?v=20260930-grok-dispatch5';
-import {noteSnippet,SECRET_TEXT,formatDisplayStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch5';
+  KINDS,KIND_VALUES,kindSwitch,kindProblem,ackFor,ownerAction,learnOffset,serverNow,MESSAGE_MAX,rowKind,ACK_ANNOUNCE_MS} from './active-tasks-model.mjs?v=20260930-grok-dispatch6';
+import {noteSnippet,SECRET_TEXT,formatDisplayStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch6';
 
 export const TEXT=Object.freeze({
   title:'משימות פעילות לסוכנים',
@@ -51,7 +51,7 @@ export const TEXT=Object.freeze({
   cardLast:'אחרון: ',cardTask:' · משימה ',
   switchLoading:'טוען את מצב אישורי הקבלה…',switchOn:'אישורי קבלה פעילים (מאזין שהופעל ידנית כותב "נדלק/הבנתי" בלבד).',
   switchOffSince:'אישורי קבלה כבויים מאז ',switchMissing:'לא מוגדר — אישורי קבלה חסומים',switchUnknown:'מצב אישורי הקבלה לא ידוע (אין חיבור)',
-  stopAcks:'עצירת אישורי קבלה',enableAcks:'הפעלה מחדש של אישורי קבלה',seedSwitch:'יצירת המתג (כבוי)',
+  stopAcks:'עצירת אישורי קבלה',stopNote:'משימות שנוצרו לפני העצירה לא יאושרו גם אחרי הפעלה מחדש',enableAcks:'הפעלה מחדש של אישורי קבלה',seedSwitch:'יצירת המתג (כבוי)',
   confirmEnable:'להפעיל מחדש אישורי קבלה? מאזין שרץ ידנית יקרא משימות חדשות ויכתוב סיכום אוטומטי. זה אינו אישור לביצוע.',
   yesEnable:'כן, להפעיל',switchSaving:'שומר… ממתין לאישור השרת.',switchConfirmed:'השינוי אושר על ידי השרת.',
   switchUnconfirmed:'לא אושר — ייתכן שהשינוי עוד יחול. המצב יתעדכן רק מהשרת.',switchDenied:'השרת דחה את השינוי. המצב לא השתנה.',
@@ -101,8 +101,10 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
   const swConfirm=node('div',null,'active-ack-confirm');swConfirm.hidden=true;
   const swYes=button(TEXT.yesEnable,'active-ack-enable-yes'),swNo=button(TEXT.no,'active-ack-enable-no');swConfirm.append(node('p',TEXT.confirmEnable),swYes,swNo);
   const swReauth=button(TEXT.reauth,'active-ack-reauth');swReauth.hidden=true;
+  // UI delta 536d253: visible (never a tooltip) consequence of stopping — the Rules' cut-off moves to the next ON.
+  const swStopNote=node('p',TEXT.stopNote,'active-ack-stop-note');swStopNote.id='active-ack-stop-note';swStop.setAttribute('aria-describedby',swStopNote.id);
   const swResult=node('p','','active-ack-switch-result');swResult.id='active-ack-switch-result';swResult.setAttribute('aria-live','polite');
-  sw.append(swText,swStop,swEnable,swSeed,swConfirm,swReauth,swResult);
+  sw.append(swText,swStop,swStopNote,swEnable,swSeed,swConfirm,swReauth,swResult);
   const ackLive=node('p','','active-ack-live');ackLive.id='active-ack-live';ackLive.setAttribute('role','status');ackLive.setAttribute('aria-live','polite');
   panel.append(title,node('p',TEXT.hint,'hint'),sw,kindWrap,kindNote,fields,payloadWrap,error,actions,sendReason,previewBox,result,node('h3',TEXT.feed),feedError,reconnect,ackLive,feedList);
 
@@ -277,7 +279,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     more.open=expanded.has(r.id);fill();more.addEventListener('toggle',fill);return [short,more];
   }
   const fresh=()=>feedState==='live';
-  const ackOpts=k=>({serverNowMs:serverNow(now(),offset),fresh:fresh(),switchState:['on','off','missing'].includes(switchState)?switchState:'unknown',listenerAck:listenerMeta[k]?.ack??null});
+  const ackOpts=k=>({serverNowMs:serverNow(now(),offset),fresh:fresh(),switchState:['on','off','missing'].includes(switchState)?switchState:'unknown',switchAt:Number.isSafeInteger(switchAt)?switchAt:null,listenerAck:listenerMeta[k]?.ack??null});
   const acksFor=r=>TARGET_KEYS.map(k=>ackFor(r,k,ackOpts(k))).filter(Boolean);
   // C7: highlight a state change (<= 5 s, none under reduced motion); one polite region announces ONLY UNDERSTOOD /
   // UNREADABLE, and only for tasks created in this session.
@@ -447,7 +449,7 @@ export function mountActiveTasksPanel({doc,api,signIn,now=Date.now,uuid=()=>glob
     sw.dataset.state=switchState;
     // UI 25572dc condition 1: "עצירה" stays available while the state is unknown (writing enabled:false is always safe).
     const stopOffered=switchState==='on'||switchState==='unknown';
-    swStop.hidden=!stopOffered;swEnable.hidden=switchState!=='off'||switchConfirming;swSeed.hidden=switchState!=='missing';
+    swStop.hidden=!stopOffered;swStopNote.hidden=!stopOffered;swEnable.hidden=switchState!=='off'||switchConfirming;swSeed.hidden=switchState!=='missing';
     swConfirm.hidden=!(switchConfirming&&switchState==='off');
     for(const b of [swEnable,swSeed,swYes,swNo])b.disabled=switchWriting||!known;
     swStop.disabled=switchWriting||!stopOffered;

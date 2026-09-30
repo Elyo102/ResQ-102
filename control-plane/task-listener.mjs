@@ -11,7 +11,7 @@
 //   session. A task is never approval for push, deploy, delete or secrets.
 // - The payload is never logged, never put in a file name, env, shell, eval or telemetry. It reaches ONLY the inbox
 //   file (delivery on) and the injected summarizer (ack on); the summary reaches ONLY acks[own key].
-import {hasSecret,NOTE_PATTERN,UUID_V4,NOTE_MAX} from './web/dispatch-model.mjs?v=20260930-grok-dispatch5';
+import {hasSecret,NOTE_PATTERN,UUID_V4,NOTE_MAX} from './web/dispatch-model.mjs?v=20260930-grok-dispatch6';
 
 export const AGENT_KEYS=Object.freeze({Codex:'codex',Grok:'grok',Gemini:'gemini'});
 export const TARGET_KEYS=Object.freeze(['codex','grok','gemini']);

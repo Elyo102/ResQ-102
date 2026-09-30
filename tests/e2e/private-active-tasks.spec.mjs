@@ -12,8 +12,8 @@ async function mount(page,{tick=0}={}){
   if(files.includes(file)){await route.fulfill({body:readFileSync(new URL(file,source)),contentType:'text/javascript'});return;}
   if(file==='private.css'){await route.fulfill({body:readFileSync(new URL('private.css',source)),contentType:'text/css'});return;}
   await route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="he" dir="rtl"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/private.css"><p>בדיקה סינתטית בלבד — לא מחובר לענן</p><main id="root"></main><script type="module">
-import {mountPrivateDashboard} from '/private-view.mjs?v=20260930-grok-dispatch5';
-import {mountActiveTasksPanel} from '/active-tasks-view.mjs?v=20260930-grok-dispatch5';
+import {mountPrivateDashboard} from '/private-view.mjs?v=20260930-grok-dispatch6';
+import {mountActiveTasksPanel} from '/active-tasks-view.mjs?v=20260930-grok-dispatch6';
 let onAuth;window.creates=[];window.verifies=[];window.cancels=[];window.listeners=[];window.uidNow='synthetic-owner';
 window.watchStarts=0;window.watchStops=0;window.listenerStarts=0;window.listenerStops=0;
 window.createImpl=()=>new Promise(()=>{});window.verifyImpl=()=>Promise.resolve({exists:false});window.cancelImpl=()=>Promise.resolve();window.authImpl=async()=>Date.now();
@@ -37,6 +37,13 @@ window.entry=(state,step,agoMs=1000)=>({state,step,updatedAt:Date.now()-agoMs});
 </script></html>`});
  });
  await page.goto('http://localhost:41996/private-active-tasks'+(tick?'?tick='+tick:''));await expect(page.locator('#private-login')).toBeVisible();return errors;
+}
+// Optional axe-core scan: the repo does not ship axe (no new dependency); set RESQ_AXE_PATH to an axe.min.js to run it.
+async function axeClean(page,include){
+ const path=process.env.RESQ_AXE_PATH;if(!path)return null;
+ await page.addScriptTag({content:readFileSync(path,'utf8')});
+ const r=await page.evaluate(async include=>{const res=await window.axe.run({include},{resultTypes:['violations']});return res.violations.map(v=>v.id+': '+v.nodes.map(n=>n.target.join(' ')).join(', '));},include);
+ expect(r).toEqual([]);return r;
 }
 const authorize=page=>page.evaluate(()=>setIdentity({uid:'synthetic-owner',backendAuthorized:true}));
 const events=page=>page.evaluate(()=>listeners.at(-1).next([{id:'00000000-0000-0000-0000-000000000001',agent:'Codex',kind:'heartbeat',task:'local_tests',step:'running',at:Date.now()}],{fromCache:false}));
@@ -297,7 +304,7 @@ test('cancel hidden when every selected agent finished; cancel failure texts (de
 
 // ---------------- push trigger: UI review C12 (review/push-trigger-verdicts.md) ----------------
 const ackEl=(page,n,agent)=>rowEl(page,n).locator(`.active-ack[data-agent="${agent}"]`);
-const onSwitch=page=>page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-1000}));
+const onSwitch=page=>page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-3600000}));   // switched ON 1 h before the fixtures (atAckOn cut-off)
 test('C12 ack states: only targets light; UNDERSTOOD = "הבנתי:" outside the bdi + ONE visible frame line next to the quote + go; card line on the target card only, linked to the row',async({page})=>{
  const errors=await mount(page);await authorize(page);await events(page);await onSwitch(page);
  const summary='אבדוק את הבדיקות ואחזור עם תוצאה';
@@ -542,7 +549,11 @@ test('25572dc-2 LIT with the switch off shows "נעצר — אישורי קבל�
   feedNext([row(1,{acks:{grok:{state:'LIT',summary:'',updatedAt:Date.now()-300000}}})]);});
  await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נעצר — אישורי קבלה כבויים');
  await expect(page.locator('#active-tasks-panel')).not.toContainText('אין תשובה');
+ // switched ON again just now: the task predates the cut-off (Rules atAckOn) -> "לא תאושר", still never "no answer"
  await page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-1000}));
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נוצרה לפני הפעלת אישורי קבלה — לא תאושר');
+ // a snapshot where the switch has been ON since before the task: the LIT timeout applies
+ await page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()-3600000}));
  await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText('נדלק, אין תשובה');expect(errors).toEqual([]);
 });
 test('25572dc-3 card liveness and the kind defaults follow SERVER time: client clock 1 h ahead still shows "מאזין" and MESSAGE defaults to NOTIFY; old stamps never make a dead listener look alive',async({page})=>{
@@ -567,4 +578,34 @@ test('25572dc-4 clamp re-measured on resize: wide -> no expand button; narrower 
  const btn=page.locator(`#active-ack-more-${rid(1)}-grok`);await expect(page.locator(`#active-ack-sum-${rid(1)}-grok`)).toBeVisible();await expect(btn).toBeHidden();
  await page.setViewportSize({width:320,height:740});await expect(btn).toBeVisible();
  await page.setViewportSize({width:1280,height:800});await expect(btn).toBeHidden();expect(errors).toEqual([]);
+});
+test('536d253 before_switch: a task older than the last switch-ON says "לא תאושר" (Rules atAckOn), never waiting / no answer; visible stop note; axe clean',async({page})=>{
+ const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);
+ await page.evaluate(()=>{const T=Date.now();window.T=T;swNext({state:'on',updatedAt:T-120000});hbNext({grok:T},{meta:{grok:{ack:'on',mode:'push'}}});
+  feedNext([row(1,{timestamp:T-600000,acks:{}}),row(2,{timestamp:T-300000,acks:{grok:{state:'LIT',summary:'',updatedAt:T-290000}}}),
+   row(3,{timestamp:T-60000,acks:{}}),row(4,{timestamp:T-900000,acks:{grok:{state:'UNDERSTOOD',summary:'סיכום',updatedAt:T-890000}}})]);});
+ const B='נוצרה לפני הפעלת אישורי קבלה — לא תאושר';
+ await expect(ackEl(page,1,'grok').locator('.active-ack-state')).toHaveText(B);await expect(ackEl(page,1,'grok')).toHaveAttribute('data-kind','before_switch');
+ await expect(ackEl(page,2,'grok').locator('.active-ack-state')).toHaveText(B);                               // LIT before the switch: not "no answer"
+ await expect(ackEl(page,3,'grok').locator('.active-ack-state')).toHaveText('ממתין לאישור קבלה');              // created after the switch-ON
+ await expect(ackEl(page,4,'grok')).toHaveAttribute('data-kind','understood');                                 // a final ack stays
+ await expect(page.locator('#active-tasks-panel')).not.toContainText('אין תשובה');await expect(page.locator('#active-tasks-panel')).not.toContainText('לא התקבל אישור');
+ // the stop note is visible text next to the stop button (not a tooltip), described-by for AT
+ const note=page.locator('#active-ack-stop-note');await expect(note).toBeVisible();await expect(note).toHaveText('משימות שנוצרו לפני העצירה לא יאושרו גם אחרי הפעלה מחדש');
+ await expect(page.locator('#active-ack-stop')).toHaveAttribute('aria-describedby','active-ack-stop-note');await expect(page.locator('#active-ack-stop')).not.toHaveAttribute('title',/./);
+ await page.evaluate(()=>swNext({state:'off',updatedAt:Date.now()}));await expect(note).toBeHidden();
+ await expect(ackEl(page,3,'grok').locator('.active-ack-state')).toHaveText('נעצר — אישורי קבלה כבויים');
+ // OFF -> ON moves the cut-off: task 3 (created before this ON) now says "לא תאושר" too
+ await page.evaluate(()=>swNext({state:'on',updatedAt:Date.now()}));await expect(note).toBeVisible();
+ await expect(ackEl(page,3,'grok').locator('.active-ack-state')).toHaveText(B);
+ await expect(card(page,'Grok').locator('.agent-ack')).toHaveText(new RegExp('^אחרון: '+B+' · משימה \\d\\d:\\d\\d$'));
+ await axeClean(page,['#active-ack-switch','#active-feed','.agent-ack']);expect(errors).toEqual([]);
+});
+test('536d253 LOW: focus stays on the card\'s "אחרון:" link when the card re-renders',async({page})=>{
+ const errors=await mount(page);await page.locator('#private-login').click();await authorize(page);await events(page);await onSwitch(page);
+ await page.evaluate(()=>{hbNext({grok:Date.now()});feedNext([row(1,{acks:{}})]);});
+ const link=card(page,'Grok').locator('.agent-ack a');await link.focus();await expect(link).toBeFocused();
+ await page.evaluate(()=>feedNext([row(1,{acks:{grok:{state:'LIT',summary:'',updatedAt:Date.now()}}})]));   // card content changes -> rebuild
+ await expect(card(page,'Grok').locator('.agent-ack')).toContainText('נדלק — קורא');
+ await expect(card(page,'Grok').locator('.agent-ack a')).toBeFocused();expect(errors).toEqual([]);
 });

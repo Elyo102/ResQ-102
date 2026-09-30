@@ -289,7 +289,9 @@ await check('listener list: targets.<key> in [EXECUTE, NOTIFY] + orderBy(timesta
  await seedMessages();
  const inQ=(db,key,n=5)=>query(collection(db,'active_tasks'),where('targets.'+key,'in',['EXECUTE','NOTIFY']),orderBy('timestamp','desc'),limit(n));
  await assertSucceeds(getDocs(inQ(listener(),'grok')));await assertSucceeds(getDocs(inQ(listener('Codex'),'codex',1)));
- const got=await getDocs(inQ(listener(),'grok'));assert.ok(got.docs.some(d=>d.id===M_ALL)&&got.docs.some(d=>d.id===T_GROK));
+ const got=await getDocs(inQ(listener(),'grok'));// NOTIFY (M_ALL) and EXECUTE (T_NEW) both returned. Not T_GROK: 4 seeded grok docs share one timestamp and the
+ // limit-5 window tie-breaks by random doc id, so T_GROK fell out ~1 run in 4 (flake found on 30/09).
+ assert.ok(got.docs.some(d=>d.id===M_ALL)&&got.docs.some(d=>d.id===T_NEW));
  await assertFails(getDocs(inQ(listener(),'grok',6)));
  await assertFails(getDocs(query(collection(listener(),'active_tasks'),where('targets.grok','in',['EXECUTE','NOTIFY']),orderBy('timestamp','desc'))));   // no limit
  await assertFails(getDocs(query(collection(listener(),'active_tasks'),where('targets.grok','in',['EXECUTE','NOTIFY','IGNORE']),orderBy('timestamp','desc'),limit(5))));

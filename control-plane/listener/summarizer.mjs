@@ -12,7 +12,7 @@
 // - Errors are safe codes only (requestJson): never the key, the payload, the output or a response body.
 import {randomBytes} from 'node:crypto';
 import {requestJson,fail} from './listener-auth.mjs';
-import {hasSecret} from '../web/dispatch-model.mjs?v=20260930-grok-dispatch5';
+import {hasSecret} from '../web/dispatch-model.mjs?v=20260930-grok-dispatch6';
 
 export const PROVIDERS=Object.freeze({
   Grok:Object.freeze({host:'api.x.ai',url:'https://api.x.ai/v1/chat/completions',bodyKeys:Object.freeze(['model','messages','temperature','max_tokens','stream'])}),

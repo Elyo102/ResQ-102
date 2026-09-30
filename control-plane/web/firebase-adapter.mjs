@@ -3,7 +3,7 @@
 // Its only writes are owner dispatch requests (create queued / cancel own queued) and owner active tasks
 // (create PENDING / cancel own PENDING), enforced by Firestore Rules. It never writes progress or listener docs.
 // No GitHub token, no CI trigger and no executor call exists in the browser.
-import {mapTaskDoc,mapListenerDocs,mapListenerMeta,mapAckSwitch} from './active-tasks-model.mjs?v=20260930-grok-dispatch5';
+import {mapTaskDoc,mapListenerDocs,mapListenerMeta,mapAckSwitch} from './active-tasks-model.mjs?v=20260930-grok-dispatch6';
 export const PROJECT = 'resq-agent-control-20260928';
 export const APP_ID = '1:802712493259:web:5634c433be7c020b7c4f4e';
 

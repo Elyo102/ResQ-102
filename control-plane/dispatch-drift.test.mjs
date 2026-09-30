@@ -63,13 +63,13 @@ test('dispatch web code: textContent only, no statuses invented, no GitHub/CI tr
   // Token-shaped strings only: the secret BLOCK list in dispatch-model.mjs names the prefixes on purpose.
   assert.doesNotMatch(t,/api\.github\.com|workflow_dispatch|repository_dispatch|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}/i,f);}
  for(const f of ['dispatch-model.mjs','dispatch-view.mjs'])assert.doesNotMatch(read('control-plane/web/'+f),/RUNNING|CONNECTED|IN_PROGRESS|COMPLETED/,f);
- const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch5']);
+ const tokens=new Set(web.flatMap(([,t])=>[...t.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1])));assert.deepEqual([...tokens],['20260930-grok-dispatch6']);
 });
-test('C11: HEARTBEAT_FRESH_MS in 150-180 s with the 120 s heartbeat; token dispatch5 in every importer outside web/ too (no drift)',async()=>{
+test('C11: HEARTBEAT_FRESH_MS in 150-180 s with the 120 s heartbeat; token dispatch6 in every importer outside web/ too (no drift)',async()=>{
  const model=await import('./web/active-tasks-model.mjs');const listener=await import('./task-listener.mjs');
  assert.equal(listener.HEARTBEAT_MS,120000);assert.ok(model.HEARTBEAT_FRESH_MS>=150000&&model.HEARTBEAT_FRESH_MS<=180000,String(model.HEARTBEAT_FRESH_MS));
  assert.ok(model.HEARTBEAT_FRESH_MS>listener.HEARTBEAT_MS);
  const files=['control-plane/task-listener.mjs','control-plane/listener/summarizer.mjs','tests/e2e/private-active-tasks.spec.mjs'];
- for(const f of files){const t=new Set([...read(f).matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1]));assert.deepEqual([...t],['20260930-grok-dispatch5'],f);}
+ for(const f of files){const t=new Set([...read(f).matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(m=>m[1]));assert.deepEqual([...t],['20260930-grok-dispatch6'],f);}
  for(const rel of walk(join(root,'control-plane')).concat(walk(join(root,'tests/e2e'))))if(rel!=='control-plane/dispatch-drift.test.mjs')assert.ok(!read(rel).includes('grok-'+'dispatch4'),rel);
 });

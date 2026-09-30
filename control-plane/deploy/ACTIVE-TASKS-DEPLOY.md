@@ -121,7 +121,7 @@ Security code review of 25572dc (SAFE_TO_MERGE_TO_DEV_WITH_CONDITIONS) — deplo
    (it replaced 5b743f81 when the no-retroactive-ack cut-off was added). Different: roll back at once.
 4. **Rollback:** PATCH the release back to ruleset f7f2d208 (same command as section 4, with the full f7f2d208… ruleset name read
    from the live release before deploying). The runner rollback is `--mode poll` (ack forced off).
-5. **UI** (`/status/`, token `20260930-grok-dispatch5`) is released only after the Rules are live — the new UI writes `kind`/`acks:{}`.
+5. **UI** (`/status/`, token `20260930-grok-dispatch6`) is released only after the Rules are live — the new UI writes `kind`/`acks:{}`.
    Do not release a panel whose switch cannot be stopped after a stream error (fixed in the UI 25572dc delta, test 25572dc-1).
 6. **Seed the kill switch (condition 7)** from the dashboard only ("יצירת המתג (כבוי)", fresh auth) — `control/ack_switch {enabled:false}`.
    Until it exists every ack is denied. Turn it ON only after ALL of: the LLM key's spend cap is set at the provider, the key is

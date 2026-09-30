@@ -137,6 +137,14 @@ A2 is unchanged (fixed 9-line inbox header; MESSAGE never creates an inbox file)
   "עצירת אישורי קבלה" stays available when the switch stream failed (state unknown): it sends a plain update to
   `enabled:false` (no fresh sign-in needed), and "התחברות מחדש לפיד" restarts the switch stream too (UI review 25572dc,
   condition 1). Other stops: Ctrl+C, `--ack off`, `--revoke`.
+  The UI mirrors the Rules cut-off (UI delta review 536d253): while the switch is ON, a PENDING task created before the
+  switch's `updatedAt` shows "נוצרה לפני הפעלת אישורי קבלה — לא תאושר" (kind `before_switch`) instead of waiting / "no answer",
+  and the stop button carries visible text "משימות שנוצרו לפני העצירה לא יאושרו גם אחרי הפעלה מחדש".
+- **Server-time caveats (UI, LOW, documented not fixed):** liveness uses an offset learned only from stamps that move forward
+  live; before the first such stamp it uses the client clock, so a client clock that is behind by less than 60 s (inside the
+  skew window) can make a dead listener look alive for up to ~60 s longer, and a stamp delivered late (slow network / a
+  delayed snapshot) skews the learned offset by that delay. The offset is still wall-clock based: the monotonic
+  (`performance.now()`) offset suggested by the UI review is NOT implemented yet.
 - **Rollback:** runner `--mode poll` (ack forced off); Rules: PATCH the release back to ruleset f7f2d208 (see `deploy/ACTIVE-TASKS-DEPLOY.md`).
 - **Rules diff:** `deploy/firestore-push-trigger.diff` vs 358b4c0c, reasons per removed line in `deploy/FIRESTORE-PUSH-TRIGGER-REASONS.md`.
   The artifact changed with condition 2 (`atAckOn` cut-off): sha256 is now **790ffc36…** (was 5b743f81…).

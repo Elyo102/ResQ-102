@@ -1,4 +1,4 @@
-import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch5';
+import {createPrivateController} from './private-controller.mjs?v=20260930-grok-dispatch6';
 // Single display map for every closed telemetry task type (see core.mjs TASK_LABELS / TELEMETRY_TASKS).
 export const TASK_TEXT=Object.freeze({local_tests:'בדיקות מקומיות',git_change:'שינוי קוד',pull_request_review:'סקירת בקשת שינוי',deployment_check:'בדיקת פריסה',
   agent_review_cycle:'מחזור סקירת סוכנים',planner_draft_recovery:'שחזור טיוטת מתכנן',swap_race_review:'סקירת מרוצי החלפות',clean_checkout_gates:'שערי בדיקה בעותק נקי'});
@@ -141,8 +141,10 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
     const safe=f=>{try{return f();}catch{return null;}};
     const sig=JSON.stringify(agents.map(a=>[a.agent,a.status,detailText(a),safe(()=>listenerStatus?.text(a.agent)??null),safe(()=>listenerStatus?.state?.(a.agent)??null),safe(()=>listenerStatus?.ackLine?.(a.agent)??null)]));
     if(sig===cardsSig&&cards.childElementCount)return;cardsSig=sig;
+    // UI delta 536d253 (LOW): if the "אחרון:" link had focus, give it back to the same agent's new link after the rebuild.
+    const act=doc.activeElement;const focusAgent=act&&cards.contains(act)&&act.closest('.agent-ack')?act.closest('.agent')?.dataset.agent??null:null;
     cards.replaceChildren();
-    for(const a of agents){const card=node('article',null,'agent');const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
+    for(const a of agents){const card=node('article',null,'agent');card.dataset.agent=a.agent;const status=node('p',a.status,'agent-status');status.dataset.status=a.status;
       let line=null;try{line=listenerStatus?.text(a.agent)??null;}catch{line=null;}
       if(typeof line==='string'&&line){
         // With a task-listener line present, the telemetry status is labelled as CI so the two are not confused.
@@ -154,7 +156,7 @@ export function mountPrivateDashboard({root,auth,subscribe,dispatchPanel=null,ac
         if(ack&&typeof ack.text==='string'&&typeof ack.href==='string'){
           const l=node('p',null,'agent-ack');l.dataset.kind=ack.kind??'';l.dataset.stale=String(ack.stale===true);
           const link=node('a',ack.text);link.href=ack.href;link.onclick=e=>{e.preventDefault();try{listenerStatus.focusRow?.(ack.rowId);}catch{}};
-          l.append(link);card.append(l);
+          l.append(link);card.append(l);if(focusAgent===a.agent)queueMicrotask(()=>link.focus({preventScroll:true}));
         }
       }else card.append(node('h2',a.agent),status,node('small',detailText(a)));
       cards.append(card);}

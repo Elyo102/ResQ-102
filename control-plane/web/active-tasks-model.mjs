@@ -11,7 +11,7 @@
 //   never approval and never the start of work. "נדלק, אין תשובה" / "לא התקבל אישור קבלה" are computed against
 //   SERVER time (an offset learned from server stamps), never the client clock; unknown offset -> not computed.
 // - IN_PROGRESS / COMPLETED are set only by the owner's manual click (Rules atOwnerProgress).
-import {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,hasSecret,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,formatDisplayStamp,renderStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch5';
+import {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,hasSecret,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,formatDisplayStamp,renderStamp} from './dispatch-model.mjs?v=20260930-grok-dispatch6';
 export {NOTE_MAX,NOTE_PATTERN,NOTE_RULES_PATTERN,UUID_V4,AUTH_MAX_AGE_MS,needsReauth,classifyFailure,renderStamp};
 
 // Fixed agent map (display name -> key), identical to atKeyFor() in the Rules. Claude is not a target.
@@ -49,7 +49,8 @@ export const TEXT=Object.freeze({
   rejected:{invalid:'נדחה — משימה לא תקינה',secret:'נדחה — נראה שיש סוד',limit:'נדחה — יותר מדי משימות פתוחות',declined:'נדחה ע"י הסוכן'},
   ack:{lit:'נדלק — קורא',litNoAnswer:'נדלק, אין תשובה',understood:'הבנתי',unreadable:'לא הצליח לקרוא',waiting:'ממתין לאישור קבלה',
     noAck:'לא התקבל אישור קבלה',noAckMaybeOff:'אין אישור קבלה (ייתכן שכבוי)',listenerOff:'אישורי קבלה כבויים במאזין',
-    switchOff:'נעצר — אישורי קבלה כבויים',switchMissing:'לא מוגדר — אישורי קבלה חסומים',stale:'לא עדכני',closed:'—'},
+    switchOff:'נעצר — אישורי קבלה כבויים',switchMissing:'לא מוגדר — אישורי קבלה חסומים',stale:'לא עדכני',closed:'—',
+    beforeSwitch:'נוצרה לפני הפעלת אישורי קבלה — לא תאושר'},
   listenerNone:'אין מאזין',listenerDown:'מנותק',listenerUp:'מאזין',listenerUnknown:'לא ידוע (אין חיבור)',
   overall:{CANCELLED:'בוטל',done:'הסתיים',running:'בביצוע',no_pulse:'לא ידוע — דווח התחלה, אין דופק מהמאזין',pulse_unknown:'מצב המאזין לא ידוע',stuck:'לא ידוע / תקוע',
     delivered:'נמסר — טרם התחיל',saved:'נשמר בלבד (מסירה כבויה)',waiting:'ממתין',message:'הודעה'}
@@ -154,10 +155,11 @@ export function learnOffset(prev,serverMs,clientMs){
 }
 export const serverNow=(clientNow,offset)=>offset===null||offset===undefined?null:clientNow+offset;
 // One ack line per TARGET agent (EXECUTE or NOTIFY); null for non-targets (C1: a non-target never lights up).
-// opts: {serverNowMs|null, fresh (feed is live), switchState 'on'|'off'|'missing'|'unknown', listenerAck 'on'|'off'|null}
-// kind: understood | unreadable | lit | lit_no_answer | waiting | no_ack | no_ack_maybe_off | listener_off | switch_off | switch_missing | closed
+// opts: {serverNowMs|null, fresh (feed is live), switchState 'on'|'off'|'missing'|'unknown', switchAt (server ms of the
+// switch's updatedAt)|null, listenerAck 'on'|'off'|null}
+// kind: understood | unreadable | lit | lit_no_answer | waiting | no_ack | no_ack_maybe_off | listener_off | switch_off | switch_missing | before_switch | closed
 // C2: when the feed is not fresh the line is marked stale and "no answer" is never computed.
-export function ackFor(row,key,{serverNowMs=null,fresh=true,switchState='unknown',listenerAck=null}={}){
+export function ackFor(row,key,{serverNowMs=null,fresh=true,switchState='unknown',switchAt=null,listenerAck=null}={}){
   const target=row?.targets?.[key];if(target!=='EXECUTE'&&target!=='NOTIFY')return null;
   const agent=TARGET_AGENTS.find(([,k])=>k===key)[0];
   const raw=row.acks?.[key];const a=validAck(raw)?raw:null;
@@ -169,6 +171,9 @@ export function ackFor(row,key,{serverNowMs=null,fresh=true,switchState='unknown
   // so it is checked BEFORE the LIT state (final UNDERSTOOD/UNREADABLE above stay as they are).
   if(row.status==='PENDING'&&switchState==='off')return out('switch_off',TEXT.ack.switchOff);
   if(row.status==='PENDING'&&switchState==='missing')return out('switch_missing',TEXT.ack.switchMissing);
+  // UI delta 536d253: the Rules only accept an ack when task.timestamp >= ack_switch.updatedAt (atAckOn). A task created
+  // before the switch was last turned ON will never be acked, so say so instead of waiting / "no answer" forever.
+  if(row.status==='PENDING'&&switchState==='on'&&Number.isSafeInteger(switchAt)&&row.timestamp<switchAt)return out('before_switch',TEXT.ack.beforeSwitch);
   if(a?.state==='LIT'){
     if(t!==null&&t-a.updatedAt>ACK_LIT_TIMEOUT_MS)return out('lit_no_answer',TEXT.ack.litNoAnswer);
     return out('lit',TEXT.ack.lit);
