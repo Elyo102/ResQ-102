@@ -15,7 +15,7 @@ name: בדיקות
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:      # אפשר גם להריץ ידנית מהלשונית Actions
 
