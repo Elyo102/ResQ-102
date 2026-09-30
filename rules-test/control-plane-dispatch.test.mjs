@@ -15,7 +15,9 @@ let passed=0;const check=async(name,fn)=>{await fn();passed++;console.log('PASS 
 
 // ---- exact-byte provenance (no capture needed: prefix+suffix must hash to the pinned live capture) ----
 await check('artifact bytes, provenance and byte-identical live-capture prefix/suffix',async()=>{
- assert.equal(meta.kind,'dispatch-only-deploy-artifact');assert.equal(meta.status,'LOCAL_ARTIFACT_NOT_DEPLOYED');
+ assert.equal(meta.kind,'dispatch-only-deploy-artifact');assert.equal(meta.status,'DEPLOYED');
+ assert.equal(meta.deployment.liveSourceSha256,meta.artifactSha256);assert.equal(meta.deployment.preDeploy.sourceSha256,CAPTURE_SHA256);
+ assert.match(meta.deployment.rulesetName,/^projects\/resq-agent-control-20260928\/rulesets\/[0-9a-f-]{36}$/);assert.match(meta.deployment.command,/--config control-plane\/deploy\/firebase\.control-plane\.json --project resq-agent-control-20260928 --only firestore:rules/);
  assert.equal(meta.project,'resq-agent-control-20260928');assert.equal(meta.captureSha256,CAPTURE_SHA256);
  assert.equal(hash(artifact),meta.artifactSha256);assert.equal(artifact.length,meta.artifactBytes);
  assert.ok(!artifact.includes(0x0d),'artifact must be LF-only exact bytes');
@@ -36,7 +38,7 @@ await check('artifact bytes, provenance and byte-identical live-capture prefix/s
 if(process.argv[2]){
  await check('private capture direct-byte comparison and deterministic reassembly',async()=>{
   const capture=readFileSync(process.argv[2]);const a=assembleDispatchRules(capture,fragment),b=assembleDispatchRules(capture,fragment);
-  assert.deepEqual(a.result,artifact);assert.deepEqual(b.result,artifact);assert.deepEqual(a.provenance,meta);
+  assert.deepEqual(a.result,artifact);assert.deepEqual(b.result,artifact);const {status,deployment,...generated}=meta;assert.deepEqual({...a.provenance,status:undefined},{...generated,status:undefined});assert.equal(a.provenance.status,'LOCAL_ARTIFACT_NOT_DEPLOYED');
   assert.deepEqual(Buffer.concat([artifact.subarray(0,meta.insertionOffsetBytes),artifact.subarray(meta.insertionOffsetBytes+meta.insertedBytes)]),capture);
  });
 }

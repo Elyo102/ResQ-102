@@ -25,5 +25,31 @@
     "budget fragment",
     "new event task labels"
   ],
-  "status": "LOCAL_ARTIFACT_NOT_DEPLOYED"
+  "status": "DEPLOYED",
+  "deployment": {
+    "deployedAt": "2026-09-30T12:53:04.135353Z",
+    "deployedAtNote": "release updateTime reported by the Rules API (15:53:04 Asia/Jerusalem)",
+    "releaseName": "projects/resq-agent-control-20260928/releases/cloud.firestore",
+    "rulesetName": "projects/resq-agent-control-20260928/rulesets/ba01608d-2c4b-41c0-9a3c-b019fb518007",
+    "liveSourceName": "firestore.dispatch.rules",
+    "liveSourceSha256": "17301818b67da187ede1dbf98aff00a4f22b9351498e6b513318572a85059f57",
+    "sourceCommit": "0e88ba7932341737ed63c0e2a34e5aa500d977ac",
+    "command": "firebase deploy --config control-plane/deploy/firebase.control-plane.json --project resq-agent-control-20260928 --only firestore:rules --non-interactive",
+    "firebaseTools": "15.28.1",
+    "preDeploy": {
+      "rulesetName": "projects/resq-agent-control-20260928/rulesets/427c5744-bdfc-4da7-baaa-8f7277c64322",
+      "releaseUpdateTime": "2026-09-28T21:16:51.349144Z",
+      "sourceSha256": "8c0eb6571dd04f2100c4e9988a32457a039b31bb23e77275298a435b3ce51454",
+      "capture": "capture-2026-09-30T12-52-48-040Z",
+      "capturedAt": "2026-09-30T12:52:48.043Z",
+      "driftCheck": "PASS"
+    },
+    "postDeploy": {
+      "capture": "capture-2026-09-30T12-53-11-172Z",
+      "capturedAt": "2026-09-30T12:53:11.176Z",
+      "sourceSha256": "17301818b67da187ede1dbf98aff00a4f22b9351498e6b513318572a85059f57",
+      "hashCheck": "PASS"
+    },
+    "rollback": "Redeploy the pre-deploy capture bytes (sha256 8c0eb6571dd04f2100c4e9988a32457a039b31bb23e77275298a435b3ce51454) with the dedicated config, then recapture and verify."
+  }
 }

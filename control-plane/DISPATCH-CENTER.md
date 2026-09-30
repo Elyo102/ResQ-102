@@ -1,7 +1,9 @@
 # Agent Dispatch Center — security review and deploy runbook
 
-Status: **implemented locally, NOT deployed**. The artifact is `LOCAL_ARTIFACT_NOT_DEPLOYED`. Deploying it
-needs explicit approval from the owner, separate from this commit. The same goes for any push or Pages sync.
+Status: **DEPLOYED** to `resq-agent-control-20260928` on 30/09/2026 15:53:04 IL (ruleset `ba01608d-2c4b-41c0-9a3c-b019fb518007`),
+after owner approval. Pre-deploy drift check and post-deploy hash check both passed; details in
+`control-plane/deploy/firestore-dispatch-provenance.json` (`deployment`). The assembler CLI regenerates the
+local (undeployed) record; keep the `deployment` block when re-running it.
 
 ## Separate security review (required by AGENT-MATRIX.md)
 
