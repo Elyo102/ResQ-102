@@ -11,7 +11,7 @@ const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, stampReserveCalculationVersion } = require('./attendance-hours-calculator');
 
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -20,7 +20,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const RETAINED_DAY_FIELDS = Object.freeze([
   'uid', 'emp_number', 'full_name', 'crew', 'date', 'month', 'status',
-  ...EDITABLE, ...DERIVED
+  ...EDITABLE, ...DERIVED, 'reserve_calculation_version'
 ]);
 
 function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
@@ -174,6 +174,7 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           subStationIds: candidate.sub_station ? [candidate.sub_station] : [] });
         try { validateAttendanceEdit(candidate, before); }
         catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+        stampReserveCalculationVersion(candidate, before);
         const output = derived(candidate, config);
         try {
           await assertReserveShiftNoOverlap({ tx, root, employeeNumber: person.employee_number, uid: r.ctx.uid,
@@ -309,6 +310,7 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           catch (error) { fail('failed-precondition', error.message); }
           try { validateAttendanceEdit(candidate, null); }
           catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+          stampReserveCalculationVersion(candidate, null);
           pending.push({ ...candidate, ...derived(candidate, config) });
         }
         const knownRows = new Map([...byDate].map(([key, row]) => [key, row.value]));

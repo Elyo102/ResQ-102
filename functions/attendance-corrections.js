@@ -21,7 +21,7 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const { monthKey } = require('./hr-hours-model');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, stampReserveCalculationVersion } = require('./attendance-hours-calculator');
 const COLLECTIONS = Object.freeze({
   events: 'attendance_correction_events', receipts: 'attendance_correction_receipts',
   jobs: 'attendance_correction_notification_jobs'
@@ -279,7 +279,7 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
       // Calculators receive independent bounded values; mutation of their input
       // cannot alter the copied legacy record, request or the stored evidence.
       if (r.intent.operation === 'create' || r.intent.operation === 'update') {
-        try { prepared.forEach((v,i) => validateAttendanceEdit(v,before[i])); }
+        try { prepared.forEach((v,i) => { validateAttendanceEdit(v,before[i]); stampReserveCalculationVersion(v,before[i]); }); }
         catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
       }
       const outputs = prepared.map(v => v === null ? null : derived(structuredClone(v), structuredClone(config)));

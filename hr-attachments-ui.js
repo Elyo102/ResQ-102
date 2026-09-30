@@ -24,7 +24,7 @@ const MAX_NAME = 120;
 // is allocated for it.
 const MAX_BASE64 = Math.ceil(MAX_BYTES / 3) * 4;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
-const PARENT_KINDS = ['request', 'document'];
+const PARENT_KINDS = ['request', 'document', 'attendance'];
 const SERVER_STATES = ['reserved', 'stored_pending', 'stored', 'cleaning', 'ready', 'failed'];
 
 const TYPES = { 'application/pdf': [0x25, 0x50, 0x44, 0x46, 0x2d], 'image/jpeg': [0xff, 0xd8, 0xff],
@@ -948,6 +948,7 @@ export function createHrAttachmentsUI(root, adapter = disconnected) {
       if (owner) void load(true);
     },
     isLocked() { return locked; },
+    hasPendingWork() { return !!(selecting || (pick && !['ready', 'failed'].includes(pick.phase))); },
     destroy() {
       unregisterUpdateGuard();
       if (disposed) return;

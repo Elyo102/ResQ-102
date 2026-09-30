@@ -13,7 +13,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = ['functions/index.js', 'firestore.rules', 'firestore.indexes.json',
   'functions/backup-policy.js', 'functions/hr-attachment-service.js',
   'functions/hr-attachments.js', 'functions/hr-attachments-storage.js',
-  'functions/hr-requests.js', 'functions/hr-documents.js', 'functions/ops-member-identity.js'];
+  'functions/hr-requests.js', 'functions/hr-documents.js', 'functions/ops-member-identity.js',
+  'functions/attendance-attachments.js'];
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const hashes = () => Object.fromEntries(files.map(file => [file,
   createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')]));
@@ -28,9 +29,10 @@ const expectedBucket = 'station-102-hr-private-europe-west1';
 const index = read('functions/index.js');
 const imports = [
   ...index.matchAll(/^const hrAttachmentServiceModule = require\((['"])\.\/hr-attachment-service\1\);\s*$/gm),
-  ...index.matchAll(/^const hrAttachmentsStorageModule = require\((['"])\.\/hr-attachments-storage\1\);\s*$/gm)
+  ...index.matchAll(/^const hrAttachmentsStorageModule = require\((['"])\.\/hr-attachments-storage\1\);\s*$/gm),
+  ...index.matchAll(/^const attendanceAttachmentsModule = require\((['"])\.\/attendance-attachments\1\);\s*$/gm)
 ];
-assert.equal(imports.length, 2, 'exactly the two actual attachment imports');
+assert.equal(imports.length, 3, 'exactly the three actual attachment imports');
 const start = index.indexOf('const HR_PRIVATE_BUCKET = ');
 const end = index.indexOf('\nconst hrHoursNudges = ', start);
 assert.ok(start >= 0 && end > start, 'bounded attachment registration anchors exist');
@@ -40,7 +42,7 @@ async function check(label, run) { await run(); ++passed; console.log('PASS ' + 
 
 function harness({ failAt = null } = {}) {
   const counts = { storage: 0, bucket: 0, adapter: 0, auth: 0, service: 0 };
-  const required = [], registered = [], calls = [], adapterDeps = [], serviceDeps = [], buckets = [];
+  const required = [], registered = [], calls = [], adapterDeps = [], serviceDeps = [], buckets = [], attendanceDeps = [], contextCalls = [];
   const exports = {};
   const db = Object.freeze({ synthetic: 'db' }), auth = Object.freeze({ synthetic: 'live-auth-provider' });
   const requests = Object.freeze({ synthetic: 'actual-existing-requests-service-reference' });
@@ -50,10 +52,10 @@ function harness({ failAt = null } = {}) {
   const result = Object.freeze({ synthetic: 'unchanged-service-result' });
   class HttpsError extends Error {}
   const initializationError = new Error('synthetic initialization failure');
-  let failure = null, failed = false;
+  let failure = null, failed = false, armed = false;
   const hit = stage => {
     ++counts[stage];
-    if (!failed && failAt === stage) { failed = true; throw initializationError; }
+    if (armed && !failed && failAt === stage) { failed = true; throw initializationError; }
   };
   const service = Object.freeze(Object.fromEntries([
     ...Object.values(mapping).map(method => [method, request => {
@@ -62,8 +64,12 @@ function harness({ failAt = null } = {}) {
     }]),
     ['reconcile', () => { throw new Error('reconcile must never become a public handler'); }]
   ]));
+  const monthAt = () => '2026-09';
+  const attendance = Object.freeze({ context(request) {
+    contextCalls.push(request); return failure ? Promise.reject(failure) : Promise.resolve(result);
+  }});
   vm.runInNewContext(source, {
-    exports, db, HttpsError, hrRequests: requests, hrDocuments: documents,
+    exports, db, HttpsError, hrRequests: requests, hrDocuments: documents, jerusalemMonth: monthAt,
     require(name) {
       required.push(name);
       if (name === './hr-attachment-service') return { createHrAttachmentService(deps) {
@@ -72,6 +78,9 @@ function harness({ failAt = null } = {}) {
       if (name === './hr-attachments-storage') return { createHrAttachmentsStorage(deps) {
         hit('adapter'); adapterDeps.push(deps); return adapter;
       } };
+      if (name === './attendance-attachments') return { createAttendanceAttachments(deps) {
+        attendanceDeps.push(deps); return attendance;
+      }};
       throw new Error('unexpected module require: ' + name);
     },
     admin: {
@@ -83,8 +92,9 @@ function harness({ failAt = null } = {}) {
     },
     onCall(options, handler) { registered.push({ options, handler }); return handler; }
   }, { filename: 'actual-hr-attachment-registration.js', timeout: 1000 });
+  armed = true;
   return { counts, required, registered, calls, adapterDeps, serviceDeps, buckets, exports,
-    db, auth, requests, documents, bucket, adapter, result, HttpsError, initializationError,
+    db, auth, requests, documents, attendance, attendanceDeps, contextCalls, monthAt, bucket, adapter, result, HttpsError, initializationError,
     setFailure(value) { failure = value; } };
 }
 
@@ -103,19 +113,37 @@ await check('whole index has exactly five attachment exports and one lazy constr
 });
 
 const fixture = harness();
-await check('module discovery registers handlers without attachment Auth, Storage or service construction', () => {
-  assert.deepEqual(fixture.required, ['./hr-attachment-service', './hr-attachments-storage']);
-  assert.deepEqual(fixture.counts, { storage: 0, bucket: 0, adapter: 0, auth: 0, service: 0 });
+await check('module discovery constructs attendance authority only, without Storage or attachment service construction', () => {
+  assert.deepEqual(fixture.required, ['./hr-attachment-service', './hr-attachments-storage', './attendance-attachments']);
+  assert.deepEqual(fixture.counts, { storage: 0, bucket: 0, adapter: 0, auth: 1, service: 0 });
   assert.equal(fixture.calls.length, 0);
-  assert.deepEqual(Object.keys(fixture.exports).sort(), Object.keys(mapping).sort());
+  assert.deepEqual(Object.keys(fixture.exports).sort(), [...Object.keys(mapping), 'getAttendanceOrderContext'].sort());
+  assert.equal(fixture.attendanceDeps.length, 1);
+  const deps=fixture.attendanceDeps[0];
+  assert.deepEqual(Object.keys(deps).sort(), ['HttpsError','auth','db','monthAt']);
+  for(const key of ['HttpsError','auth','db','monthAt'])assert.equal(deps[key],fixture[key]);
+  assert.equal(fixture.contextCalls.length,0);
 });
 await check('all five callables retain the exact reviewed App Check and per-function resource options', () => {
-  assert.equal(fixture.registered.length, 5);
-  for (const { options, handler } of fixture.registered) {
+  assert.equal(fixture.registered.length, 6);
+  const attachmentHandlers=fixture.registered.filter(entry=>entry.handler!==fixture.exports.getAttendanceOrderContext);
+  assert.equal(attachmentHandlers.length,5);
+  for (const { options, handler } of attachmentHandlers) {
     assert.deepEqual({ ...options }, expectedOptions);
     assert.equal(typeof handler, 'function');
   }
-  assert.equal(new Set(fixture.registered.map(entry => entry.options)).size, 5);
+  assert.equal(new Set(attachmentHandlers.map(entry => entry.options)).size, 5);
+});
+await check('attendance context keeps exact regional App Check, original request and rejection without Storage', async()=>{
+  assert.equal((index.match(/exports\.getAttendanceOrderContext\s*=/g)||[]).length,1);
+  const entry=fixture.registered.find(item=>item.handler===fixture.exports.getAttendanceOrderContext);
+  assert.deepEqual({...entry.options},{enforceAppCheck:true,region:'europe-west1'});
+  const request=Object.freeze({data:Object.freeze({target_uid:'synthetic',date:'2026-09-10'})});
+  assert.equal(await entry.handler(request),fixture.result);assert.equal(fixture.contextCalls.at(-1),request);
+  const failure=new Error('synthetic context failure');fixture.setFailure(failure);
+  await assert.rejects(()=>entry.handler(request),e=>e===failure);fixture.setFailure(null);
+  assert.equal(fixture.contextCalls.length,2);
+  assert.deepEqual(fixture.counts,{storage:0,bucket:0,adapter:0,auth:1,service:0});
 });
 await check('simultaneous first calls share one lazily assembled service and server-only bucket', async () => {
   const requests = Object.keys(mapping).map((name, i) => Object.freeze({
@@ -126,15 +154,15 @@ await check('simultaneous first calls share one lazily assembled service and ser
   }));
   const values = await Promise.all(Object.keys(mapping).map((name, i) => fixture.exports[name](requests[i])));
   assert.ok(values.every(value => value === fixture.result));
-  assert.deepEqual(fixture.counts, { storage: 1, bucket: 1, adapter: 1, auth: 1, service: 1 });
+  assert.deepEqual(fixture.counts, { storage: 1, bucket: 1, adapter: 1, auth: 2, service: 1 });
   assert.deepEqual(fixture.buckets, [[expectedBucket]]);
   assert.equal(fixture.adapterDeps.length, 1);
   assert.deepEqual(Object.keys(fixture.adapterDeps[0]), ['bucket']);
   assert.equal(fixture.adapterDeps[0].bucket, fixture.bucket);
   assert.equal(fixture.serviceDeps.length, 1);
   const deps = fixture.serviceDeps[0];
-  assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'auth', 'db', 'documents', 'requests', 'storage']);
-  for (const key of ['db', 'auth', 'requests', 'documents', 'HttpsError']) assert.equal(deps[key], fixture[key], key);
+  assert.deepEqual(Object.keys(deps).sort(), ['HttpsError', 'attendance', 'auth', 'db', 'documents', 'requests', 'storage']);
+  for (const key of ['db', 'auth', 'requests', 'documents', 'attendance', 'HttpsError']) assert.equal(deps[key], fixture[key], key);
   assert.equal(deps.storage, fixture.adapter);
   for (let i = 0; i < requests.length; ++i) {
     assert.equal(fixture.calls[i].request, requests[i]);
@@ -170,12 +198,13 @@ await check('all five handlers preserve service rejections without retrying a bu
 for (const stage of ['storage', 'bucket', 'adapter', 'auth', 'service']) {
   await check(stage + ' initialization failure does not poison the lazy cache or invoke a service operation', async () => {
     const f = harness({ failAt: stage });
+    const initialStageCount=f.counts[stage];
     const request = Object.freeze({ data: Object.freeze({ request_id: 'retry-initialization-' + stage }) });
     await assert.rejects(() => f.exports.reserveHrAttachment(request), error => error === f.initializationError);
     assert.equal(f.calls.length, 0);
     assert.equal(await f.exports.resumeHrAttachment(request), f.result);
     assert.equal(f.calls.length, 1); assert.equal(f.calls[0].method, 'resume');
-    assert.equal(f.calls[0].request, request); assert.equal(f.counts[stage], 2);
+    assert.equal(f.calls[0].request, request); assert.equal(f.counts[stage], initialStageCount+2);
     const counts = { ...f.counts };
     assert.equal(await f.exports.listHrAttachments(request), f.result);
     assert.deepEqual(f.counts, counts, 'successful construction remains cached');
@@ -223,10 +252,10 @@ await check('all three policy entries reject both readable and redacted identity
       error.includes('identity data must be forbidden')), key + '/' + humanReadable);
   }
 });
-await check('source contains explicit deny-all matches for all three paths (not a rules-emulator proof)', () => {
+await check('source contains explicit deny-all matches for all four paths (not a rules-emulator proof)', () => {
   const rules = read('firestore.rules');
   for (const [collection, parameter] of [['hr_attachments', 'attachmentId'],
-    ['hr_attachment_ledgers', 'ledgerId'], ['hr_attachment_actor_quotas', 'quotaId']]) {
+    ['hr_attachment_ledgers', 'ledgerId'], ['hr_attachment_actor_quotas', 'quotaId'], ['attendance_order_parents','parentId']]) {
     const matches = [...rules.matchAll(new RegExp('match /' + collection + '/\\{' + parameter +
       '\\}\\s*\\{\\s*allow read, write: if false;\\s*\\}', 'g'))];
     assert.equal(matches.length, 1, collection);

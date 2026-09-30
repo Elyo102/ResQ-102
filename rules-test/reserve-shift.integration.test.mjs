@@ -9,7 +9,7 @@ import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):8191$/, 'explicit loopback emulator on 8191 required');
+assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(?:127\.0\.0\.1:(?:8191|8199)|localhost:8191)$/, 'explicit demo loopback emulator on 8191 or owned8199 required');
 assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq', 'demo-resq required');
 assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq', 'conflicting project is forbidden');
 process.env.METADATA_SERVER_DETECTION = 'none';
@@ -133,12 +133,13 @@ try {
     });
   } else {
 
-  await check('self create derives 24 hours despite fixed site and commits server timestamp', async () => {
+  await check('self create derives 24 plus 8.5 despite fixed site and commits server timestamp', async () => {
     owner = await person();
     const response = await self.mutateDay(request(owner, saveData('2026-09-10', { sub_station: 'fixed_site' })));
     assert.equal(response.duplicate, false);
     saved = (await ref(owner, '2026-09-10').get()).data();
-    assert.equal(saved.hours, 24); assert.equal(saved.day_type_he, 'משמרת בזמן מילואים');
+    assert.equal(saved.hours, 32.5); assert.equal(saved.day_type_he, 'משמרת בזמן מילואים');
+    assert.equal(saved.reserve_calculation_version, 2);
     assert.equal(saved.end_day, 1); assert.equal(saved.uid, owner.uid);
     assert.ok(saved.reported_at instanceof Timestamp);
     assert.ok(saved.updated_at instanceof Timestamp);
@@ -229,7 +230,8 @@ try {
   await check('Rules allow owner and local HR reads and deny other employee/station reads', async () => {
     const other = await person(), foreign = await person('hr_coordinator', otherSid);
     const path = ref(owner, '2026-09-10').path;
-    assert.equal((await getDoc(doc(environment.authenticatedContext(owner.uid, owner.claims).firestore(), path))).data().hours, 24);
+    const ownRow = (await getDoc(doc(environment.authenticatedContext(owner.uid, owner.claims).firestore(), path))).data();
+    assert.equal(ownRow.hours, 32.5); assert.equal(ownRow.reserve_calculation_version, 2);
     assert.equal((await getDoc(doc(environment.authenticatedContext(coordinator.uid, coordinator.claims).firestore(), path))).exists(), true);
     for (const value of [other, foreign]) {
       await rejectCode(() => getDoc(doc(environment.authenticatedContext(value.uid, value.claims).firestore(), path)), 'permission-denied');

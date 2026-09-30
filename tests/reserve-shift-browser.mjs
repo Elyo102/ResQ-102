@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { browserPolicy, checkPolicy } from '../reserve-shift-policy-build.mjs';
 checkPolicy();
 const { chromium } = createRequire(import.meta.url)('./lib/contained-playwright.cjs');
+const { stampReserveCalculationVersion } = createRequire(import.meta.url)('../functions/attendance-hours-calculator.js');
 const source = fs.readFileSync(new URL('../attendance.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 function extract(first, last) {
   assert.equal(source.split(first).length, 2, first);
@@ -34,13 +35,13 @@ const locked=()=>false, captureMonthWrite=()=>({month:'2026-09',viewer:'fixture'
   newRecord=date=>({date}), msg=(message)=>window.messages.push(message),
   userError=(_op,error)=>error.message;
 window.messages=[]; window.saved=[];
-async function saveRecord(date,record){ window.saved.push(structuredClone(record)); records[date]=record; return {selfSaved:true}; }
+async function saveRecord(date,record){ record=await window.serverStamp(record,window.originalRecord);window.saved.push(structuredClone(record)); records[date]=record; return {selfSaved:true}; }
 ${dialog}
 ${rows}
 ${retry}
 window.callActualCorrection=callCorrection;
 window.retryPending=()=>structuredClone(pendingCorrectionOperation);
-window.openRecord=record=>editDay(key,record);
+window.openRecord=record=>{window.originalRecord=record;return editDay(key,record);};
 window.showRecord=record=>{records={[key]:record};renderRows([]);$('report').innerHTML=reportHtml({month:'2026-09',total:calcHours(record,25)},[{...record,date:key,day_type_he:dayTypeHe(record.day_type),hours:calcHours(record,25)}]);};
 window.ready=true;
 `;
@@ -59,6 +60,7 @@ try {
       return route.abort();
     });
     const page = await context.newPage();
+    await page.exposeFunction('serverStamp',(record,before)=>stampReserveCalculationVersion(record,before));
     const errors=[]; page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin); await page.waitForFunction(()=>window.ready);
     async function check(name, fn) { await fn(); passed++; console.log(`PASS ${width}: ${name}`); }
@@ -83,10 +85,10 @@ try {
       });
       assert.deepEqual(errors,[]); await context.close(); continue;
     }
-    await check('new selection defaults to explicit next-day 24 hours',async()=>{
+    await check('new selection defaults to explicit next-day 24 plus 8.5 hours',async()=>{
       await page.evaluate(()=>openRecord(null)); await page.selectOption('#dType','reserve_shift');
       assert.deepEqual(await state(),{dType:'reserve_shift',dShape:'regular',dStart:'07:00',dEnd:'07:00',dReserveEndDay:'1',dStart2:'',dEnd2:''});
-      assert.equal(await page.locator('#dHint b').textContent(),'24');
+      assert.equal(await page.locator('#dHint b').textContent(),'32.5');
       assert.equal(await page.locator('#dReserveEndDay').isVisible(),true);
       assert.equal(await page.locator('#dShape').isVisible(),false);
       assert.equal(await page.locator('#dType option:checked').textContent(),'משמרת בזמן מילואים');
@@ -94,12 +96,12 @@ try {
     await check('edited interval and explicit same-day offset survive site and note edits/save/reopen',async()=>{
       await page.fill('#dStart','09:15');await page.fill('#dEnd','17:45');await page.selectOption('#dReserveEndDay','0');
       await page.selectOption('#dSite','fixed');await page.fill('#dNotes','הערה');
-      assert.equal(await page.locator('#dHint b').textContent(),'8.5');
+      assert.equal(await page.locator('#dHint b').textContent(),'17');
       await page.click('#dSave');await page.waitForFunction(()=>saved.length===1);
       const saved=await page.evaluate(()=>window.saved[0]);
       assert.equal(saved.end_day,0); assert.equal(saved.start,'09:15');assert.equal(saved.end,'17:45');
       await page.evaluate(record=>openRecord(record),saved);
-      assert.equal((await state()).dReserveEndDay,'0');assert.equal(await page.locator('#dHint b').textContent(),'8.5');
+      assert.equal((await state()).dReserveEndDay,'0');assert.equal(await page.locator('#dHint b').textContent(),'17');
     });
     await check('saved overnight offset preserved on reopen',async()=>{
       await page.evaluate(()=>openRecord({day_type:'reserve_shift',shape:'regular',start:'19:00',end:'06:00',end_day:1,sub_station:'fixed'}));

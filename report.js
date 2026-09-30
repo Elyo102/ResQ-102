@@ -44,6 +44,11 @@ export const REPORT_CSS = [
   'td{padding:9px 8px;border:1px solid #e6eaee;text-align:center}',
   'td.txt{text-align:right}',
   'tr:nth-child(even) td{background:#fafbfc}',
+  'tr.day-reserve td{background:#dff5e5;color:#163d20}',
+  'tr.day-sick td{background:#fff2bd;color:#4e3500}',
+  'tr.day-vacation td{background:#dcecff;color:#07376a}',
+  'tr.day-course td{background:#ffe3e3;color:#692323}',
+  '@media print{tr td{print-color-adjust:exact;-webkit-print-color-adjust:exact}}',
   'td.hrs{font-weight:800;font-variant-numeric:tabular-nums}',
   '.rng{direction:ltr;unicode-bidi:isolate;display:inline-block}',
   '.flag{color:#c62828;font-weight:700}',
@@ -80,7 +85,7 @@ export function reportHtml(head, rows) {
     const times = r.start
       ? '<td><span class="rng">' + esc(r.start) + '</span></td>' +
         '<td><span class="rng">' + esc(r.end || '—') + '</span>' +
-          (r.day_type === 'reserve_shift' && r.end_day === 1 ? ' למחרת' : '') + '</td>'
+          (r.end_day === 1 ? ' למחרת' : r.end_day === 2 ? ' מחרתיים' : '') + '</td>'
       : '<td>—</td><td>—</td>';
 
     // אין כאן סימון "לא צוינה סיבה". השמירה חסומה בלי נימוק
@@ -88,15 +93,17 @@ export function reportHtml(head, rows) {
     // וכיתוב שלא יופיע לעולם הוא רעש.
     const note = esc(r.reason || r.notes || '');
 
-    return '<tr>' +
+    const colorClass = ['reserve','reserve_shift'].includes(r.day_type) ? 'day-reserve'
+      : ['sick','vacation','course'].includes(r.day_type) ? 'day-' + r.day_type : '';
+    return '<tr class="' + colorClass + '">' +
       '<td class="' + (marked ? 'mark' : '') + '">' + esc(dmy(r.date)) + '</td>' +
       '<td class="' + (marked ? 'type-flag' : '') + '">' +
         (marked ? '◆ ' : '') + esc(r.day_type_he || '') + '</td>' +
       times +
-      '<td>' + esc(r.site_name || '') + '</td>' +
+      '<td>' + esc(r.site_name || 'לא צוינה') + '</td>' +
       '<td class="txt">' + note +
         (r.start2 ? ' <span class="rng">(' + esc(r.start2) + '–' +
-                    esc(r.end2) + ')</span>' : '') + '</td>' +
+                    esc(r.end2) + ')</span>' + (r.end_day2 === 1 ? ' למחרת' : r.end_day2 === 2 ? ' מחרתיים' : '') : '') + '</td>' +
       '<td class="hrs">' + (r.hours == null ? '—' : r.hours) + '</td>' +
     '</tr>';
   }).join('');
@@ -115,8 +122,8 @@ export function reportHtml(head, rows) {
       : '',
 
     '<table><thead><tr>',
-      '<th>תאריך</th><th>סוג יום</th><th>כניסה</th><th>יציאה</th>',
-      '<th>מקום</th><th>הערות</th><th>שעות</th>',
+      '<th>תאריך</th><th>סוג יום</th><th>שעת כניסה</th><th>שעת יציאה</th>',
+      '<th>תחנה</th><th>הערות</th><th>שעות</th>',
     '</tr></thead><tbody>', body, '</tbody></table>',
 
     h.over_limit

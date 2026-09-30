@@ -53,6 +53,7 @@ const hrRequestsModule = require('./hr-requests');
 const hrDocumentsModule = require('./hr-documents');
 const hrAttachmentServiceModule = require('./hr-attachment-service');
 const hrAttachmentsStorageModule = require('./hr-attachments-storage');
+const attendanceAttachmentsModule = require('./attendance-attachments');
 const hrHoursNudgesModule = require('./hr-hours-nudges');
 const hrHoursNudgeStatusModule = require('./hr-hours-nudge-status');
 const hrHoursDispatchModule = require('./hr-hours-dispatch');
@@ -343,13 +344,15 @@ const HR_ATTACHMENT_OPTIONS = Object.freeze({ enforceAppCheck: true, region: 'eu
   timeoutSeconds: 120, memory: '512MiB', concurrency: 1, maxInstances: 3,
   serviceAccount: 'resq-hr-attachments@station-102.iam.gserviceaccount.com' });
 let hrAttachmentService;
+const attendanceAttachments = attendanceAttachmentsModule.createAttendanceAttachments({ db, auth: admin.auth(), HttpsError, monthAt: jerusalemMonth });
+exports.getAttendanceOrderContext = onCall({ enforceAppCheck: true, region: 'europe-west1' }, async req => attendanceAttachments.context(req));
 function getHrAttachmentService() {
   if (!hrAttachmentService) {
     const storage = hrAttachmentsStorageModule.createHrAttachmentsStorage({
       bucket: admin.storage().bucket(HR_PRIVATE_BUCKET)
     });
     hrAttachmentService = hrAttachmentServiceModule.createHrAttachmentService({
-      db, auth: admin.auth(), storage, HttpsError, requests: hrRequests, documents: hrDocuments
+      db, auth: admin.auth(), storage, HttpsError, requests: hrRequests, documents: hrDocuments, attendance: attendanceAttachments
     });
   }
   return hrAttachmentService;

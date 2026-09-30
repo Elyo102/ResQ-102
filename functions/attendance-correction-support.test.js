@@ -20,7 +20,10 @@ function reserveSave(f,day,extra={},id='reserve_save_0001') {
 test('reserve save is server-derived, replay safe after lost response and later neighbor changes',async()=>{
  const f=reserveFixture(),day=f.month+'-10',req=reserveSave(f,day);
  const first=await f.selfApi().mutateDay(req);assert.equal(first.duplicate,false);
- const saved=f.db.value(f.path(day));assert.equal(saved.hours,24);assert.equal(saved.end_day,1);
+ const saved=f.db.value(f.path(day));assert.equal(saved.hours,32.5);assert.equal(saved.end_day,1);
+ assert.equal(saved.reserve_calculation_version,2);
+ const read=await f.selfApi().readMonth(f.selfReq({month:f.month}));
+ assert.equal(read.days.find(x=>x.record.date===day).record.reserve_calculation_version,2);
  assert.equal(saved.day_type_he,'משמרת בזמן מילואים');assert.ok(saved.updated_at instanceof Timestamp);
  f.row(f.month+'-11',{status:'draft',start:'06:00',end:'08:00',end_day:0});
  const writes=f.db.metrics.writes;
@@ -42,7 +45,7 @@ test('reserve employee and HR correction reject overlap but permit endpoint adja
   await noWrites(f,()=>hr?f.correctionApi().correctOneDay(req):f.selfApi().mutateDay(req),'failed-precondition');
   f.row(f.month+'-08',{status:'draft',start:'23:00',end:'07:00',end_day:2});
   await (hr?f.correctionApi().correctOneDay(req):f.selfApi().mutateDay(req));
-  assert.equal(f.db.value(f.path(day)).hours,24);
+  assert.equal(f.db.value(f.path(day)).hours,32.5);
  }
 });
 test('reserve month fill validates all candidates before writes including boundary and internal overlap',async()=>{
@@ -269,7 +272,7 @@ for (const enabled of [false, true]) {
         : f.selfReq({ date: day, operation: 'save', expected_version: expected, patch: reservePatch(), request_id: 'policy_create_0001' });
       const run = () => hr ? api.hr.correctOneDay(req) : api.self.mutateDay(req);
       if (!enabled) await noWrites(f, run, 'failed-precondition');
-      else { await run(); assert.equal(f.db.value(f.path(day)).hours, 24); }
+      else { await run(); assert.equal(f.db.value(f.path(day)).hours, 32.5); assert.equal(f.db.value(f.path(day)).reserve_calculation_version,2); }
     }
   });
   test(`creation policy ${enabled}: existing self/HR edits, reads and monthly recalculation preserve data`, async () => {

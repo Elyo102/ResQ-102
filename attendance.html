@@ -16,6 +16,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 }catch(e){}})();
 </script>
 <link rel="stylesheet" href="./theme.css?v=42h30">
+<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h30">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -87,6 +88,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
   tr.sug td{ opacity:.55 }
   tr.run td{ background:var(--warn-bg) }
   tr.day-reserve td{ background:#dff5e5; color:#163d20 }
+  tr.day-course td{ background:#ffe3e3; color:#692323 }
   tr.day-sick td{ background:#fff2bd; color:#4e3500 }
   tr.day-vacation td{ background:#dcecff; color:#07376a }
   .d{ font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap }
@@ -384,7 +386,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
         <table>
           <caption class="sr-only">ימי הנוכחות בחודש הנבחר</caption>
           <thead>
-            <tr><th>תאריך</th><th>סוג</th><th>שעות</th><th>תחנה</th>
+            <tr><th>תאריך</th><th>סוג</th><th>שעת כניסה</th><th>שעת יציאה</th><th>תחנה</th>
                 <th class="hh">סה״כ</th><th class="nt">הערות</th><th></th></tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -433,7 +435,7 @@ import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, monthTotal, monthSummary,
          reportedAtMs, retroDays, retroLabel }
   from './hours.js?v=42h30';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged }
+import { getAuth, onAuthStateChanged, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
          query, where, writeBatch, runTransaction, serverTimestamp }
@@ -1273,7 +1275,7 @@ function renderRows(sug){
 
   const keys = Object.keys(records).concat(sug).sort();
   if (!keys.length) {
-    body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);' +
+    body.innerHTML = '<tr><td colspan="8" style="color:var(--muted);' +
       'text-align:center;padding:18px">אין ימים בחודש הזה.</td></tr>';
     return;
   }
@@ -1297,7 +1299,7 @@ function renderRows(sug){
 
     const tr = document.createElement('tr');
     tr.className = (isSug ? 'sug' : '') + (running ? ' run' : '') +
-      (view.day_type === 'reserve' ? ' day-reserve' : view.day_type === 'sick' ? ' day-sick' :
+      (['reserve','reserve_shift'].includes(view.day_type) ? ' day-reserve' : view.day_type === 'course' ? ' day-course' : view.day_type === 'sick' ? ' day-sick' :
        view.day_type === 'vacation' ? ' day-vacation' : '');
 
     // data-l הוא שם השדה. במסך רחב הוא לא מוצג — שורת הכותרת
@@ -1325,13 +1327,15 @@ function renderRows(sug){
         (view.overtime_reason
           ? ' <span class="tag" title="' + esc(view.overtime_reason) + '">נימוק</span>'
           : '') + '</td>' +
-      '<td class="hh' + (needsTimes(view.day_type) ? '' : ' dash') +
-        '" data-l="שעות">' + (needsTimes(view.day_type)
-          ? '<span class="rng">' + esc(view.start || '—') + '–' +
-              esc(running ? '…' : (view.end || '—')) + '</span>' +
-            (view.day_type === 'reserve_shift' && view.end_day === 1 ? ' למחרת' : '') +
-            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
-              esc(view.end2) + '</span>' : '')
+      '<td class="hh" data-l="שעת כניסה">' + (needsTimes(view.day_type)
+          ? '<span class="rng">' + esc(view.start || 'לא דווחה') + '</span>' +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '</span>' : '')
+          : '—') + '</td>' +
+      '<td class="hh" data-l="שעת יציאה">' + (needsTimes(view.day_type)
+          ? '<span class="rng">' + esc(running ? 'טרם דווחה' : (view.end || 'לא דווחה')) + '</span>' +
+            (view.end_day === 1 ? ' למחרת' : view.end_day === 2 ? ' מחרתיים' : '') +
+            (isSplit(view) ? '<br><span class="rng">' + esc(view.end2) + '</span>' +
+              (view.end_day2 === 1 ? ' למחרת' : view.end_day2 === 2 ? ' מחרתיים' : '') : '')
           : '—') + '</td>' +
       '<td class="' + dash(site).trim() + '" data-l="תחנה">' + site + '</td>' +
       '<td class="hh' + dash(tot) + '" data-l="סה״כ">' + tot + '</td>' +
@@ -1368,12 +1372,33 @@ function renderRows(sug){
       b.onclick = () => editDay(key, rec);
       td.appendChild(b);
     }
+    if (rec && ['reserve','reserve_shift'].includes(rec.day_type)) {
+      const order = document.createElement('button');
+      order.type = 'button'; order.className = 'btn sm'; order.textContent = 'צו מילואים';
+      order.setAttribute('aria-label', 'קבצים פרטיים לדיווח מילואים בתאריך ' + key);
+      order.onclick = () => { void showAttendanceOrder(key); };
+      td.appendChild(order);
+    }
     tr.appendChild(td);
     body.appendChild(tr);
   });
 }
 
 // ---------- שמירה ----------
+
+let attendanceOrderOpen = false;
+async function showAttendanceOrder(date) {
+  if (attendanceOrderOpen || !records[date] || !['reserve','reserve_shift'].includes(records[date].day_type)) return;
+  attendanceOrderOpen = true;
+  try {
+    const target = captureMonthWrite();
+    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h30');
+    if (!sameMonthWrite(target)) return;
+    await openAttendanceOrder({ auth, fns, httpsCallable, onIdTokenChanged,
+      target_uid:target.uid, date, isCurrent:()=>sameMonthWrite(target) });
+  } catch (_) { msg('לא ניתן לפתוח קבצים לדיווח הזה. נסו לרענן את הדוח.', 'err'); }
+  finally { attendanceOrderOpen = false; }
+}
 
 function captureMonthWrite(){
   if (!monthDataReady || !SUBJ || !ME) throw new Error('הדוח לא נטען במלואו.');
@@ -1840,7 +1865,7 @@ function editDay(key, rec){
         && rec[end === 'dEnd' ? 'end' : 'end2'] === b;
       return original ? (Number.isInteger(rec[offset]) ? rec[offset] : guessDayOffset(a,b)) : 0;
     };
-    return {
+    const value = {
       day_type: $('dType').value,
       shape: sh,
       start: $('dStart').value,
@@ -1854,6 +1879,16 @@ function editDay(key, rec){
       sub_station: $('dSite').value,
       overtime_reason: $('dOtReason').value.trim()
     };
+    if (value.day_type === 'reserve_shift') {
+      const comparable = (row, key) => row[key] === undefined
+        ? (key === 'end_day2' ? 0 : ['start2','end2'].includes(key) ? '' : undefined)
+        : row[key];
+      const changed = !rec || rec.day_type !== 'reserve_shift' ||
+        ['shape','start','end','end_day','start2','end2','end_day2'].some(k => comparable(value,k) !== comparable(rec,k));
+      if (changed) value.reserve_calculation_version = 2;
+      else if (rec.reserve_calculation_version !== undefined) value.reserve_calculation_version = rec.reserve_calculation_version;
+    }
+    return value;
   }
 
   const NOTES = {
@@ -1875,7 +1910,7 @@ function editDay(key, rec){
     $('dReserveEndBox').classList.toggle('hide', !reserveShift);
     $('dSeg2').classList.toggle('hide', sh !== 'split');
     $('dShapeNote').textContent = reserveShift
-      ? 'משמרת אחת עד 24 שעות לפי שעון מקומי. אפשר לערוך את השעות ואת יום הסיום.' : NOTES[sh] || '';
+      ? 'שעות העבודה לפי כניסה ויציאה, גם אחרי יממה, בתוספת 8.5 שעות מילואים לדיווח חדש או לשינוי שעות. בחרו במפורש את יום הסיום.' : NOTES[sh] || '';
     $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
     $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
                             : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');

@@ -622,6 +622,9 @@ service cloud.firestore {
     }
 
     match /stations/{sid} {
+      match /attendance_order_parents/{parentId} {
+        allow read, write: if false;
+      }
       match /hr_attachments/{attachmentId} {
         allow read, write: if false;
       }

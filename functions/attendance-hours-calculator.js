@@ -44,7 +44,10 @@ function calcHours(record, siteHours) {
     if (r.shape !== 'regular' || !Number.isInteger(r.end_day) || ![0, 1].includes(r.end_day)
         || r.start2 || r.end2 || (r.end_day2 != null && r.end_day2 !== 0)) return null;
     const hours = segmentHours(r.start, r.end, r.end_day);
-    return Number.isFinite(hours) && hours > 0 && hours <= 24 ? hours : null;
+    if (r.reserve_calculation_version !== undefined && ![1, 2].includes(r.reserve_calculation_version)) return null;
+    const v2 = r.reserve_calculation_version === 2;
+    if (!Number.isFinite(hours) || hours <= 0 || (v2 ? hours >= 48 : hours > 24)) return null;
+    return v2 ? Math.round((hours + 8.5) * 100) / 100 : hours;
   }
   const fixed = Number(siteHours || 0);
   if (fixed > 0) return fixed;
@@ -114,4 +117,17 @@ function validateAttendanceEdit(record, before) {
     }
   }
 }
-module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit });
+// Called only by trusted write paths, never on read, submit or month recalculate.
+function stampReserveCalculationVersion(record, before) {
+  if (record.day_type !== 'reserve_shift') { delete record.reserve_calculation_version; return record; }
+  const comparable = (row, key) => row[key] === undefined
+    ? (key === 'end_day2' ? 0 : ['start2','end2'].includes(key) ? '' : undefined)
+    : row[key];
+  const changed = !before || before.day_type !== 'reserve_shift' ||
+    ['shape','start','end','end_day','start2','end2','end_day2'].some(k => comparable(record,k) !== comparable(before,k));
+  if (changed) record.reserve_calculation_version = 2;
+  else if (before.reserve_calculation_version !== undefined) record.reserve_calculation_version = before.reserve_calculation_version;
+  else delete record.reserve_calculation_version;
+  return record;
+}
+module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit, stampReserveCalculationVersion });

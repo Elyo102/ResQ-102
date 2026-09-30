@@ -96,7 +96,7 @@ const RESERVE_TTL_MS = 15 * 60 * 1000;
 
 const STATES = Object.freeze(['reserved', 'stored_pending', 'stored', 'cleaning', 'ready', 'failed']);
 const TERMINAL = Object.freeze(['ready', 'failed']);
-const PARENT_KINDS = Object.freeze(['request', 'document']);
+const PARENT_KINDS = Object.freeze(['request', 'document', 'attendance']);
 
 const FAILURE_CODES = Object.freeze([
   'quota-exceeded', 'parent-forbidden', 'parent-closed', 'parent-revision-changed',
