@@ -1,2 +1,3 @@
 # This captured/assembled security artifact must retain exact provenance bytes.
 control-plane/firestore.rules -text
+control-plane/deploy/firestore.dispatch.rules -text

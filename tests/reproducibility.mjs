@@ -5,7 +5,7 @@ import path from 'node:path';
 import {assertApplicationGate} from './lib/gate-contract.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
-const publicWeb=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css'].map(p=>'control-plane/web/'+p));
+const publicWeb=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css','dispatch-model.mjs','dispatch-view.mjs'].map(p=>'control-plane/web/'+p));
 const fail=code=>{throw Error(code);};
 export function parseCandidateIndex(value){
   const entries=new Map();

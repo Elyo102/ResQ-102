@@ -1,6 +1,7 @@
-import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-stamp1';
-import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-stamp1';
-import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-stamp1';
+import {createFirebaseAdapter} from './firebase-adapter.mjs?v=20260930-grok-dispatch1';
+import {mountPrivateDashboard} from './private-view.mjs?v=20260930-grok-dispatch1';
+import {firebaseConfig} from './firebase-config.mjs?v=20260930-grok-dispatch1';
+import {mountDispatchPanel} from './dispatch-view.mjs?v=20260930-grok-dispatch1';
 const root=document.getElementById('private-root');
 
 const loadGoogleOauth=()=>new Promise((resolve,reject)=>{
@@ -30,7 +31,9 @@ try {
     loadGoogleOauth()
   ]);
   const adapter=await createFirebaseAdapter({sdk:{...app,...auth,...firestore},config:firebaseConfig,googleOauth});
-  const dispose=mountPrivateDashboard({root,...adapter});
+  // Dispatch panel: hidden until backend authorization; re-sign-in stays inside the direct click (adapter.auth.signIn).
+  const dispatchPanel=mountDispatchPanel({doc:document,api:adapter.dispatch,signIn:()=>adapter.auth.signIn()});
+  const dispose=mountPrivateDashboard({root,...adapter,dispatchPanel});
   // Hidden tabs are handled by the controller; remove private DOM when leaving.
   window.addEventListener('pagehide',dispose,{once:true});
   window.addEventListener('pageshow',event=>{if(event.persisted)window.location.reload();});

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "dispatch-only-deploy-artifact",
+  "project": "resq-agent-control-20260928",
+  "service": "cloud.firestore",
+  "releaseName": "projects/resq-agent-control-20260928/releases/cloud.firestore",
+  "baseRulesetName": "projects/resq-agent-control-20260928/rulesets/427c5744-bdfc-4da7-baaa-8f7277c64322",
+  "baseReleaseUpdateTime": "2026-09-28T21:16:51.349144Z",
+  "baseCaptureTime": "2026-09-29T16:24:26.044Z",
+  "captureSha256": "8c0eb6571dd04f2100c4e9988a32457a039b31bb23e77275298a435b3ce51454",
+  "fragment": "control-plane/firestore-dispatch.rules.fragment",
+  "fragmentSha256": "abc55a91f1322f3f32d0166eb5731f4334c001b9a5f8ffcbe3b90e2a97ff1b1b",
+  "fragmentHashEncoding": "utf8-lf-trimmed-plus-lf",
+  "insertionOffsetBytes": 7115,
+  "insertedBytes": 2629,
+  "prefixSha256": "8b97dc5dfd71da6594fe5d10698893bdc7b5ab4f8740bb25f8e6941906762714",
+  "suffixSha256": "c698a22e97fe847213fbd44d1b164e39ace704ee12b8b1186b876a550e1e711d",
+  "artifact": "control-plane/deploy/firestore.dispatch.rules",
+  "artifactSha256": "17301818b67da187ede1dbf98aff00a4f22b9351498e6b513318572a85059f57",
+  "artifactBytes": 9808,
+  "changes": [
+    "Insert dispatchRequests block before the final deny-all match; capture bytes otherwise unchanged"
+  ],
+  "excluded": [
+    "budget fragment",
+    "new event task labels"
+  ],
+  "status": "LOCAL_ARTIFACT_NOT_DEPLOYED"
+}

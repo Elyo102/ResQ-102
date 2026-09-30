@@ -173,7 +173,10 @@ test('guard: dispatcher terms never appear in CI, functions, rules, dashboard, c
 });
 test('guard: nothing except the parser and its tests references the matrix',()=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
- const allowed=new Set(['control-plane/agent-matrix.mjs','control-plane/agent-matrix.test.mjs','control-plane/agent-matrix.json','control-plane/AGENT-MATRIX.md']);
+ // Dispatch Center security review (control-plane/DISPATCH-CENTER.md): the drift test reads the matrix as
+ // data only, and the review document cites it. Nothing else may reference the matrix.
+ const allowed=new Set(['control-plane/agent-matrix.mjs','control-plane/agent-matrix.test.mjs','control-plane/agent-matrix.json','control-plane/AGENT-MATRIX.md',
+  'control-plane/dispatch-drift.test.mjs','control-plane/DISPATCH-CENTER.md']);
  const skipDirs=new Set(['node_modules','.git','test-results','playwright-report']);
  const needle=/agent-matrix/;const offenders=[];
  (function walk(dir){

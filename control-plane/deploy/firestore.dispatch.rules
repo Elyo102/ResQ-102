@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function currentPrincipal(config) {
+      return request.auth != null && config.enabled == true
+        && config.revokedAfter is int && config.revokedAfter >= 0
+        && request.auth.token.auth_time is int
+        && request.auth.token.auth_time >= config.revokedAfter
+        && request.auth.token.auth_time <= request.time.toMillis() / 1000;
+    }
+    function owner() {
+      let config = get(/databases/$(database)/documents/private_access/owner).data;
+      return currentPrincipal(config) && config.uid is string
+        && request.auth.uid == config.uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'eldad50@gmail.com';
+    }
+    function publisher() {
+      let config = get(/databases/$(database)/documents/private_publishers/$(request.auth.uid)).data;
+      let ownerConfig = get(/databases/$(database)/documents/private_access/owner).data;
+      return currentPrincipal(config) && request.auth.uid != ownerConfig.uid
+        && config.agent in ['Codex','Claude','Grok','Gemini']
+        && request.auth.token.control_plane_agent == config.agent
+        && request.resource.data.agent == config.agent;
+    }
+    function validEvent(id) {
+      let e = request.resource.data;
+      return id.matches('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+        && e.keys().hasAll(['agent','kind','task','step','createdAt'])
+        && e.keys().hasOnly(['agent','kind','task','step','createdAt'])
+        && e.kind in ['heartbeat','task_started','test_passed','test_failed','commit_created','task_completed','task_failed']
+        && e.task in ['local_tests','git_change','pull_request_review','deployment_check']
+        && e.step in ['started','running','passed','failed','completed']
+        && e.createdAt == request.time;
+    }
+    match /events/{id} {
+      allow get: if owner();
+      allow list: if owner() && request.query.limit != null && request.query.limit > 0 && request.query.limit <= 50;
+      allow create: if request.auth != null && publisher() && validEvent(id);
+      allow update, delete: if false;
+    }
+    // Budget credentials are separate from telemetry publishers. No client may
+    // create months, change policy, refund reservations or clear history.
+    function budgetPublisher() {
+      let config = get(/databases/$(database)/documents/private_budget_publishers/$(request.auth.uid)).data;
+      return request.auth != null && request.auth.token.control_plane_budget == true
+        && currentPrincipal(config);
+    }
+    function currentBudgetMonth() {
+      let m = request.time.month();
+      return 'month_' + string(request.time.year()) + '-' + (m < 10 ? '0' : '') + string(m);
+    }
+    function budgetWindow() {
+      let later = request.time + duration.value(120, 's');
+      return request.time.year() == later.year() && request.time.month() == later.month();
+    }
+    function validBudgetPolicy(p) {
+      return p.keys().hasOnly(['enabled','version','chargeMicroUsd','maxBytes','maxOutputTokens','models'])
+        && p.enabled == true && p.version is string && p.version.size() > 0 && p.version.size() <= 100
+        && p.chargeMicroUsd == 250000 && p.maxBytes == 60000 && p.maxOutputTokens == 2200
+        && p.models is map && p.models.keys().hasAll(['Claude','Grok','Gemini'])
+        && p.models.keys().hasOnly(['Claude','Grok','Gemini']);
+    }
+    function validBudgetOperation(o, p) {
+      return o.keys().hasAll(['provider','model','policyVersion','requestDigest','chargedMicroUsd','year','month','monthId','createdAt','expiresAt','inputBytes','maxOutputTokens'])
+        && o.keys().hasOnly(['provider','model','policyVersion','requestDigest','chargedMicroUsd','year','month','monthId','createdAt','expiresAt','inputBytes','maxOutputTokens'])
+        && o.provider in ['Claude','Grok','Gemini'] && o.model is string
+        && o.model == p.models[o.provider] && o.policyVersion == p.version
+        && o.requestDigest is string && o.requestDigest.matches('^[a-f0-9]{64}$')
+        && o.chargedMicroUsd is int && o.chargedMicroUsd == p.chargeMicroUsd
+        && o.year is int && o.year == request.time.year()
+        && o.month is int && o.month == request.time.month() && o.monthId == currentBudgetMonth()
+        && o.createdAt == request.time && o.expiresAt is timestamp
+        && o.expiresAt > request.time && o.expiresAt <= request.time + duration.value(30, 's')
+        && o.inputBytes is int && o.inputBytes > 0 && o.inputBytes <= p.maxBytes
+        && o.maxOutputTokens is int && o.maxOutputTokens > 0 && o.maxOutputTokens <= p.maxOutputTokens;
+    }
+    function validBudgetMonth(m) {
+      return m.keys().hasAll(['year','month','chargedMicroUsd','lastOperationId'])
+        && m.keys().hasOnly(['year','month','chargedMicroUsd','lastOperationId'])
+        && m.year is int && m.year == request.time.year()
+        && m.month is int && m.month == request.time.month()
+        && m.chargedMicroUsd is int && m.chargedMicroUsd >= 0 && m.chargedMicroUsd <= 20000000
+        && m.chargedMicroUsd % 250000 == 0 && m.lastOperationId is string
+        && (m.chargedMicroUsd == 0 ? m.lastOperationId == '' : m.lastOperationId.matches('^[a-f0-9]{64}$'));
+    }
+    function budgetMonthUpdate(id) {
+      let p = get(/databases/$(database)/documents/resq_budget_state/policy).data;
+      let before = resource.data;
+      let after = request.resource.data;
+      let op = /databases/$(database)/documents/resq_budget_state/policy/operations/$(after.lastOperationId);
+      return budgetPublisher() && budgetWindow() && id == currentBudgetMonth()
+        && validBudgetPolicy(p) && validBudgetMonth(before) && validBudgetMonth(after)
+        && after.lastOperationId.matches('^[a-f0-9]{64}$') && !exists(op)
+        && validBudgetOperation(getAfter(op).data, p)
+        && after.chargedMicroUsd == before.chargedMicroUsd + p.chargeMicroUsd;
+    }
+    match /resq_budget_state/{id} {
+      allow get: if budgetPublisher() && (id == 'policy' || id == currentBudgetMonth());
+      allow update: if id != 'policy' && budgetMonthUpdate(id);
+      allow list, create, delete: if false;
+    }
+    match /resq_budget_state/policy/operations/{id} {
+      allow get: if budgetPublisher() && id.matches('^[a-f0-9]{64}$');
+      allow create: if budgetPublisher() && budgetWindow() && id.matches('^[a-f0-9]{64}$')
+        && validBudgetPolicy(get(/databases/$(database)/documents/resq_budget_state/policy).data)
+        && validBudgetOperation(request.resource.data, get(/databases/$(database)/documents/resq_budget_state/policy).data)
+        && getAfter(/databases/$(database)/documents/resq_budget_state/$(request.resource.data.monthId)).data.lastOperationId == id
+        && getAfter(/databases/$(database)/documents/resq_budget_state/$(request.resource.data.monthId)).data.chargedMicroUsd
+          == get(/databases/$(database)/documents/resq_budget_state/$(request.resource.data.monthId)).data.chargedMicroUsd + request.resource.data.chargedMicroUsd;
+      allow list, update, delete: if false;
+    }
+    // Dispatch requests: owner-authored, display-only (security review: control-plane/DISPATCH-CENTER.md).
+    // A dispatch document is a REQUEST, never an authorization. `note` is display-only text and must never
+    // flow into a prompt, shell, branch or commit name, or a routing decision. A future executor needs its
+    // own grant, a re-check against the capability matrix and a transaction on status == 'queued'.
+    // The Admin SDK bypasses these rules. Client status changes are limited to owner cancel of queued.
+    function dispatchTaskMap() {
+      return {
+        'Gemini': ['docs', 'long-analysis', 'test-coverage', 'cross-browser'],
+        'Codex': ['integration', 'integration-tests'],
+        'Grok': ['realtime', 'service-workers', 'offline-outbox', 'telemetry-relays']
+      };
+    }
+    function dispatchUuid(value) {
+      return value is string
+        && value.matches('^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$');
+    }
+    function dispatchFresh() {
+      return request.auth != null && request.auth.token.auth_time is int
+        && request.auth.token.auth_time * 1000 >= request.time.toMillis() - 900000;
+    }
+    function dispatchValid(id) {
+      let d = request.resource.data;
+      return dispatchUuid(id)
+        && d.keys().hasAll(['agent', 'taskType', 'note', 'status', 'batchId', 'createdAt', 'createdBy'])
+        && d.keys().hasOnly(['agent', 'taskType', 'note', 'status', 'batchId', 'createdAt', 'createdBy'])
+        && d.agent is string && d.agent in ['Gemini', 'Codex', 'Grok']
+        && d.taskType is string && d.taskType in dispatchTaskMap()[d.agent]
+        && d.note is string && d.note.size() <= 280
+        && d.note.matches('^[\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]{0,280}$')
+        && d.status == 'queued' && dispatchUuid(d.batchId)
+        && d.createdAt == request.time && d.createdBy == request.auth.uid;
+    }
+    function dispatchCancel() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.status == 'queued' && before.createdBy == request.auth.uid
+        && after.status == 'cancelled'
+        && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt'])
+        && after.cancelledAt == request.time;
+    }
+    match /dispatchRequests/{id} {
+      allow get: if owner();
+      allow list: if owner() && request.query.limit != null
+        && request.query.limit >= 1 && request.query.limit <= 50;
+      allow create: if owner() && dispatchFresh() && dispatchValid(id);
+      allow update: if owner() && dispatchCancel();
+      allow delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

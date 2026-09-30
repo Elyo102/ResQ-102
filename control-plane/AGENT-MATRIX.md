@@ -24,3 +24,18 @@ agent and executes nothing.
   a matrix without it parses and exposes `dispatchers` as `{}`.
 - The private dashboard does not load the matrix, and no workflow, rule, CI script, agent cycle,
   task contract or budget module references it (enforced by the guard tests).
+
+## Agent Dispatch Center (separate security review, 2026-09-30)
+
+The security review required above was carried out for the Agent Dispatch Center and is recorded in
+`control-plane/DISPATCH-CENTER.md` (verdict SAFE_WITH_CONDITIONS; the UI review was done separately).
+It does **not** give the `dispatchers` layer any authority, and `accepts_user_input` stays descriptive only:
+
+- The deployed Rules carry a fixed task-type map (`dispatchTaskMap()`), and the browser model carries
+  the same fixed map. Neither loads this matrix at runtime. `control-plane/dispatch-drift.test.mjs`
+  reads the matrix **as data only** to check that the map equals the `agents` roles under an explicit
+  id-to-name mapping (`gemini -> Gemini`, `codex -> Codex`, `grok -> Grok`), minus the excluded
+  `executor` and `commit-branch-dispatch` roles. Claude gets no dispatchable task types.
+- A dispatch document is a display-only request from the owner, not an authorization and not a
+  routing decision. `routeTask` is unchanged and is never called from the dashboard.
+- The guard tests allow exactly two new references: the drift test and `DISPATCH-CENTER.md`.

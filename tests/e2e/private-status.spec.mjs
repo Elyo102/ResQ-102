@@ -61,16 +61,16 @@ test('late authentication failures cannot overwrite a newer owner session',async
   await page.evaluate(()=>rejectLogout(Error('synthetic-secret')));await expect(page.getByRole('status')).toContainText('מחובר למקור');expect(errors).toEqual([]);
 });
 
-const STAMP=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const STAMP=/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/;
 const uid=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 async function sendAll(page,events){await page.evaluate(events=>listeners.at(-1).next(events,{fromCache:false}),events);}
 async function login(page){await page.locator('#private-login').click();await expect.poll(()=>page.evaluate(()=>listeners.length)).toBeGreaterThan(0);}
 test.describe('private log stamps in Asia/Jerusalem from a UTC browser',()=>{
  test.use({timezoneId:'UTC'});
- test('YYYY-MM-DD HH:mm:ss with datetime; 21:30Z shows next Israel day; DST 2026-10-25',async({page})=>{
+ test('DD/MM/YYYY HH:mm with datetime; 21:30Z shows next Israel day; DST 2026-10-25',async({page})=>{
   await page.clock.install({time:new Date('2026-10-25T01:00:00Z')});
   const errors=await mount(page,{css:'private'});await login(page);
-  const rows=[['2026-09-29T21:30:00Z','2026-09-30 00:30:00'],['2026-10-24T22:30:00Z','2026-10-25 01:30:00'],['2026-10-24T23:30:00Z','2026-10-25 01:30:00'],['2026-10-25T00:30:00Z','2026-10-25 02:30:00']];
+  const rows=[['2026-09-29T21:30:00Z','30/09/2026 00:30'],['2026-10-24T22:30:00Z','25/10/2026 01:30'],['2026-10-24T23:30:00Z','25/10/2026 01:30'],['2026-10-25T00:30:00Z','25/10/2026 02:30']];
   await sendAll(page,rows.map(([iso],i)=>({id:uid(i+1),agent:'Grok',kind:'test_passed',task:'swap_race_review',step:'passed',at:Date.parse(iso)})));
   const times=page.locator('#private-terminal .entry time');await expect(times).toHaveCount(rows.length);
   for(const [i,[iso,shown]] of rows.entries()){

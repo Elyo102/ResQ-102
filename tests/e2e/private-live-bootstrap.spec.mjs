@@ -1,7 +1,7 @@
 import {test,expect} from '../lib/contained-test.mjs';
 import {readFileSync} from 'node:fs';
 const base=new URL('../../control-plane/web/',import.meta.url);
-const assets=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css']);
+const assets=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css','dispatch-model.mjs','dispatch-view.mjs']);
 test('staged real bootstrap loads, shows owner login, and honestly denies disabled owner',async({page})=>{
  const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
  page.on('request',request=>requests.push(request.url()));
@@ -36,6 +36,7 @@ export const onSnapshot=(q,options,next,error)=>{queueMicrotask(()=>error({code:
  await expect(page.locator('.agent')).toHaveCount(0);
  await page.locator('#private-login').click();
  await expect(page.locator('.health')).toContainText('אין הרשאה');
+ await expect(page.locator('#dispatch-panel')).toHaveCount(1);await expect(page.locator('#dispatch-panel')).toBeHidden(); // mounted, hidden without backend authorization
  await expect(page.locator('#private-terminal')).not.toContainText('אות חיים');
  await expect(page.locator('#private-login')).toBeVisible();
  expect(await page.evaluate(()=>window.__gisGesture)).toBe(true);

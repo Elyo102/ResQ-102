@@ -26,7 +26,40 @@ export function assembleRules(capture,fragment){
   newEventTasks:['agent_review_cycle','planner_draft_recovery','swap_race_review','clean_checkout_gates'],
   status:'LOCAL_CANDIDATE_NOT_DEPLOYED'}};
 }
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+// Dispatch-only deploy artifact (separate mode, separate provenance). The live capture is kept
+// byte-identical; the ONLY change is inserting the dispatch fragment before the final deny-all match.
+// No budget fragment, no event-task changes. Never writes control-plane/firestore.rules.
+export const DISPATCH_ANCHOR='    match /{document=**}';
+export function assembleDispatchRules(capture,fragment){
+ if(hash(capture)!==CAPTURE_SHA256)throw Error('CAPTURE_HASH_MISMATCH');
+ const source=capture.toString('utf8');
+ if(source.includes('\r'))throw Error('CAPTURE_EOL_UNEXPECTED');
+ const at=source.indexOf(DISPATCH_ANCHOR);
+ if(at<0||at!==source.lastIndexOf(DISPATCH_ANCHOR))throw Error('CAPTURE_ANCHOR_MISMATCH');
+ const block=fragment.replace(/\r\n/g,'\n').trimEnd()+'\n';
+ if(/rules_version\s*=|service cloud\.firestore|match \/\{document=\*\*\}|match \/events|budget|tasks\(\)|aid\(\)|policy\(\)/i.test(block)||!block.includes('match /dispatchRequests/{id}'))throw Error('DISPATCH_FRAGMENT_REQUIRED');
+ const offset=Buffer.byteLength(source.slice(0,at));
+ const prefix=capture.subarray(0,offset),suffix=capture.subarray(offset),inserted=Buffer.from(block);
+ const result=Buffer.concat([prefix,inserted,suffix]);
+ return {result,provenance:{schemaVersion:1,kind:'dispatch-only-deploy-artifact',project:'resq-agent-control-20260928',service:'cloud.firestore',
+  releaseName:'projects/resq-agent-control-20260928/releases/cloud.firestore',
+  baseRulesetName:'projects/resq-agent-control-20260928/rulesets/427c5744-bdfc-4da7-baaa-8f7277c64322',
+  baseReleaseUpdateTime:'2026-09-28T21:16:51.349144Z',baseCaptureTime:'2026-09-29T16:24:26.044Z',
+  captureSha256:CAPTURE_SHA256,fragment:'control-plane/firestore-dispatch.rules.fragment',fragmentSha256:hash(inserted),fragmentHashEncoding:'utf8-lf-trimmed-plus-lf',
+  insertionOffsetBytes:offset,insertedBytes:inserted.length,prefixSha256:hash(prefix),suffixSha256:hash(suffix),
+  artifact:'control-plane/deploy/firestore.dispatch.rules',artifactSha256:hash(result),artifactBytes:result.length,
+  changes:['Insert dispatchRequests block before the final deny-all match; capture bytes otherwise unchanged'],
+  excluded:['budget fragment','new event task labels'],
+  status:'LOCAL_ARTIFACT_NOT_DEPLOYED'}};
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)&&process.argv[2]==='--dispatch'){
+ const input=process.argv[3];if(!input)throw Error('CAPTURE_PATH_REQUIRED');
+ const fragment=readFileSync(new URL('./firestore-dispatch.rules.fragment',import.meta.url),'utf8');
+ const {result,provenance}=assembleDispatchRules(readFileSync(input),fragment);
+ writeFileSync(new URL('./deploy/firestore.dispatch.rules',import.meta.url),result);
+ writeFileSync(new URL('./deploy/firestore-dispatch-provenance.json',import.meta.url),JSON.stringify(provenance,null,2)+'\n');
+ console.log(JSON.stringify({status:provenance.status,captureSha256:provenance.captureSha256,artifactSha256:provenance.artifactSha256}));
+}else if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const input=process.argv[2];if(!input)throw Error('CAPTURE_PATH_REQUIRED');
  const fragment=readFileSync(new URL('./firestore-budget.rules.fragment',import.meta.url),'utf8');
  const {result,provenance}=assembleRules(readFileSync(input),fragment);

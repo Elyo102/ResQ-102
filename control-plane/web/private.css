@@ -10,3 +10,17 @@ button:focus-visible{outline:3px solid #7fdad6;outline-offset:3px}button:disable
 .entry[data-agent="Codex"] strong{color:#75e2d4}.entry[data-agent="Claude"] strong{color:#ffb17c}.entry[data-agent="Grok"] strong{color:#c1b1ff}.entry[data-agent="Gemini"] strong{color:#9bbfff}
 @media(max-width:760px){.agents{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:16px}}
 @media(max-width:380px){.agents{grid-template-columns:1fr}}
+.dispatch{background:#101b30;border:1px solid #405371;border-radius:12px;padding:16px;margin:0 0 24px;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.dispatch h2{margin-top:0}.dispatch-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.dispatch-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.dispatch select,.dispatch textarea{font:inherit;font-size:16px;width:100%;max-width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid #617797;border-radius:8px;background:#0b1324;color:#e7eefc}
+.dispatch textarea{resize:vertical}.dispatch select{text-overflow:ellipsis}
+.dispatch-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;margin:12px 0}
+.dispatch button{width:100%;max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.dispatch-counter,.dispatch-error,.dispatch-result,.dispatch-net,.dispatch-feed-error{margin:4px 0;line-height:1.5}.dispatch-error,.dispatch-net{color:#ffb4a8}
+.dispatch-preview{border:1px dashed #617797;border-radius:8px;padding:10px;margin:8px 0}.dispatch-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font-size:.85rem;margin:8px 0;unicode-bidi:isolate}
+.dispatch-feed{list-style:none;padding:0;margin:0}.dispatch-row{border-bottom:1px solid #243247;padding:10px 0;min-width:0}
+.dispatch-row-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.dispatch-type{min-width:0;overflow-wrap:anywhere}
+.dispatch-status{border:1px solid #7fdad6;border-radius:999px;padding:2px 10px;font-size:.85rem}
+.dispatch-note-text{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}.dispatch-times{color:#b8c7dc;margin:4px 0}.dispatch-times time{font-variant-numeric:tabular-nums;white-space:nowrap}
+.dispatch-row:focus-visible{outline:3px solid #7fdad6;outline-offset:2px}
+@media(max-width:760px){.dispatch-fields{grid-template-columns:1fr}}

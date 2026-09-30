@@ -1,0 +1,48 @@
+    // Dispatch requests: owner-authored, display-only (security review: control-plane/DISPATCH-CENTER.md).
+    // A dispatch document is a REQUEST, never an authorization. `note` is display-only text and must never
+    // flow into a prompt, shell, branch or commit name, or a routing decision. A future executor needs its
+    // own grant, a re-check against the capability matrix and a transaction on status == 'queued'.
+    // The Admin SDK bypasses these rules. Client status changes are limited to owner cancel of queued.
+    function dispatchTaskMap() {
+      return {
+        'Gemini': ['docs', 'long-analysis', 'test-coverage', 'cross-browser'],
+        'Codex': ['integration', 'integration-tests'],
+        'Grok': ['realtime', 'service-workers', 'offline-outbox', 'telemetry-relays']
+      };
+    }
+    function dispatchUuid(value) {
+      return value is string
+        && value.matches('^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$');
+    }
+    function dispatchFresh() {
+      return request.auth != null && request.auth.token.auth_time is int
+        && request.auth.token.auth_time * 1000 >= request.time.toMillis() - 900000;
+    }
+    function dispatchValid(id) {
+      let d = request.resource.data;
+      return dispatchUuid(id)
+        && d.keys().hasAll(['agent', 'taskType', 'note', 'status', 'batchId', 'createdAt', 'createdBy'])
+        && d.keys().hasOnly(['agent', 'taskType', 'note', 'status', 'batchId', 'createdAt', 'createdBy'])
+        && d.agent is string && d.agent in ['Gemini', 'Codex', 'Grok']
+        && d.taskType is string && d.taskType in dispatchTaskMap()[d.agent]
+        && d.note is string && d.note.size() <= 280
+        && d.note.matches('^[\\x{0020}-\\x{007E}\\x{05D0}-\\x{05EA}\\x{05B0}-\\x{05C7}]{0,280}$')
+        && d.status == 'queued' && dispatchUuid(d.batchId)
+        && d.createdAt == request.time && d.createdBy == request.auth.uid;
+    }
+    function dispatchCancel() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.status == 'queued' && before.createdBy == request.auth.uid
+        && after.status == 'cancelled'
+        && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt'])
+        && after.cancelledAt == request.time;
+    }
+    match /dispatchRequests/{id} {
+      allow get: if owner();
+      allow list: if owner() && request.query.limit != null
+        && request.query.limit >= 1 && request.query.limit <= 50;
+      allow create: if owner() && dispatchFresh() && dispatchValid(id);
+      allow update: if owner() && dispatchCancel();
+      allow delete: if false;
+    }

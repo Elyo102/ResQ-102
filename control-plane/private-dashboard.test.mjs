@@ -6,24 +6,24 @@ import {formatStamp,taskLabel,TASK_TEXT,detailText,CI_LIVE_TEXT} from './web/pri
 import {createPrivateController,heartbeatLive,heartbeatAge,LIVE_ENTER_MS,LIVE_EXIT_MS,MAX_FUTURE_SKEW_MS,TELEMETRY_TASKS} from './web/private-controller.mjs';
 import {TASK_LABELS} from './core.mjs';
 
-const STAMP=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const STAMP=/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/;
 const at=iso=>Date.parse(iso);
 
-test('formatStamp renders Asia/Jerusalem YYYY-MM-DD HH:mm:ss independent of host TZ',()=>{
+test('formatStamp renders Asia/Jerusalem DD/MM/YYYY HH:mm independent of host TZ',()=>{
  assert.equal(new Date(0).getTimezoneOffset(),0);
- assert.equal(formatStamp(at('2026-09-30T06:36:05Z')),'2026-09-30 09:36:05');
- assert.equal(formatStamp(at('2026-09-29T21:30:00Z')),'2026-09-30 00:30:00'); // next Israel day
- assert.equal(formatStamp(at('2026-09-29T21:00:00Z')),'2026-09-30 00:00:00'); // midnight is 00, never 24
- assert.equal(formatStamp(at('2026-01-15T22:00:00Z')),'2026-01-16 00:00:00'); // winter UTC+2
+ assert.equal(formatStamp(at('2026-09-30T06:36:05Z')),'30/09/2026 09:36');
+ assert.equal(formatStamp(at('2026-09-29T21:30:00Z')),'30/09/2026 00:30'); // next Israel day
+ assert.equal(formatStamp(at('2026-09-29T21:00:00Z')),'30/09/2026 00:00'); // midnight is 00, never 24
+ assert.equal(formatStamp(at('2026-01-15T22:00:00Z')),'16/01/2026 00:00'); // winter UTC+2
  assert.match(formatStamp(Date.now()),STAMP);
  for(const ms of [at('2026-03-27T00:30:00Z'),0,1,Date.UTC(2099,11,31,23,59,59)]){const s=formatStamp(ms);assert.match(s,STAMP);assert.doesNotMatch(s,/[\u200e\u200f\u061c]/);}
 });
 test('formatStamp DST fall-back on 2026-10-25 (02:00 IDT -> 01:00 IST)',()=>{
- assert.equal(formatStamp(at('2026-10-24T22:30:00Z')),'2026-10-25 01:30:00'); // UTC+3 (first 01:30)
- assert.equal(formatStamp(at('2026-10-24T22:59:59Z')),'2026-10-25 01:59:59');
- assert.equal(formatStamp(at('2026-10-24T23:00:00Z')),'2026-10-25 01:00:00'); // clocks moved back
- assert.equal(formatStamp(at('2026-10-24T23:30:00Z')),'2026-10-25 01:30:00'); // UTC+2 (repeated 01:30)
- assert.equal(formatStamp(at('2026-10-25T00:30:00Z')),'2026-10-25 02:30:00');
+ assert.equal(formatStamp(at('2026-10-24T22:30:00Z')),'25/10/2026 01:30'); // UTC+3 (first 01:30)
+ assert.equal(formatStamp(at('2026-10-24T22:59:59Z')),'25/10/2026 01:59');
+ assert.equal(formatStamp(at('2026-10-24T23:00:00Z')),'25/10/2026 01:00'); // clocks moved back
+ assert.equal(formatStamp(at('2026-10-24T23:30:00Z')),'25/10/2026 01:30'); // UTC+2 (repeated 01:30)
+ assert.equal(formatStamp(at('2026-10-25T00:30:00Z')),'25/10/2026 02:30');
 });
 test('formatStamp self-guards invalid input',()=>{
  for(const v of [undefined,null,NaN,Infinity,-Infinity,1.5,'1700000000000',{},[],9e15,-9e15,Number.MAX_SAFE_INTEGER,2**53,1e20])assert.equal(formatStamp(v),'—',String(v));
