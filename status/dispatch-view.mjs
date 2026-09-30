@@ -4,7 +4,7 @@
 // (which re-run controller.reset) never clear the form or mint new ids. No success is shown before the server
 // confirms; a timeout is 'לא אושר' and the same ids are reused on retry.
 import {DISPATCH_AGENTS,DISPATCH_TASKS,taskTypeText,noteProblem,invalidCharReport,counterText,noteThreshold,thresholdText,noteSnippet,normalizeNote,NOTE_BANNER,SECRET_TEXT,newKeys,buildPayload,draftKey,
-  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch3';
+  statusText,orderFeed,needsReauth,classifyFailure,reconcile,renderStamp,COOLDOWN_MS,SEND_TIMEOUT_MS} from './dispatch-model.mjs?v=20260930-grok-dispatch4';
 
 export const TEXT=Object.freeze({
   title:'מרכז שיגור סוכנים',
@@ -43,7 +43,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     for(const type of DISPATCH_TASKS[agent]){const o=node('option',taskTypeText(type));o.value=type;select.append(o);}
     selects[agent]=select;wrap.append(label,select);fields.append(wrap);
   }
-  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=12;noteLabel.htmlFor=note.id;note.setAttribute('spellcheck','false');
+  const noteWrap=node('div',null,'dispatch-field');const noteLabel=node('label',TEXT.noteLabel);const note=node('textarea');note.id='dispatch-note';note.rows=12;note.dir='auto';noteLabel.htmlFor=note.id;note.setAttribute('spellcheck','false');
   // Visible counter updates on every input (no live region); a SEPARATE polite region announces threshold crossings only.
   const counter=node('p','','dispatch-counter');counter.id='dispatch-counter';note.setAttribute('aria-describedby','dispatch-counter dispatch-error dispatch-note-banner');
   const limitLive=node('p','','dispatch-limit-live');limitLive.id='dispatch-limit-live';limitLive.setAttribute('aria-live','polite');limitLive.setAttribute('role','status');
@@ -73,7 +73,7 @@ export function mountDispatchPanel({doc,api,signIn,now=Date.now,uuid=()=>globalT
     const d=draft();counter.textContent=counterText(d.note);
     const problem=noteProblem(d.note);
     error.textContent=problemText(problem,d.note);
-    const level=noteThreshold(d.note);if(level!==lastThreshold){lastThreshold=level;if(level)limitLive.textContent=thresholdText(level);}
+    const level=noteThreshold(d.note);if(level!==lastThreshold){lastThreshold=level;limitLive.textContent=level?thresholdText(level):'';}
     net.textContent=online()?'':TEXT.offline;
     const locked=busy()||phase==='unconfirmed';
     for(const s of Object.values(selects))s.disabled=locked;note.readOnly=locked;
