@@ -1,7 +1,9 @@
 # Active tasks (Part 2) — owner tasks, per-agent listener, manual pickup
 
-Status: **LOCAL ONLY — not deployed.** Reviews 30/09/2026 (security + UI): SAFE_WITH_CONDITIONS. Nothing here is live:
-no listener identity is provisioned, no listener runs, delivery is off by default, and the Rules/indexes are not deployed.
+Status (30/09/2026 21:00 IL): the Rules (ruleset f7f2d208, sha256 358b4c0c…) and the 3 listener indexes are deployed
+(`deploy/ACTIVE-TASKS-DEPLOY.md`; audit note `deploy/AUDIT-2026-09-30.md`). The listener runner and the owner provisioning
+script exist as code, pending security code review. **No listener identity is provisioned and no listener runs**, and
+delivery is off by default.
 
 ## What it is
 - The owner creates `active_tasks/{taskId}` from the private dashboard: `{taskId, dispatchedBy, payload, targets, status:'PENDING', timestamp, progress:{}}`.
@@ -46,8 +48,13 @@ no listener identity is provisioned, no listener runs, delivery is off by defaul
 - Indexes (not wired into any deploy): `deploy/firestore.indexes.active-tasks.json`.
 - Browser: `web/active-tasks-model.mjs`, `web/active-tasks-view.mjs`, adapter `activeTasks.*`, card line in `web/private-view.mjs`.
 - LD library (no CLI, no credential, no autostart): `task-listener.mjs`, `task-inbox.mjs`.
+- LD runner + provisioning (pending security code review; nothing provisioned): `task-listener-run.mjs --agent Grok|Codex`
+  (manual foreground start), owner-only `provision-listener.mjs --project resq-agent-control-20260928 --agent Grok|Codex
+  [--rotate|--revoke|--status|--delivery on|off]`, and `listener/` (REST Firestore adapter, token verification, DPAPI+ACL
+  credential store). Plan: `/workspace/dispatch/review/listener-provisioning-plan.md` (v2).
 - Tests: `active-tasks-model.test.mjs`, `task-listener.test.mjs`, `rules-test/control-plane-active-tasks.test.mjs`,
-  `rules-test/control-plane-active-tasks-e2e.test.mjs`, `tests/e2e/private-active-tasks.spec.mjs`.
+  `rules-test/control-plane-active-tasks-e2e.test.mjs`, `tests/e2e/private-active-tasks.spec.mjs`, `listener-runner.test.mjs`,
+  `rules-test/control-plane-listener-e2e.test.mjs`, `listener-protect.windows.test.mjs` (LD only).
 
 ## Queries and indexes
 - Owner feed: `orderBy('timestamp','desc').limit(20)` — single field, automatic index. No `where(dispatchedBy)` is used, so no composite index for the owner.
@@ -57,9 +64,9 @@ no listener identity is provisioned, no listener runs, delivery is off by defaul
 - Heartbeats: owner `task_listeners` `orderBy('seenAt','desc').limit(3)` — single field.
 
 ## Operating (LD only, manual; not in scope to provision)
-- Start: manual only, in a foreground terminal on LD, by a future runner that uses the listener identity from outside the repo. No autostart, no service, no scheduled task.
+- Start: manual only, in a foreground terminal on LD: `node control-plane\task-listener-run.mjs --agent Grok`. The identity lives outside the repo (`%USERPROFILE%\.resq-listeners`, DPAPI + ACL, fail closed). No autostart, no service, no scheduled task.
 - Kill (one line, PowerShell on LD): `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -match 'task-listener' | ForEach-Object { Stop-Process -Id $_.ProcessId }`
-  Immediate revoke without a process: set `private_listeners/{uid}.enabled=false` (or raise `revokedAfter`) — Rules deny at once.
+  Immediate revoke without a process: `provision-listener.mjs ... --revoke`, or set `private_listeners/{uid}.enabled=false` (or raise `revokedAfter`). The Rules deny at once.
 
 ## Not approved (UI suggestion only)
 Widening the payload allowlist to ״ ׳ (U+05F3/U+05F4) and curly quotes was suggested by the UI review. Security did not approve it,
