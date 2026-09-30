@@ -33,7 +33,7 @@
 // עובד Service Worker אינו מייבא מודולים ולכן אינו יכול לקרוא JSON בעוד הרישום
 // (הערה המקורית שכבר מופיעה למעלה לגבי firebase-config.js). הערך נשמר כאן בכוונה,
 // ו-`tests/version-release.mjs` נופל אם הערך צופה מ-`release-manifest.json`.
-const CACHE = 'resq-v42h44-release1';
+const CACHE = 'resq-v42h45-release1';
 
 // רק קבצי המעטפת. נתונים לא נשמרים כאן לעולם — הם מגיעים
 // מ-Firestore, שמנהל מטמון משלו ויודע מתי הוא מיושן.
@@ -52,7 +52,7 @@ const SHELL = [
   './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-roster-cache.js', './callout-siren.mp3', './stats.html', './people.html',
   './vehicle.html', './operational-vehicles.html', './operational-vehicles-model.js', './sign.html',
   './index.html',
-  './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
+  './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js', './reserve-shift-policy.js',
   './guards.js', './faults.js', './fleet.js', './forms.js', './stats.js',
   // חתימות, הפקת מסמכים, תפקידים ולוג המשמרת. בלי אלה,
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
@@ -73,7 +73,7 @@ const SHELL = [
 // complete. The remaining files improve offline coverage but may be retried by
 // the network-first fetch path.
 const CORE_SHELL = [
-  './login.html', './pwa.js', './version.js', './theme.css'
+  './login.html', './pwa.js', './version.js', './theme.css', './reserve-shift-policy.js'
 ];
 
 self.addEventListener('install', function (e) {

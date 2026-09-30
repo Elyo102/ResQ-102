@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=42h44';
+import { APP_VERSION } from './version.js?v=42h45';
 
 // התקנה על מסך הבית.
 //
