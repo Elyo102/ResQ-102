@@ -6,7 +6,7 @@ button:focus-visible{outline:3px solid #7fdad6;outline-offset:3px}button:disable
 .agents{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.agent{background:#142139;border:1px solid #405371;border-radius:12px;padding:16px;overflow-wrap:anywhere}
 .agent h2{margin-top:0}.health,.hint{line-height:1.6}.hint{color:#b8c7dc}
 .private-terminal{background:#070e1a;border:1px solid #405371;border-radius:12px;min-height:180px;max-height:60vh;overflow:auto;padding:16px;margin-top:24px;overflow-wrap:anywhere}
-.entry{display:flex;flex-wrap:wrap;gap:12px;padding:10px 0;border-bottom:1px solid #243247}.entry time{font-variant-numeric:tabular-nums;color:#b8c7dc}
+.entry{display:flex;flex-wrap:wrap;gap:12px;padding:10px 0;border-bottom:1px solid #243247}.entry time{font-variant-numeric:tabular-nums;color:#b8c7dc;direction:ltr;unicode-bidi:isolate;white-space:nowrap}.entry span{min-width:0;overflow-wrap:anywhere}
 .entry[data-agent="Codex"] strong{color:#75e2d4}.entry[data-agent="Claude"] strong{color:#ffb17c}.entry[data-agent="Grok"] strong{color:#c1b1ff}.entry[data-agent="Gemini"] strong{color:#9bbfff}
 @media(max-width:760px){.agents{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:16px}}
 @media(max-width:380px){.agents{grid-template-columns:1fr}}

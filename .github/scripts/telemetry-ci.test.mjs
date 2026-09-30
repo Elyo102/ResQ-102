@@ -33,6 +33,9 @@ function harness({ authPatch = {}, commitFailure = false, malformedCommit = fals
   };
   return {fetcher,calls};
 }
+// The receipt is the single 3-write commit; an optional rate-limited 1-write heartbeat may precede it.
+const commits = h => h.calls.filter(c => c.url.startsWith('https://firestore.googleapis.com/'));
+const receiptCall = h => { const r = commits(h).filter(c => JSON.parse(c.options.body).writes.length === 3); assert.equal(r.length, 1); return r[0]; };
 test('accepts signed scoped publisher; rejects forged, expired, wrong agent and project tokens', () => {
   verifyPublisher(token(), certificates, uid);
   for (const now of [NaN, Infinity, -1, 8e15+1])
@@ -52,7 +55,7 @@ test('rejects missing credentials and unapproved/ref-selected runs before any ne
 test('only creates bounded Codex events with server time and no provider secrets', async () => {
   const h = harness(); const result = await publishResult({...env,ANTHROPIC_API_KEY:'not-for-telemetry'},h.fetcher);
   assert.deepEqual(result,{status:'accepted',count:3});
-  const writes = JSON.parse(h.calls[2].options.body).writes;
+  const writes = JSON.parse(receiptCall(h).options.body).writes;
   assert.equal(writes.length,3);
   for (const w of writes) {
     assert.deepEqual(w.currentDocument,{exists:false});
@@ -65,7 +68,7 @@ test('only creates bounded Codex events with server time and no provider secrets
 test('failure emits failure; skipped and cancelled never pretend tests executed', async () => {
   for (const TEST_RESULT of ['failure']) {
     const h=harness(); await publishResult({...env,TEST_RESULT},h.fetcher);
-    const payload=h.calls[2].options.body;
+    const payload=receiptCall(h).options.body;
     assert.ok(payload.includes('task_failed')); assert.ok(!payload.includes('test_passed'));
   }
   for (const TEST_RESULT of ['cancelled','skipped']) {
@@ -83,7 +86,7 @@ test('wrong project/UID, certificate failure and bad token stop before Firestore
 test('ambiguous/malformed commit is unknown, without retries or raw error leakage', async () => {
   for (const options of [{commitFailure:true},{malformedCommit:true}]) {
     const h=harness(options); await assert.rejects(publishResult(env,h.fetcher),/^Error: TELEMETRY_DELIVERY_UNKNOWN$/);
-    assert.equal(h.calls.length,3);
+    receiptCall(h); assert.ok(commits(h).length <= 2); // receipt never retried
   }
 });
 test('oversized response and redirect failure are bounded and sanitized', async () => {

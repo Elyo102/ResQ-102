@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "agents": [
+    {"id": "codex", "roles": ["executor", "integration", "commit-branch-dispatch", "integration-tests"]},
+    {"id": "claude", "roles": ["deep-logic", "qa-review", "architecture", "shift-swap-races"]},
+    {"id": "grok", "roles": ["realtime", "service-workers", "offline-outbox", "telemetry-relays"]},
+    {"id": "gemini", "roles": ["docs", "long-analysis", "test-coverage", "cross-browser"]}
+  ],
+  "dispatchers": {
+    "gemini_dispatcher": {"role": "Planning, Architecture, Safety & Task Structure", "accepts_user_input": true},
+    "grok_dispatcher": {"role": "Real-Time Telemetry, PWA, Live Status & Field Sync", "accepts_user_input": true}
+  }
+}

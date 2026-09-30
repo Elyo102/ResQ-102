@@ -1,11 +1,15 @@
 import { randomUUID, createVerify } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { buildHeartbeatPayload, createHeartbeatLimiter } from '../../control-plane/heartbeat-payload.mjs';
 
 export const PROJECT = 'resq-agent-control-20260928';
 const KEY = 'AIzaSyCe0_Wad4-4MS3OHWB0fPxGsiSJe2M2Hzk'; // Public Firebase client key.
 const CERTS = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
 const DB = `projects/${PROJECT}/databases/(default)`;
 const fail = code => { throw new Error(code); };
+const COMMIT = `https://firestore.googleapis.com/v1/${DB}/documents:commit`;
+// One limiter per process (= per workflow run): >= 60s apart, <= 10 heartbeats per run.
+const RUN_HEARTBEAT_LIMITER = createHeartbeatLimiter();
 
 async function json(fetcher, url, options = {}) {
   try {
@@ -50,7 +54,25 @@ export function verifyPublisher(token, certificates, uid, now = Date.now()) {
   } catch { fail('TELEMETRY_PUBLISHER_INVALID'); }
 }
 
-export async function publishResult(env, fetcher = fetch) {
+// Best-effort liveness ping inside this already-gated job: same token, same REST commit path,
+// same events collection and validEvent schema as the receipt. Agent is hardcoded to Codex.
+// One attempt per call with a fresh random UUID document (create-only, never retried/upserted),
+// rate-limited, never throws, never logs; its outcome cannot change the job result or exit code.
+export async function emitHeartbeat({ fetcher = fetch, idToken, limiter = RUN_HEARTBEAT_LIMITER } = {}) {
+  try {
+    if (typeof idToken !== 'string' || !idToken) return { status: 'skipped' };
+    const permit = limiter.tryAcquire();
+    if (!permit.allowed) return { status: 'rate_limited' };
+    const { write } = buildHeartbeatPayload({ agent: 'Codex', task: 'local_tests', name: `${DB}/documents/events/${randomUUID()}` });
+    const result = await json(fetcher, COMMIT, {
+      method: 'POST', headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ writes: [write] })
+    });
+    return Array.isArray(result?.writeResults) && result.writeResults.length === 1 ? { status: 'accepted' } : { status: 'unknown' };
+  } catch { return { status: 'failed' }; }
+}
+
+export async function publishResult(env, fetcher = fetch, { heartbeatLimiter = RUN_HEARTBEAT_LIMITER } = {}) {
   if (env.GITHUB_REPOSITORY !== 'Elyo102/ResQ-102'
     || env.GITHUB_REF !== 'refs/heads/dev'
     || !['push', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)
@@ -69,6 +91,10 @@ export async function publishResult(env, fetcher = fetch) {
   if (auth.user_id !== uid || auth.project_id !== '802712493259') fail('TELEMETRY_IDENTITY_MISMATCH');
   const certificates = await json(fetcher, CERTS);
   verifyPublisher(auth.id_token, certificates, uid);
+  // Only after every gate above (repo/ref/event/SHA/approval, cancelled/skipped return, credential and
+  // result checks, identity + verified publisher token). This job has no long-running loop, so exactly
+  // one rate-limited heartbeat is attempted; no sleep, no retry. The receipt below is unchanged.
+  await emitHeartbeat({ fetcher, idToken: auth.id_token, limiter: heartbeatLimiter });
   const success = env.TEST_RESULT === 'success';
   // A short receipt run is genuinely alive; this is NOT a provider heartbeat.
   const events = [
