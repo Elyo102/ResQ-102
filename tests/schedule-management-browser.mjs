@@ -1,9 +1,10 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { createRequire } from 'node:module';
 const requireCjs = createRequire(import.meta.url);
 
@@ -27,7 +28,7 @@ function shiftMonthValue(ym, amount) {
 const yesterday = shiftDay(today, -1);
 const tomorrow = shiftDay(today, 1);
 
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.join(root, pathname === '/' ? 'schedule-management.html' : pathname.replace(/^\/+/, ''));
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -3526,7 +3527,15 @@ try {
     assert.equal(await button.isVisible(), true, 'the button is offered while the board holds today');
     await todayPage.evaluate(() => { document.getElementById('stationBoard').scrollLeft = 0; });
     await button.click();
-    await todayPage.waitForTimeout(600);
+    // Smooth scrolling completes asynchronously; keep the exact visibility
+    // oracle rather than sampling it once after an arbitrary animation delay.
+    await todayPage.waitForFunction(() => {
+      const board = document.getElementById('stationBoard');
+      const head = board.querySelector('.hcell.today');
+      const boardBox = board.getBoundingClientRect();
+      const headBox = head.getBoundingClientRect();
+      return headBox.left >= boardBox.left - 1 && headBox.right <= boardBox.right + 1;
+    }, null, { timeout:5000 });
     const back = await todayPage.evaluate(() => {
       const board = document.getElementById('stationBoard');
       const head = board.querySelector('.hcell.today');

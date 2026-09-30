@@ -297,6 +297,8 @@ service cloud.firestore {
       let user = get(/databases/$(database)/documents/stations/$(sid)/users/$(uid)).data;
       let reportId = emp + '_' + month;
       return isSuper()
+             // This type must use the transactional callable policy/overlap guards.
+             && request.resource.data.get('day_type', '') != 'reserve_shift'
              && emp is string && emp.size() > 0 && emp.size() <= 64
              && uid is string && uid.size() > 0 && uid.size() <= 128
              && (user.get('employee_number', user.get('emp_number', '')) == emp

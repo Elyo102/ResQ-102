@@ -413,6 +413,7 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
+import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h30';
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h30';
 import { subStationAvailable } from './stations.js?v=42h30';
 import { renderNav, renderStuckNav } from './nav.js?v=42h30';
@@ -1328,6 +1329,7 @@ function renderRows(sug){
         '" data-l="שעות">' + (needsTimes(view.day_type)
           ? '<span class="rng">' + esc(view.start || '—') + '–' +
               esc(running ? '…' : (view.end || '—')) + '</span>' +
+            (view.day_type === 'reserve_shift' && view.end_day === 1 ? ' למחרת' : '') +
             (isSplit(view) ? '<br><span class="rng">' + esc(view.start2) + '–' +
               esc(view.end2) + '</span>' : '')
           : '—') + '</td>' +
@@ -1495,7 +1497,7 @@ $('btnFill').onclick = async () => {
     const bt = baseTimes();
     const entries = sug.map(function (key) {
       const rec = newRecord(key, { day_type: 'regular', start: bt.start,
-                                   end: bt.end, sub_station: mySite });
+                                   end: bt.end, end_day: guessDayOffset(bt.start,bt.end), sub_station: mySite });
       return rec;
     });
     const result = await createMissingDays(target, entries);
@@ -1599,7 +1601,7 @@ $('btnSync').onclick = async () => {
 
       if (working === true && !rec) {
         const add = newRecord(key, { day_type: 'regular', start: bt.start,
-                                     end: bt.end, sub_station: mySite });
+                                     end: bt.end, end_day: guessDayOffset(bt.start,bt.end), sub_station: mySite });
         const fx2 = siteHoursOf(mySite);
         const st2 = sites.filter(s => s.id === mySite)[0];
         add.hours           = calcHours(add, fx2);
@@ -1754,7 +1756,7 @@ function editDay(key, rec){
   const shape0 = rec ? shapeOf(rec) : 'regular';
   const reasonMark = ' · נימוק חובה';
 
-  const types = DAY_TYPES.map(t =>
+  const types = DAY_TYPES.filter(t => t.id !== 'reserve_shift' || canSelectReserveShift(rec?.day_type)).map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
     '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
     '</option>').join('');
@@ -1779,6 +1781,9 @@ function editDay(key, rec){
     '<div id="dTimes">' +
       '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
       '<div class="shapeNote" id="dShapeNote"></div>' +
+      '<div id="dReserveEndBox" class="hide"><label for="dReserveEndDay">יום הסיום</label>' +
+        '<select id="dReserveEndDay"><option value="0">באותו יום</option>' +
+        '<option value="1"' + (v.end_day === 1 ? ' selected' : '') + '>למחרת</option></select></div>' +
 
       '<div class="seg">' +
         '<div class="two">' +
@@ -1827,16 +1832,25 @@ function editDay(key, rec){
   //   split      שני קטעים באותו יום, והסך הוא הסכום.
   function current(){
     const sh = $('dShape').value;
+    const equalOffset = (start, end, offset) => {
+      const a = $(start).value, b = $(end).value;
+      if (a !== b) return guessDayOffset(a,b);
+      const original = rec && rec.day_type === $('dType').value
+        && rec[start === 'dStart' ? 'start' : 'start2'] === a
+        && rec[end === 'dEnd' ? 'end' : 'end2'] === b;
+      return original ? (Number.isInteger(rec[offset]) ? rec[offset] : guessDayOffset(a,b)) : 0;
+    };
     return {
       day_type: $('dType').value,
       shape: sh,
       start: $('dStart').value,
       end:   $('dEnd').value,
-      end_day: sh === 'continued' ? 1 : guessDayOffset($('dStart').value, $('dEnd').value),
+      end_day: $('dType').value === 'reserve_shift' ? Number($('dReserveEndDay').value)
+        : sh === 'continued' ? 1 : equalOffset('dStart','dEnd','end_day'),
       start2: sh === 'split' ? $('dStart2').value : '',
       end2:   sh === 'split' ? $('dEnd2').value : '',
       end_day2: sh === 'split'
-                  ? guessDayOffset($('dStart2').value, $('dEnd2').value) : 0,
+                  ? equalOffset('dStart2','dEnd2','end_day2') : 0,
       sub_station: $('dSite').value,
       overtime_reason: $('dOtReason').value.trim()
     };
@@ -1855,14 +1869,19 @@ function editDay(key, rec){
     const sh = $('dShape').value;
 
     $('dTimes').style.display = needsTimes(t) ? '' : 'none';
+    const reserveShift = t === 'reserve_shift';
+    $('dShape').hidden = reserveShift;
+    document.querySelector('label[for="dShape"]').hidden = reserveShift;
+    $('dReserveEndBox').classList.toggle('hide', !reserveShift);
     $('dSeg2').classList.toggle('hide', sh !== 'split');
-    $('dShapeNote').textContent = NOTES[sh] || '';
+    $('dShapeNote').textContent = reserveShift
+      ? 'משמרת אחת עד 24 שעות לפי שעון מקומי. אפשר לערוך את השעות ואת יום הסיום.' : NOTES[sh] || '';
     $('lStart').textContent = sh === 'split' ? 'כניסה ראשונה' : 'כניסה';
     $('lEnd').textContent   = sh === 'split' ? 'יציאה ראשונה'
                             : (sh === 'continued' ? 'יציאה למחרת' : 'יציאה');
 
     const cur   = current();
-    const fixed = siteHoursOf(cur.sub_station);
+    const fixed = reserveShift ? 0 : siteHoursOf(cur.sub_station);
     const h     = calcHours(cur, fixed);
     const why   = reasonWhy(cur, fixed, shiftHoursFor());
 
@@ -1890,7 +1909,16 @@ function editDay(key, rec){
     }
   };
 
-  ['dType','dShape','dSite'].forEach(id => { $(id).onchange = sync; });
+  ['dShape','dSite','dReserveEndDay'].forEach(id => { $(id).onchange = sync; });
+  $('dType').onchange = () => {
+    if ($('dType').value === 'reserve_shift') {
+      $('dShape').value = 'regular';
+      $('dStart').value = '07:00'; $('dEnd').value = '07:00';
+      $('dReserveEndDay').value = '1';
+      $('dStart2').value = ''; $('dEnd2').value = '';
+    }
+    sync();
+  };
   ['dStart','dEnd','dStart2','dEnd2','dOtReason'].forEach(id => { $(id).oninput = sync; });
   sync();
 
@@ -1899,6 +1927,9 @@ function editDay(key, rec){
     const cur = current();
     const t   = cur.day_type;
     const sh  = cur.shape;
+    if (t === 'reserve_shift' && !canSelectReserveShift(rec?.day_type)) {
+      msg('יצירת משמרת בזמן מילואים אינה פעילה כרגע. הדיווח לא נשמר.', 'err'); return;
+    }
 
     if (needsTimes(t) && (!cur.start || !cur.end)) {
       msg('בסוג הזה צריך כניסה ויציאה.', 'err'); return;
@@ -1906,8 +1937,12 @@ function editDay(key, rec){
     if (needsTimes(t) && sh === 'split' && (!cur.start2 || !cur.end2)) {
       msg('במשמרת מפוצלת צריך למלא גם את הקטע השני.', 'err'); return;
     }
+    if (needsTimes(t) && ((cur.start === cur.end && cur.end_day === 0)
+        || (cur.start2 && cur.start2 === cur.end2 && cur.end_day2 === 0))) {
+      msg('שעות זהות באותו יום אינן משמרת של 24 שעות. יש לתקן את הדיווח.', 'err'); return;
+    }
 
-    const fixed = siteHoursOf(cur.sub_station);
+    const fixed = t === 'reserve_shift' ? 0 : siteHoursOf(cur.sub_station);
     const h = calcHours(cur, fixed);
     if (needsTimes(t) && h == null) {
       msg('השעות לא מסתדרות. בדוק אותן שוב.', 'err'); return;

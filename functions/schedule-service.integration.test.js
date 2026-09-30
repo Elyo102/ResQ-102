@@ -12,12 +12,14 @@ const { createScheduleService, ServiceError, ACTION, PRIVILEGED } = require('./s
 
 assert.strictEqual(Number(process.versions.node.split('.')[0]), 22,
   'schedule projection differential/performance tests require Node 22');
+const { createMutationReporter } = require('../tests/lib/mutation-reporter.cjs');
+const mutationReporter = createMutationReporter('functions/schedule-service.integration.test.js');
 
 let pass = 0;
 const fails = [];
 function t(name, fn) {
   try { fn(); pass += 1; }
-  catch (e) { fails.push(name + ' → ' + (e && e.message)); }
+  catch (e) { fails.push(name + ' → ' + (e && e.message)); mutationReporter.failure(name, e); }
 }
 function throwsCode(fn, code) {
   try { fn(); }
@@ -25,7 +27,7 @@ function throwsCode(fn, code) {
     assert.strictEqual(e.code, code, 'קוד ' + e.code + ' במקום ' + code + ' (' + e.message + ')');
     return;
   }
-  throw new Error('לא נזרקה שגיאה, ציפיתי ל-' + code);
+  assert.fail('לא נזרקה שגיאה, ציפיתי ל-' + code);
 }
 
 const AT = '2026-09-01T12:00:00.000Z';
@@ -756,4 +758,5 @@ if (process.env.RESQ_LOAD === '1') {
 }
 
 console.log((fails.length ? '✗' : '✓') + ' schedule-service.integration: ' + pass + '/' + (pass + fails.length));
+mutationReporter.end(fails.length);
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

@@ -104,7 +104,7 @@ await check('ordinary verified redemption projects only fresh identity',async()=
 await check('ordinary redemption rejects stale signed email',async()=>{const f=adapterFixture();await assert.rejects(()=>f.ctx.exports.redeemInvitation({auth:{uid:f.target.uid,token:{email:'old@example.test',email_verified:true}}}));});
 await check('resume callable requires fresh super rather than ordinary verified user',async()=>{const f=adapterFixture();await assert.rejects(()=>f.ctx.exports.resumeOnboarding({auth:{uid:f.target.uid,token:{email:f.target.email,email_verified:true}}}));});
 await check('actual module registers with demo config and network disabled, no TDZ',()=>{
- const env={...process.env,GCLOUD_PROJECT:'demo-onboarding-index',GOOGLE_CLOUD_PROJECT:'demo-onboarding-index',FIREBASE_CONFIG:JSON.stringify({projectId:'demo-onboarding-index'})};delete env.GOOGLE_APPLICATION_CREDENTIALS;
+ const env={...process.env,GCLOUD_PROJECT:'demo-resq',GOOGLE_CLOUD_PROJECT:'demo-resq',FIREBASE_CONFIG:JSON.stringify({projectId:'demo-resq'})};delete env.GOOGLE_APPLICATION_CREDENTIALS;
  const code=`const deny=()=>{throw Error('Network forbidden during index registration')};require('node:http').request=deny;require('node:https').request=deny;require('node:net').Socket.prototype.connect=deny;global.fetch=deny;const api=require('./index');if(typeof api.approveRegistration!=='function'||typeof api.provisionStation!=='function')throw Error('Missing exports');console.log('registered');`;
  const child=spawnSync(process.execPath,['-e',code],{cwd:path.join(root,'functions'),env,encoding:'utf8',timeout:20000});assert.equal(child.status,0,child.stderr||String(child.error));assert.match(child.stdout,/registered/);
 });

@@ -1,8 +1,9 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // בדיקת עשן: מרים שרת מקומי, טוען כל דף בדפדפן אמיתי, ומדווח
 // על כל שגיאת קוד. ה-SDK של Firebase מוחלף בבדל מקומי, כי
 // שרתי Google אינם נגישים מכאן — וכך שגיאות בקוד שלנו צפות
 // במקום להיבלע בכישלון רשת.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -21,7 +22,7 @@ const STUB = __j(__TESTS, "stub");
 let PORT = 0;
 const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css' };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/') p = '/index.html';
   const f = path.join(ROOT, p);

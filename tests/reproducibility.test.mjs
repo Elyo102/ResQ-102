@@ -28,9 +28,12 @@ test('duplicates and secret-like public literals reject without echoing contents
   }
 });
 test('gate names retain distinct meanings and dynamic Rules entry denominator',()=>{
-  const scripts={'test:all':'npm run test:reproducibility && npm run test:rules && npm run test:e2e',all:'npm run test:reproducibility && npm run test:inventory && npm run static'};
+  const scripts={'test:all':'node run-contained.mjs test:all','test:all:inner':'npm run test:reproducibility && npm run test:rules && npm run test:e2e',all:'node run-contained.mjs all','all:inner':'npm run test:reproducibility && npm run test:inventory && npm run pages:source && npm run static'};
   assert.equal(describeGates(scripts,{test:'node a.mjs && node ../functions/b.test.js'}).rulesEntries,2);
   assert.throws(()=>describeGates({...scripts,'test:all':'npm run all'},{test:'node a.mjs'}),/FOCUSED/);
+  assert.throws(()=>describeGates({...scripts,'test:all:inner':'npm run test:e2e'},{test:'node a.mjs'}),/FOCUSED/);
+  assert.throws(()=>describeGates({...scripts,all:scripts['all:inner']},{test:'node a.mjs'}),/APPLICATION/);
+  assert.throws(()=>describeGates({...scripts,'all:inner':'npm run static'},{test:'node a.mjs'}),/APPLICATION/);
   assert.throws(()=>describeGates(scripts,{test:'curl example.invalid'}),/RULES/);
 });
 test('candidate index bytes are authoritative and filtered working bytes must match',()=>{

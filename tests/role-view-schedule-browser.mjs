@@ -1,9 +1,10 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { resolveRoleView } from '../role-view.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -11,7 +12,7 @@ const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
   '.css':'text/css; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml' };
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const relative = pathname === '/' ? 'schedule-management.html' : pathname.replace(/^\/+/, '');
   const file = path.join(root, relative);

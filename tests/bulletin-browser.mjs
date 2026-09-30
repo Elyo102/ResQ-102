@@ -1,10 +1,11 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // ============================================================
 //  לוח מודעות — מסלול משתמש בדפדפן אמיתי
 // ============================================================
 //  Firebase מוחלף ב-stubs מקומיים. הבדיקה אינה דורשת רשת,
 //  אינה קוראת נתוני אמת ואינה יכולה לכתוב ל-production.
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ const types = {
   '.jpg':'image/jpeg', '.png':'image/png', '.svg':'image/svg+xml'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/login.html';
   const file = path.join(root, urlPath);

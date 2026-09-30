@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // בדיקת ניגודיות — הפער שגילה אלדד ולא הכלים.
 //
 // כל הבדיקות עד היום רצו בערכה הכהה, כי היא ברירת המחדל.
@@ -29,7 +30,7 @@
 // בגלל שזה הסף שמתחתיו טקסט מפסיק להיקרא במסך טלפון
 // באור יום, וזה בדיוק תנאי העבודה של כבאי בחצר התחנה
 // באילת.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
@@ -45,7 +46,7 @@ const ROOT = __APP, STUB = __j(__TESTS, "stub");
 let PORT = 0;
 const T = { '.html':'text/html; charset=utf-8', '.js':'text/javascript',
             '.css':'text/css', '.json':'application/json' };
-const srv = http.createServer((q, r) => {
+const srv = createContainedServer((q, r) => {
   let p = decodeURIComponent(q.url.split('?')[0]);
   if (p === '/') p = '/index.html';
   const f = path.join(ROOT, p);

@@ -33,6 +33,47 @@ assert.match(schedule, /delivery_policy === 'trial_control'[\s\S]*?activeTrialCo
 assert.match(schedule, /claims\.personal_lab_control === true/);
 assert.match(schedule, /activation_auth_time_ms/);
 assert.match(schedule, /getAuthUser\(String\(candidateValue\.person \|\| ''\)\)/);
-assert.match(schedule, /validateOutboxForSend\(ref, claimed\.lease_token, claimed\)/);
+// The fourth argument records provider entry. Trial delivery must fence again
+// after fresh Auth validation; accepting an optional argument would miss that.
+const deliveryStart = schedule.indexOf('  async function deliverOutbox(ref) {');
+const deliveryEnd = schedule.indexOf('  async function resumeOutbox()', deliveryStart);
+assert.ok(deliveryStart >= 0 && deliveryEnd > deliveryStart, 'bounded delivery source exists');
+const deliverySource = schedule.slice(deliveryStart, deliveryEnd);
+function assertDeliveryFences(source) {
+  const ordered = [
+    /await beforeOutboxSend\(claimed\);/,
+    /if \(!await validateOutboxForSend\(ref, claimed\.lease_token, claimed,\s*claimed\.delivery_policy !== 'trial_control'\)\) return \{ skipped: true \};/,
+    /if \(claimed\.delivery_policy === 'trial_control'\) \{/,
+    /currentAuth = await getAuthUser\(String\(claimed\.person \|\| ''\)\);/,
+    /if \(!trialAuthValid\(currentAuth, String\(claimed\.person \|\| ''\),\s*String\(claimed\.station_id \|\| ''\), Number\(claimed\.control_auth_time_ms\)\)\) \{/,
+    /await cancelLeasedOutbox\(ref, claimed\.lease_token, 'trial-control-inactive'\);\s*return \{ skipped: true \};/,
+    /if \(!await validateOutboxForSend\(ref, claimed\.lease_token, claimed, true\)\) return \{ skipped: true \};/,
+    /providerEntered\s*=\s*true;/,
+    /const delivery = await sendPush\(claimed\.station_id, claimed\.person, 'schedule_mine',/
+  ];
+  let offset = 0;
+  for (const [index, pattern] of ordered.entries()) {
+    const match = pattern.exec(source.slice(offset));
+    assert.ok(match, 'delivery fence/order contract step ' + index);
+    offset += match.index + match[0].length;
+  }
+}
+assertDeliveryFences(deliverySource);
+const finalFence = "if (!await validateOutboxForSend(ref, claimed.lease_token, claimed, true)) return { skipped: true };";
+const mutations = [
+  ['missing final fence', value => value.replace(finalFence, '')],
+  ['disabled provider entry', value => value.replace(finalFence, finalFence.replace(', true)', ', false)'))],
+  ['missing provider entry argument', value => value.replace(finalFence, finalFence.replace(', true)', ')'))],
+  ['changed lease', value => value.replace(finalFence, finalFence.replace('claimed.lease_token', 'otherLease'))],
+  ['changed claim', value => value.replace(finalFence, finalFence.replace(', claimed,', ', otherClaim,'))],
+  ['ordinary policy bypass', value => value.replace("claimed.delivery_policy !== 'trial_control'", 'true')],
+  ['premature final fence', value => value.replace(finalFence, '').replace('await beforeOutboxSend(claimed);', finalFence + '\nawait beforeOutboxSend(claimed);')]
+];
+for (const [name, mutate] of mutations) {
+  const changed = mutate(deliverySource);
+  assert.notEqual(changed, deliverySource, name + ' mutation applied');
+  assert.throws(() => assertDeliveryFences(changed), /delivery fence\/order contract/, name);
+}
+console.log('personal-live-lab delivery fence mutations: ' + mutations.length + ' rejected');
 
 console.log('personal-live-lab wiring: passed');

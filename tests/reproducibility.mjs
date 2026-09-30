@@ -2,6 +2,7 @@ import {existsSync,readdirSync,lstatSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
+import {assertApplicationGate} from './lib/gate-contract.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const publicWeb=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css'].map(p=>'control-plane/web/'+p));
@@ -47,8 +48,8 @@ export function validateInventory({manifest,specs,tracked,entries,read,workingOi
   return {specFiles:manifest.specs.length,requiredInputs:required.length};
 }
 export function describeGates(scripts,rules){
-  if(scripts['test:all']!=='npm run test:reproducibility && npm run test:rules && npm run test:e2e')fail('FOCUSED_GATE_CHANGED');
-  if(!scripts.all?.startsWith('npm run test:reproducibility && npm run test:inventory &&'))fail('APPLICATION_GATE_CHANGED');
+  if(scripts['test:all']!=='node run-contained.mjs test:all'||scripts['test:all:inner']!=='npm run test:reproducibility && npm run test:rules && npm run test:e2e')fail('FOCUSED_GATE_CHANGED');
+  assertApplicationGate(scripts);
   const entries=rules.test.split(' && ');
   if(entries.some(s=>!/^node (?:\.\.\/functions\/)?[a-z0-9.-]+\.(?:mjs|cjs|js)$/.test(s)))fail('RULES_REGISTRY_CHANGED');
   return {focusedGate:'test:all (Rules registry + Playwright)',applicationGate:'all (separate application chain)',rulesEntries:entries.length};

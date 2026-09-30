@@ -1,9 +1,10 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -20,7 +21,7 @@ startModeController(window.__CLAIMS || {});
 window.__MODE_READY = true;
 </script></body></html>`;
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
   if (pathname === '/fixture.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

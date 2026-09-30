@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // 42H.20 · "Required validation: Playwright screenshots at 320, 360, and
 // 390px for home, import preview/review, and published schedule."
 //
@@ -9,7 +10,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
@@ -26,7 +27,7 @@ function shiftDay(iso, amount) {
   return date.toISOString().slice(0, 10);
 }
 
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.join(root, pathname === '/' ? 'login.html' : pathname.replace(/^\/+/, ''));
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

@@ -1,4 +1,4 @@
-import {test,expect} from 'playwright/test';
+import {test,expect} from '../lib/contained-test.mjs';
 import {readFileSync} from 'node:fs';
 const base=new URL('../../control-plane/web/',import.meta.url);
 const assets=new Set(['index.html','bootstrap.mjs','firebase-adapter.mjs','firebase-config.mjs','private-controller.mjs','private-view.mjs','private.css']);

@@ -52,7 +52,7 @@ const SHELL = [
   './quals.html', './alerts.html', './callout.html', './callout-console.js', './callout-roster-cache.js', './callout-siren.mp3', './stats.html', './people.html',
   './vehicle.html', './sign.html',
   './index.html',
-  './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js',
+  './nav.js', './rotation.js', './effective-workdays.js', './readiness.js', './hours.js', './reserve-shift-policy.js',
   './guards.js', './faults.js', './fleet.js', './forms.js', './stats.js',
   // חתימות, הפקת מסמכים, תפקידים ולוג המשמרת. בלי אלה,
   // מסך הטפסים ומסך ההחלפות נשברים לגמרי במצב לא מקוון —
@@ -78,7 +78,7 @@ const CORE_SHELL = [
   './alerts-feed.js', './home-faults.js', './home-command.js',
   './role-view.js', './role-view-page.js', './join-ui.js',
   './monitored-functions.js', './appcheck.js', './mode-bar.js',
-  './error-text.js', './callout-roster-cache.js'
+  './error-text.js', './callout-roster-cache.js', './reserve-shift-policy.js'
 ];
 
 // Mobile radios can remain half-open for a long time without rejecting a

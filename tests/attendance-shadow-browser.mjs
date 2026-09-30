@@ -1,10 +1,11 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // ============================================================
 //  בקרת שעות Shadow — תצוגת מוכנות בדפדפן אמיתי
 // ============================================================
 //  Firebase מוחלף ב-stubs מקומיים. הבדיקה אינה דורשת רשת,
 //  אינה קוראת נתוני אמת ואינה יכולה לכתוב ל-production.
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +19,7 @@ const types = {
   '.css':'text/css; charset=utf-8', '.json':'application/json'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/attendance-shadow.html';
   const file = path.join(root, urlPath);

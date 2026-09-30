@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // ============================================================
 //  כניסה קבועה לאשף מוכנות המכשיר מתוך alerts.html — דפדפן אמיתי
 //
@@ -12,7 +13,7 @@
 //  אין כתיבה ל-production. צילומי מסך: RESQ_READINESS_SCREENSHOT_DIR.
 // ============================================================
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,7 +31,7 @@ const types = {
 const SHOT_DIR = process.env.RESQ_READINESS_SCREENSHOT_DIR ? path.resolve(process.env.RESQ_READINESS_SCREENSHOT_DIR) : '';
 if (SHOT_DIR) fs.mkdirSync(SHOT_DIR, { recursive: true });
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/alerts.html';
   const file = path.join(root, urlPath);

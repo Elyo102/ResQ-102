@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-const { chromium } = createRequire(import.meta.url)('playwright');
+const { chromium } = createRequire(import.meta.url)('./lib/contained-playwright.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), origin = 'http://127.0.0.1:41996';
 const files = ['hr-documents.html', 'hr-documents-client.js', 'hr-documents-ui.js', 'hr-documents-ui.css', 'hr-attachments-ui.js', 'hr-attachments-ui.css'];
 const hashes = () => Object.fromEntries(files.map(f => [f, createHash('sha256').update(fs.readFileSync(path.join(root, f))).digest('hex')]));

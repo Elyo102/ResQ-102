@@ -22,7 +22,7 @@
 // הכתובת הוא הדרך היחידה שנמצאה בזמן הזמין; שאר הקובץ — כל לוגיקת
 // המטמון, activate, fetch ו-offline — נשאר בדיוק כפי שהוא בייצור.
 // לוגיקת ה-messaging עצמה אינה הנושא של הבדיקה הזו.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { MANIFEST } from './version-release.mjs';
 // 42H.20 · ביקורת Codex, חוסם 4 · מפתח המטמון נגזר מהמניפסט, לא מקובע.
 const CURRENT_CACHE = MANIFEST.sw_cache_key;
@@ -47,11 +47,19 @@ const GSTATIC_STUB_BODY = 'self.firebase = { initializeApp: function(){}, messag
 // מחליף רק את שתי כתובות ה-gstatic בכתובת מקומית — שאר הקובץ (מטמון,
 // activate, fetch, offline) נשאר מילה במילה כמו בייצור. ראה הערת הראש.
 function localizeGstatic(source) {
+  for (const sdk of [GSTATIC_APP, GSTATIC_MESSAGING]) {
+    if (source.split(sdk).length !== 2) {
+      throw new Error('localizeGstatic: expected exactly one of each SDK import');
+    }
+  }
   const localized = source
     .replace(GSTATIC_APP, '/__stub_gstatic_app.js')
     .replace(GSTATIC_MESSAGING, '/__stub_gstatic_messaging.js');
   if (localized === source) {
     throw new Error('localizeGstatic: לא נמצאה אף אחת משתי כתובות ה-gstatic במקור — ייתכן שהקובץ השתנה');
+  }
+  if (/importScripts\s*\([^)]*https?:/s.test(localized)) {
+    throw new Error('localizeGstatic: unexpected external worker import');
   }
   return localized;
 }
@@ -151,14 +159,18 @@ function check(cond, label, detail) {
   else { bad++; console.log('✗ ' + label + (detail ? '\n    ' + detail : '')); }
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--headless=new'] }).catch(() => chromium.launch());
+const browser = await chromium.launch();
 
 try {
   // ---------- 0a) required core is atomic; optional shell remains best-effort ----------
   const derivedLoginCore = loginBootClosure();
-  check(JSON.stringify(REQUIRED_CORE.slice().sort()) === JSON.stringify(derivedLoginCore),
-    'CORE_SHELL שווה בדיוק לסגירת הייבואים המקומיים וה-CSS של login',
-    'declared=' + JSON.stringify(REQUIRED_CORE.slice().sort()) + ' derived=' + JSON.stringify(derivedLoginCore));
+  const guardedPolicy = './reserve-shift-policy.js';
+  check(REQUIRED_CORE.filter(value => value === guardedPolicy).length === 1,
+    'מדיניות יצירת המילואים נשמרת בדיוק פעם אחת בליבת ה-worker');
+  const expectedCore = [...new Set([...derivedLoginCore, guardedPolicy])].sort();
+  check(JSON.stringify(REQUIRED_CORE.slice().sort()) === JSON.stringify(expectedCore),
+    'CORE_SHELL שווה בדיוק לסגירת login בתוספת מדיניות המילואים המוגנת',
+    'declared=' + JSON.stringify(REQUIRED_CORE.slice().sort()) + ' expected=' + JSON.stringify(expectedCore));
   {
     swSourceOverride = null;
     unavailablePaths.add('/mode-bar.js');
@@ -505,11 +517,19 @@ try {
     await page.evaluate((asset) => fetch('./login.html?v=' + asset).catch(() => {}), MANIFEST.asset_query);
     await page.waitForTimeout(300);
 
+    const oldOnlySetup = await page.evaluate(async (currentName) => {
+      const old = await caches.open('resq-old-only-isolation-probe');
+      await old.put('/__old_only_asset__.js', new Response('old-cache-poison'));
+      const current = await caches.open(currentName);
+      return { old:!!await old.match('/__old_only_asset__.js'), current:!!await current.match('/__old_only_asset__.js') };
+    }, CURRENT_CACHE);
+    check(oldOnlySetup.old && !oldOnlySetup.current, 'נכס בדיקת הבידוד קיים רק במטמון הישן');
+
     await new Promise((resolve) => server.close(resolve));
 
     const offlineResponse = await page.evaluate(async (asset) => {
       try {
-        const r = await fetch('./login.html?v=' + asset);
+        const r = await fetch('./login.html?v=' + asset + '-query-isolation-probe');
         return { ok: true, status: r.status, bodyLen: (await r.text()).length };
       } catch (e) {
         return { ok: false, error: String(e) };
@@ -518,6 +538,16 @@ try {
     check(offlineResponse.ok && offlineResponse.status === 200 && offlineResponse.bodyLen > 500,
       'דף אמיתי מהמעטפת נטען בהצלחה כשהשרת נותק לגמרי (חיבור מסורב אמיתי), מתוך המטמון',
       'offlineResponse=' + JSON.stringify(offlineResponse));
+
+    const oldOnlyResponse = await page.evaluate(async () => {
+      const response = await fetch('/__old_only_asset__.js?v=different');
+      const old = await caches.open('resq-old-only-isolation-probe');
+      const retained = await old.match('/__old_only_asset__.js');
+      return {status:response.status, body:await response.text(), retained:retained && await retained.text()};
+    });
+    check(oldOnlyResponse.status === 504 && oldOnlyResponse.body !== 'old-cache-poison'
+      && oldOnlyResponse.retained === 'old-cache-poison',
+      'נכס מהמטמון הישן לא זולג לגרסה הנוכחית באופליין גם כשהמטמון הישן עדיין קיים', JSON.stringify(oldOnlyResponse));
 
     let navFailedGracefully = false;
     try {

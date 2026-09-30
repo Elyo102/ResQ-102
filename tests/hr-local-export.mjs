@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'hr-local-export.js'), 'utf8');
 const { exportLocalFiles, localExportSha256, LOCAL_EXPORT_LIMITS } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));

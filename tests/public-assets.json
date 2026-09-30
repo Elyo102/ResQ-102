@@ -35,6 +35,7 @@
   "home-command.js",
   "home-faults.js",
   "hours.js",
+  "reserve-shift-policy.js",
   "hr-attachments-ui.css",
   "hr-attachments-ui.js",
   "hr-client.js",

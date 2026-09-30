@@ -26,7 +26,8 @@ export const DAY_TYPES = [
   { id: 'guard',    he: 'אבטחה',                      times: true  },
   { id: 'vacation', he: 'חופש',                       times: false },
   { id: 'sick',     he: 'מחלה',                       times: false },
-  { id: 'reserve',  he: 'מילואים',                    times: false }
+  { id: 'reserve',  he: 'מילואים',                    times: false },
+  { id: 'reserve_shift', he: 'משמרת בזמן מילואים',    times: true }
 ];
 
 // סוגי יום שדורשים נימוק תמיד, גם אם השעות רגילות לגמרי.
@@ -181,6 +182,12 @@ export function calcHours(rec, siteHours) {
   if (r.day_type === 'vacation') return VACATION_HOURS;
   if (r.day_type === 'sick')     return SICK_HOURS;
   if (r.day_type === 'reserve')  return RESERVE_HOURS;
+  if (r.day_type === 'reserve_shift') {
+    if (r.shape !== 'regular' || !Number.isInteger(r.end_day) || ![0, 1].includes(r.end_day)
+        || r.start2 || r.end2 || (r.end_day2 != null && r.end_day2 !== 0)) return null;
+    const hours = segmentHours(r.start, r.end, r.end_day);
+    return Number.isFinite(hours) && hours > 0 && hours <= 24 ? hours : null;
+  }
 
   // אורך קבוע של תחנת קצה גובר גם על פיצול. יטבתה היא 25 שעות
   // בהגדרה, ולא סכום של מה שדווח.
@@ -208,6 +215,7 @@ export function calcHours(rec, siteHours) {
 
 export function expectedHours(rec, siteHours, shiftHours) {
   const r = rec || {};
+  if (r.day_type === 'reserve_shift') return 24;
   if (!needsTimes(r.day_type)) return null;
   // אורך קבוע של תחנת קצה הוא אורך המשמרת שם, ולא חריגה ממנה.
   const fixed = Number(siteHours || 0);

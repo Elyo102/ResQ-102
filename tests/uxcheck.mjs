@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,8 +83,44 @@ check(loginPage.includes("applyReadyUpdate({ document, runningVersion:APP_VERSIO
 check(!pwaRuntime.includes('cacheStorage.keys') &&
       serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
       'service worker exclusively owns release-cache cleanup');
-check(/caches\.match\(req\s*,\s*\{\s*ignoreSearch\s*:\s*true\s*\}\s*\)/.test(serviceWorker),
-      'service worker offline fallback ignores asset version query strings');
+const fallbackStart = serviceWorker.indexOf('function offlineFallback(req) {');
+const fallbackEnd = serviceWorker.indexOf('function networkFirst(req, event)', fallbackStart);
+assert.ok(fallbackStart >= 0 && fallbackEnd > fallbackStart, 'bounded offline fallback source exists');
+const fallbackSource = serviceWorker.slice(fallbackStart, fallbackEnd);
+async function verifyCurrentCacheFallback(source) {
+  let opened = 0, matched = 0, globalMatched = 0;
+  const hit = new Response('current-cache-asset');
+  const sandbox = { CACHE:'synthetic-current-cache', Response,
+    caches: {
+      open: async name => {
+        assert.equal(name, 'synthetic-current-cache', 'only current release cache may open'); opened++;
+        return { match: async (req, options) => {
+          matched++; assert.equal(options?.ignoreSearch, true, 'version query must be ignored inside current cache');
+          return req.url.split('?')[0] === '/current.js' ? hit : undefined;
+        } };
+      },
+      match: async () => { globalMatched++; return new Response('old-cache-poison'); }
+    }
+  };
+  const fallback = vm.runInNewContext(source + '\nofflineFallback;', sandbox, { timeout:1000 });
+  assert.equal(await fallback({url:'/current.js?v=changed',mode:'cors'}), hit);
+  const oldOnly = await fallback({url:'/old-only.js?v=changed',mode:'cors'});
+  assert.equal(oldOnly.status, 504); assert.equal(await oldOnly.text(), '');
+  const navigation = await fallback({url:'/missing.html',mode:'navigate'});
+  assert.match(await navigation.text(), /אין חיבור לרשת/);
+  assert.equal(opened, 3); assert.equal(matched, 3); assert.equal(globalMatched, 0);
+}
+await verifyCurrentCacheFallback(fallbackSource);
+for (const [name, from, to] of [
+  ['global lookup', 'return cache.match(req,', 'return caches.match(req,'],
+  ['old release cache', 'caches.open(CACHE)', "caches.open('old-release')"],
+  ['lost version-query support', 'ignoreSearch: true', 'ignoreSearch: false']
+]) {
+  const changed = fallbackSource.replace(from, to);
+  assert.notEqual(changed, fallbackSource, name + ' mutation applied');
+  await assert.rejects(() => verifyCurrentCacheFallback(changed), {name:'AssertionError'}, name);
+}
+check(true, 'offline fallback uses current cache only; query support and three weakening mutations verified');
 for (const asset of ['./bulletin.js', './bulletin.css']) {
   check(serviceWorker.includes(asset), 'service worker shell includes ' + asset);
 }

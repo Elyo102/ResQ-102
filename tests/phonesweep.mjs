@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // סריקת טלפון על כל המסכים.
 //
 // כל הבדיקות עד היום רצו ב-1150 פיקסל. אלדד הוא זה שגילה
@@ -24,7 +25,7 @@
 // label נכנס לבדיקה במקומו, בדיוק כמו שאלדד ביקש. חריג מפורש
 // (data-touch-target-exempt) עובר את אותה בדיקת "קישור בתוך
 // טקסט רציף" - אם הוא לא עומד בה, זה כשל, לא פטור.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
@@ -36,7 +37,7 @@ const __APP   = __j(__TESTS, '..');
 
 
 const ROOT=__APP, STUB=__j(__TESTS, "stub");
-const srv=http.createServer((q,s)=>{const f=path.join(ROOT,decodeURIComponent(q.url.split('?')[0]));
+const srv=createContainedServer((q,s)=>{const f=path.join(ROOT,decodeURIComponent(q.url.split('?')[0]));
   fs.readFile(f,(e,d)=>{if(e){s.writeHead(404);s.end();return;}
   s.writeHead(200,{'Content-Type':/\.js$/.test(f)?'text/javascript':/\.css$/.test(f)?'text/css':'text/html; charset=utf-8'});s.end(d);});});
 const PAGES=fs.readdirSync(ROOT).filter(f=>f.endsWith('.html')).sort();

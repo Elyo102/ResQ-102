@@ -1,4 +1,5 @@
-import { chromium } from 'playwright';
+import { createContainedServer } from './lib/localize-worker.mjs';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/login.html');
   const file = path.join(root, urlPath === '/' ? 'login.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end('no'); return; }
@@ -52,16 +53,25 @@ await attendanceContext.route('**/firebasejs/**', route => {
   route.fulfill({ status:200, contentType:'text/javascript', body:fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export default {};' });
 });
 await attendanceContext.route('**://fonts.googleapis.com/**', route => route.fulfill({ status:200, contentType:'text/css', body:'' }));
-await attendanceContext.addInitScript('window.__SMOKE_ROLE = "super";');
+await attendanceContext.addInitScript(() => {
+  window.__SMOKE_ROLE = 'super';
+  // The callable month reader, not the Firestore list fixture, owns this path.
+  window.__STUB_SELF_ATTENDANCE = {
+    '2026-08-01': { uid:'stub-uid', emp_number:'1', full_name:'עובד בדיקה', crew:'C',
+      date:'2026-08-01', month:'2026-08', day_type:'regular', shape:'regular',
+      start:'07:00', end:'07:00', end_day:1, start2:'', end2:'', end_day2:0,
+      sub_station:'', overtime_reason:'', notes:'', status:'draft', hours:24 }
+  };
+});
 const attendance = await attendanceContext.newPage();
-// The shared fixture contains August records, not a query-filtering database.
+// This callable fixture contains an explicit existing August record.
 // Fix this page's date only; timers and the product's month guard remain real.
 await attendance.clock.setFixedTime(new Date('2026-08-25T12:00:00Z'));
 await attendance.goto('http://localhost:' + port + '/attendance.html', { waitUntil:'load' });
 await attendance.locator('.days .btn').first().waitFor({ state:'visible', timeout:8000 });
 await attendance.addStyleTag({ content:'#coWrap{display:none!important}' });
 const source = attendance.locator('.days .btn').first();
-await check((await source.getAttribute('data-date')).startsWith('2026-08-'), 'attendance fixture row belongs to August 2026');
+await check(await source.getAttribute('data-date') === '2026-08-01', 'attendance fixture opens the exact existing August record');
 await check((await attendance.locator('#moLabel').textContent()).includes('אוגוסט 2026'), 'attendance displayed month matches the fixture');
 await source.focus();
 await attendance.keyboard.press('Enter');
@@ -101,6 +111,15 @@ await attendance.locator('#ov').waitFor({ state:'hidden', timeout:5000 });
 await attendance.waitForFunction(date => document.activeElement?.dataset?.date === date, sourceDate);
 await check(await attendance.evaluate(date => document.activeElement?.dataset?.date === date, sourceDate),
             'attendance save restores focus after the row is rebuilt');
+await check(await attendance.evaluate(async () => {
+  const calls = window.__CALLABLE_CALLS.filter(call => call.name === 'mutateMyAttendanceDay');
+  const payload = calls.at(-1)?.payload;
+  const stored = window.__STUB_SELF_ATTENDANCE['2026-08-01'];
+  const { calcHours } = await import('/hours.js');
+  return calls.length === 1 && payload.date === '2026-08-01' && payload.operation === 'save'
+    && payload.expected_version?.seconds === 1800000001 && payload.expected_version?.nanoseconds === 7
+    && payload.patch.end_day === 1 && stored.end_day === 1 && calcHours(stored, 0) === 24;
+}), 'editing an existing full-day record preserves its exact version and explicit next-day offset');
 await attendanceContext.close();
 
 const correctionContext = await browser.newContext({ viewport:{ width:390, height:844 }, locale:'he-IL' });

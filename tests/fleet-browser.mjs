@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 /* ====================================================================
  *  fleet-browser · מצב הצי במסך האמיתי (faults.html), מול Firebase מזויף.
  *
@@ -21,7 +22,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stub = path.join(root, 'tests', 'stub');
@@ -30,7 +31,7 @@ const mime = {
   '.css':'text/css; charset=utf-8', '.json':'application/json'
 };
 
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.join(root, pathname === '/' ? 'faults.html' : pathname.replace(/^\/+/, ''));
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

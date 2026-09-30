@@ -1,10 +1,11 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // Home command dashboard — release acceptance for the approved mobile shell.
 //
 // This test uses only local Firebase stubs. It never contacts Firebase or a
 // deployed origin. It deliberately stays red until the approved urgent,
 // role-task and shift-status regions are part of the real login/home screen.
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -20,7 +21,7 @@ const types = {
   '.jpg':'image/jpeg', '.png':'image/png', '.svg':'image/svg+xml'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/login.html';
   const file = path.join(root, urlPath);

@@ -40,15 +40,19 @@ jobs:
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
-      # זה אותו שער מלא שמופעל לפני פריסת Functions. כך אין מסלול שבו
-      # CI ירוק למרות שבדיקת שחרור חדשה לא נכללה ברשימה הידנית הישנה.
+      # Split exactly two trusted native temporary-Git tests from the contained
+      # application chain. Both steps are mandatory; no tests are omitted.
       - name: התקנת תלויות פונקציות
         working-directory: functions
         run: npm ci --no-audit --no-fund
 
-      - name: שער שחרור מלא — קוד, מסכים, נייד, עומס ומלאי Hosting
+      - name: Native temporary backup and restore — isolated Git environment
         working-directory: tests
-        run: npm run all
+        run: npm run native:ops
+
+      - name: Contained release remainder — every application check except the two native tests above
+        working-directory: tests
+        run: npm run reserve:contained
 
   # ---------- כללי האבטחה ----------
   rules:

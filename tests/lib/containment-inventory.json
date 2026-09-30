@@ -1,0 +1,935 @@
+{
+  "schema": 1,
+  "scope": "Conservative tests/functions/rules-test JavaScript inventory; runtime guard is still mandatory",
+  "entries": [
+    {
+      "file": "functions/callout-delivery.integration.test.js",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/admin-schedule-access-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 10,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/alerts-feed-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/attendance-shadow-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 3,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/backtrail.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/board-performance.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/bulletin-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 7,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/callout-console-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/callout-lifecycle-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/contained-gate-dispatch.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/containment-negative.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 1,
+      "child": 1
+    },
+    {
+      "file": "tests/contrast.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/device-readiness-entry-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 5,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/e2e/invitation.fixture.mjs",
+      "imports": [
+        "../lib/contained-test.mjs"
+      ],
+      "launch": 0,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/faults-building-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/fleet-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/fleet-history-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/forms-submit-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/guards-manager-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 24,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/home-command-dashboard-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/home-faults-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hosting-privacy.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-attachments-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-client-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-documents-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-employee-acceptance.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-hours-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-local-export.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-month-archive.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-pilot-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 2
+    },
+    {
+      "file": "tests/hr-requests-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/hr-workforce-retry-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/invitations-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/join-campaign-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/join-campaign-source.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/lib/contained-playwright.cjs",
+      "imports": [
+        "playwright"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/lib/contained-test.mjs",
+      "imports": [
+        "./contained-playwright.cjs",
+        "playwright/test"
+      ],
+      "launch": 1,
+      "context": 0,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/lib/localize-worker.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/lib/loopback-proxy.cjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/lib/mutation-fixture.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/lib/network-guard.cjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 3
+    },
+    {
+      "file": "tests/lib/source-eol-dependency.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/maintenance-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/metrics-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/metrics-source.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/mode-controller-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/mutation-read-closure.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/nav-groups.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/notification-bell-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 4,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/onboarding-index-source.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/onboarding-ui-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/ops-backup-test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 2
+    },
+    {
+      "file": "tests/ops-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/ops-disaster-restore.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 3
+    },
+    {
+      "file": "tests/ops-global-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/ops-restore-drill-test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/ops-source.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 3
+    },
+    {
+      "file": "tests/owned-emulator.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 1,
+      "child": 1
+    },
+    {
+      "file": "tests/performance.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/phonesweep.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/playwright.config.mjs",
+      "imports": [
+        "playwright/test"
+      ],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/proxy-egress-contract.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/proxy-lifecycle.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/pwacheck.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 4,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/registration-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/release-stamp-cli.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/reproducibility.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 4
+    },
+    {
+      "file": "tests/reserve-shift-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/role-view-mobile-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/role-view-schedule-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/role.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/run-contained.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/run-local-rules.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 2
+    },
+    {
+      "file": "tests/run-native-ops.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/run-owned-schedule-emulator.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 2
+    },
+    {
+      "file": "tests/run-reserve-contained.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/saas-admin-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 0,
+      "child": 0
+    },
+    {
+      "file": "tests/saas-source.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/scale-3000-employees.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-contract-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 2
+    },
+    {
+      "file": "tests/schedule-identity-store-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/schedule-legacy-compat-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 7,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-legacy-failure-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-management-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 110,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-manager-shell-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-operations-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/schedule-performance.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/schedule-planner-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 1,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/screenshots-42h20.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 2,
+      "context": 6,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/security-mutations.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/service-worker-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 16,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/smoke.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/source-eol-regression.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/states-audit-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 7,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/station-transfer-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 14,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/synthetic-preload-composition.test.mjs",
+      "imports": [],
+      "launch": 0,
+      "context": 0,
+      "server": 0,
+      "child": 1
+    },
+    {
+      "file": "tests/theme-default-light-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 10,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/uxbrowser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 12,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/visual.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 4,
+      "server": 1,
+      "child": 0
+    },
+    {
+      "file": "tests/vmapcheck.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 4,
+      "server": 1,
+      "child": 0
+    }
+  ]
+}

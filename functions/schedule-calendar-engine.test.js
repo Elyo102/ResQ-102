@@ -2,12 +2,14 @@
 
 const assert = require('assert');
 const { createCalendarEngine, CalendarError, REASON } = require('./schedule-calendar-engine.js');
+const { createMutationReporter } = require('../tests/lib/mutation-reporter.cjs');
+const mutationReporter = createMutationReporter('functions/schedule-calendar-engine.test.js');
 
 let pass = 0;
 const fails = [];
 function t(name, fn) {
   try { fn(); pass += 1; }
-  catch (e) { fails.push(name + ' → ' + (e && e.message)); }
+  catch (e) { fails.push(name + ' → ' + (e && e.message)); mutationReporter.failure(name, e); }
 }
 function throwsCode(fn, code) {
   try { fn(); }
@@ -16,7 +18,7 @@ function throwsCode(fn, code) {
     assert.strictEqual(e.code, code, 'קוד ' + e.code + ' במקום ' + code);
     return;
   }
-  throw new Error('לא נזרקה שגיאה, ציפיתי ל-' + code);
+  assert.fail('לא נזרקה שגיאה, ציפיתי ל-' + code);
 }
 
 const CLOCK = () => '2026-09-01T06:00:00.000Z';
@@ -348,6 +350,7 @@ t('סיבת אי-זמינות אינה מגיעה לפלט', () => {
   assert.strictEqual(json.indexOf('sick'), -1, 'קטגוריית מחלה דלפה');
   const eilat = p.rows.filter((x) => x.sub_station === 'eilat')[0];
   const g = eilat.gaps.filter((x) => x.role === 'shift_lead')[0];
+  assert.ok(g, 'CALENDAR_UNAVAILABLE_SHIFT_LEAD_GAP_REQUIRED');
   assert.ok(g.reasons.some((x) => x.code === REASON.NOT_AVAILABLE));
 });
 
@@ -568,8 +571,11 @@ t('ארבעה חודשים — סירוב', () =>
     months: 4, start: '2026-09-01', roster: roster() })), 'months-range'));
 
 t('שנה — 12 תקופות ורצף מלא גם מעבר לשנה קלנדרית', () => {
-  const r = mk().planMonths(Object.assign({}, BASE, {
-    months: 12, start: '2026-09-01', roster: roster() }));
+  let r;
+  assert.doesNotThrow(() => {
+    r = mk().planMonths(Object.assign({}, BASE, {
+      months: 12, start: '2026-09-01', roster: roster() }));
+  }, 'CALENDAR_ANNUAL_PLAN_MUST_SUCCEED');
   assert.strictEqual(r.periods.length, 12);
   assert.strictEqual(r.periods[0].from, '2026-09-01');
   assert.strictEqual(r.periods[11].to, '2027-08-31');
@@ -763,4 +769,5 @@ t('בסוף כל הבדיקות — Object.prototype ללא מפתחות זרי�
 });
 
 console.log((fails.length ? '✗' : '✓') + ' schedule-calendar-engine: ' + pass + '/' + (pass + fails.length));
+mutationReporter.end(fails.length);
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

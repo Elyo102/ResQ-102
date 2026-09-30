@@ -36,6 +36,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, r
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
+import {installAcornCapsule,verifyAcornImport} from './lib/source-eol-dependency.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -208,6 +209,10 @@ try {
     }
   };
   convertTree(copy);
+  // The AST probe now imports a parser. Copy only its immutable, pinned
+  // three-file package closure; never inherit ambient modules or symlinks.
+  installAcornCapsule(ROOT,copy);
+  verifyAcornImport(copy);
 
   /* ⭐ והשער שמונע חזרה של התקלה: כל קובץ ברשימת המקורות הידועה
    * חייב להימצא בעותק **ולהכיל CRLF בפועל**. רשימה שנשארה מאחור

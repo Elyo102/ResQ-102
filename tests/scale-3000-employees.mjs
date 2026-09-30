@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // 3,000-עובד harness — Scale Scope 11 / closure batch item 2.
 //
 // המטריצה מציינת שאף מקום בקוד אינו טוען את כל 3,000 העובדים לדפדפן —
@@ -25,7 +26,7 @@
 // חסום ע"י ה-allowlist). מה שכן ידוע בוודאות מקריאת המקור: קוד הלקוח
 // (people.html) בונה את השאילתה עם limit(25) קשיח בקוד, לא כפרמטר
 // שאפשר לעקוף מהצד הזה — ראה ההערה ב-run().
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,7 +36,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const stub = path.join(here, 'stub');
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/people.html');
   const file = path.join(root, urlPath === '/' ? 'people.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -119,7 +120,7 @@ function check(cond, label, detail) {
   else { bad++; console.log('✗ ' + label + (detail ? '\n    ' + detail : '')); }
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' }).catch(() => chromium.launch());
+const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'he-IL' });
   await prepare(context);

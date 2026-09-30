@@ -41,6 +41,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
 import { matchesAny } from './lib/hosting-glob.mjs';
+import { assertApplicationGate } from './lib/gate-contract.mjs';
+import { assertSplitReleaseWorkflow } from './reserve-release-plan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -286,15 +288,18 @@ const gateScripts = JSON.parse(read('tests/package.json')).scripts || {};
 ok('5.3 Hosting מריץ מלאי מקור לפני יצירת ארטיפקט',
   /npm\s+--prefix\s+tests\s+run\s+pages:source\b/.test(hostingPredeploy),
   'Hosting predeploy הוא „' + hostingPredeploy + '"');
+let applicationGateValid = false;
+try { applicationGateValid = assertApplicationGate(gateScripts); } catch {}
 ok('5.4 השער המלא כולל מלאי מקור לפני בדיקות המוצר',
-  /^npm run test:inventory && npm run pages:source &&/.test(gateScripts.all || ''),
+  applicationGateValid,
   'all אינו fail-closed מול מלאי Hosting');
 
 const workflow = read('.github/workflows/tests.yml');
-ok('5.5 CI מריץ את שער השחרור הקנוני ולא רשימה חלקית',
-  /working-directory:\s*tests[\s\S]{0,180}run:\s*npm run all/.test(workflow) &&
-  !/run:\s*npm run static\b/.test(workflow),
-  'CI אינו זהה לשער שמופעל בפריסה');
+let splitWorkflowValid = false;
+try { splitWorkflowValid = assertSplitReleaseWorkflow(workflow, gateScripts); } catch {}
+ok('5.5 CI מחייב את שתי בדיקות הגיבוי המקומיות ואת כל יתר השער תחת בידוד',
+  splitWorkflowValid,
+  'CI חייב להריץ את שני חלקי השער בלי לדלג על בדיקות');
 
 /* ==================================================================
  * 6 · הוראות הפריסה · שלושת השלבים, ופרויקט מפורש בכל אחד

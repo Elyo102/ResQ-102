@@ -9,7 +9,8 @@ const TYPES = Object.freeze([
   ['regular', 'רגיל', true], ['swap', 'החלפה צרכי מערכת', true],
   ['extra', 'שעות ידני · נע״ת', true], ['meeting', 'ישיבות', true],
   ['guard', 'אבטחה', true], ['vacation', 'חופש', false],
-  ['sick', 'מחלה', false], ['reserve', 'מילואים', false]
+  ['sick', 'מחלה', false], ['reserve', 'מילואים', false],
+  ['reserve_shift', 'משמרת בזמן מילואים', true]
 ]);
 const REASONS = ['swap', 'extra', 'meeting'];
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
@@ -39,6 +40,12 @@ function calcHours(record, siteHours) {
   if (r.day_type === 'vacation') return 24;
   if (r.day_type === 'sick') return 0;
   if (r.day_type === 'reserve') return 8.5;
+  if (r.day_type === 'reserve_shift') {
+    if (r.shape !== 'regular' || !Number.isInteger(r.end_day) || ![0, 1].includes(r.end_day)
+        || r.start2 || r.end2 || (r.end_day2 != null && r.end_day2 !== 0)) return null;
+    const hours = segmentHours(r.start, r.end, r.end_day);
+    return Number.isFinite(hours) && hours > 0 && hours <= 24 ? hours : null;
+  }
   const fixed = Number(siteHours || 0);
   if (fixed > 0) return fixed;
   const first = segmentHours(r.start, r.end, r.end_day);
@@ -50,6 +57,7 @@ function calcHours(record, siteHours) {
 }
 function overtimeHours(r, siteHours, shiftHours) {
   if (!needsTimes(r.day_type)) return 0;
+  if (r.day_type === 'reserve_shift') return 0;
   const fixed = Number(siteHours || 0), expected = fixed > 0 ? fixed : Number(shiftHours || 24);
   const actual = calcHours(r, siteHours);
   if (actual == null) return 0;
@@ -92,4 +100,18 @@ function calculateAttendanceDerived(record, config) {
   return { hours, day_type_he, site_name: name, reason_required: reasonWhy(record, fixed, config.shiftHours) !== '' };
 }
 
-module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived });
+// New/changed equal clock values require an explicit next-day fact. Historical
+// note-only edits and pure legacy calculations retain their previous semantics.
+function validateAttendanceEdit(record, before) {
+  if (!needsTimes(record.day_type)) return;
+  const changed = !before || ['day_type','shape','start','end','end_day','start2','end2','end_day2']
+    .some(key => record[key] !== before[key]);
+  if (!changed) return;
+  for (const [start,end,offset] of [['start','end','end_day'],['start2','end2','end_day2']]) {
+    if (record[start] && record[start] === record[end]
+      && (!Number.isInteger(record[offset]) || record[offset] <= 0)) {
+      throw new TypeError('Equal attendance clocks require an explicit later day');
+    }
+  }
+}
+module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit });

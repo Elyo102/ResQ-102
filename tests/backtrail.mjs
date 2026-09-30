@@ -1,10 +1,11 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // כפתור "חזרה".
 //
 // אלדד: "כל לחיצה על חזרה מחזירה אותי אל מסך הכניסה."
 //
 // הבדיקה הזו לא הייתה קיימת, ולכן הבאג חי. היא הולכת מסלול
 // אמיתי ובודקת לאן הכפתור באמת מוביל — ולא אם הוא קיים.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 
 // נתיבים יחסיים למיקום הקובץ. קודם הם היו מוחלטים
@@ -17,7 +18,7 @@ const __APP   = __j(__TESTS, '..');
 
 const ROOT=__APP, STUB=__j(__TESTS, "stub");
 const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json'};
-const srv=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
+const srv=createContainedServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);
   if(p==='/')p='/index.html'; const f=path.join(ROOT,p);
   if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){r.writeHead(404);r.end('no');return;}
   r.writeHead(200,{'Content-Type':T[path.extname(f)]||'text/plain'});r.end(fs.readFileSync(f));});

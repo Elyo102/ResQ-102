@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)('playwright');
+const { chromium } = createRequire(import.meta.url)('./lib/contained-playwright.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:41993';
 const productFiles = ['hr.html', 'hr-client.js', 'hr-hours-ui.js', 'functions/index.js'];

@@ -1,4 +1,4 @@
-import {test,expect} from 'playwright/test';
+import {test,expect} from '../lib/contained-test.mjs';
 import {readFileSync} from 'node:fs';
 const source=new URL('../../control-plane/web/',import.meta.url);
 async function mount(page){

@@ -19,6 +19,9 @@ const { createHash } = require('node:crypto');
 const access = require('./schedule-access');
 const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity');
 const { monthKey } = require('./hr-hours-model');
+const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
+const { assertReserveShiftTransition } = require('./reserve-shift-policy');
+const { validateAttendanceEdit } = require('./attendance-hours-calculator');
 const COLLECTIONS = Object.freeze({
   events: 'attendance_correction_events', receipts: 'attendance_correction_receipts',
   jobs: 'attendance_correction_notification_jobs'
@@ -27,7 +30,7 @@ const LIMITS = Object.freeze({ days: 31, evidenceBytes: 128 * 1024, text: 4000 }
 const EDITABLE = Object.freeze(['day_type', 'shape', 'start', 'end', 'end_day',
   'start2', 'end2', 'end_day2', 'sub_station', 'overtime_reason', 'notes', 'reason']);
 const DERIVED = Object.freeze(['hours', 'day_type_he', 'site_name', 'reason_required']);
-const DAY_TYPES = ['regular', 'swap', 'extra', 'meeting', 'guard', 'vacation', 'sick', 'reserve'];
+const DAY_TYPES = ['regular', 'swap', 'extra', 'meeting', 'guard', 'vacation', 'sick', 'reserve', 'reserve_shift'];
 const SHAPES = ['regular', 'continued', 'split'];
 // Canonical local profile roles, not caller claims or role-rank entitlement.
 const TARGET_ROLES = Object.freeze(MEMBER_ROLES.concat(['district_commander']));
@@ -266,6 +269,8 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
           status: 'draft', shape: 'regular', start: '', end: '', end_day: 0, start2: '', end2: '', end_day2: 0,
           sub_station: '', notes: '', overtime_reason: '' }), ...(r.intent.rows[i].patch || {})
       });
+      try { prepared.forEach((candidate, i) => assertReserveShiftTransition(candidate, before[i])); }
+      catch (error) { fail('failed-precondition', error.message); }
       const config = r.intent.operation === 'delete' ? null : await readConfig(tx, {
         stationId: r.ctx.sid, targetRole: person.role,
         subStationIds: [...new Set(prepared.map(v => v.sub_station || ''))].sort()
@@ -273,7 +278,17 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
       if (r.intent.operation !== 'delete' && !plain(config)) fail('failed-precondition', 'Trusted calculation configuration is unavailable.');
       // Calculators receive independent bounded values; mutation of their input
       // cannot alter the copied legacy record, request or the stored evidence.
+      if (r.intent.operation === 'create' || r.intent.operation === 'update') {
+        try { prepared.forEach((v,i) => validateAttendanceEdit(v,before[i])); }
+        catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+      }
       const outputs = prepared.map(v => v === null ? null : derived(structuredClone(v), structuredClone(config)));
+      if (r.intent.operation === 'create' || r.intent.operation === 'update') {
+        try {
+          await assertReserveShiftNoOverlap({ tx, root, employeeNumber: r.intent.employee_number, uid: r.intent.target_uid,
+            candidates: prepared, knownRows: new Map(r.intent.rows.map((row, i) => [row.date, before[i]])) });
+        } catch (_) { fail('failed-precondition', 'יש חפיפה או דיווח סמוך שלא ניתן לאמת. יש לבדוק את השעות.'); }
+      }
       if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ operation: r.intent.operation });
       const actor = await live(tx, r);
       const finalPerson = await target(tx, r, root);

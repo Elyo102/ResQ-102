@@ -1,8 +1,9 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // Executable failure-state coverage for the legacy schedule bridge.
 // Firebase is fully stubbed; this file cannot reach a real project.
 
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +17,7 @@ const types = {
   '.css':'text/css; charset=utf-8', '.json':'application/json'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   const file = path.join(root, urlPath);

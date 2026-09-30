@@ -1,7 +1,8 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // מודד את הזמן עד שלוח הציוות מציג שיבוץ אמיתי ברשת איטית
 // מדומה, ומוודא שמקביליות הקריאות לא משנה תוכן או טיפול בכשל.
 // כל הנתונים מקומיים וסינתטיים.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +17,7 @@ const maxDataSpanMs = 1200;
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css',
   '.js':'text/javascript', '.png':'image/png', '.jpg':'image/jpeg' };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0] || '/board.html');
   const file = path.join(root, urlPath === '/' ? 'board.html' : urlPath);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

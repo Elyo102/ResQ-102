@@ -1,6 +1,7 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // צילומי QA מקומיים למסכים מרכזיים. אינם נשלחים לענן ואינם
 // משתמשים בנתוני עובדים; Firebase מוחלף באותם stubs של smoke.
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +14,7 @@ const out = path.join(here, '.visual');
 fs.mkdirSync(out, { recursive: true });
 
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript', '.css':'text/css', '.jpg':'image/jpeg', '.png':'image/png' };
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/login.html';
   const file = path.join(root, urlPath);

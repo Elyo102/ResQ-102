@@ -10,6 +10,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import assert from 'node:assert';
+import mutationReporting from './lib/mutation-reporter.cjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const F = (name) => join(here, '..', 'functions', name);
@@ -17,14 +19,15 @@ const F = (name) => join(here, '..', 'functions', name);
 const ENGINE = readFileSync(F('schedule-calendar-engine.js'), 'utf8');
 const PUBLICATION = readFileSync(F('schedule-publication.js'), 'utf8');
 const SERVICE = readFileSync(F('schedule-service.js'), 'utf8');
+const mutationReporter = mutationReporting.createMutationReporter('tests/schedule-calendar-source.mjs');
 
 let pass = 0;
 const fails = [];
 function t(name, fn) {
   try { fn(); pass += 1; }
-  catch (e) { fails.push(name + ' → ' + (e && e.message)); }
+  catch (e) { fails.push(name + ' → ' + (e && e.message)); mutationReporter.failure(name, e); }
 }
-function ok(cond, msg) { if (!cond) throw new Error(msg); }
+function ok(cond, msg) { assert.ok(cond, msg); }
 
 /** מסיר הערות, כדי שבדיקה לא תעבור בגלל מילה בתוך הערה. */
 function code(src) {
@@ -201,4 +204,5 @@ t('משתמש לא פעיל נחסם בשער', () =>
   ok(/actor-inactive/.test(S), 'אין חסימת משתמש לא פעיל'));
 
 console.log((fails.length ? '✗' : '✓') + ' schedule-calendar-source: ' + pass + '/' + (pass + fails.length));
+mutationReporter.end(fails.length);
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

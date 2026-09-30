@@ -1,4 +1,4 @@
-import { test, expect } from 'playwright/test';
+import { test, expect } from '../lib/contained-test.mjs';
 import { readFileSync } from 'node:fs';
 const base = new URL('../../public/status/', import.meta.url);
 const fixture = JSON.parse(readFileSync(new URL('snapshot.json',base),'utf8'));

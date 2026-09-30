@@ -1,4 +1,5 @@
-import { chromium } from 'playwright';
+import { createContainedServer } from './lib/localize-worker.mjs';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,8 +39,15 @@ window.__renderNav = renderNav;
 window.__navReady = true;
 </script></body></html>`;
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+  // Navigation-only fixture has no Firebase app. The real controller is tested
+  // separately by mode-controller-browser.mjs; do not load its remote SDK here.
+  if (pathname === '/mode-controller.js') {
+    res.writeHead(200, { 'Content-Type': mime['.js'] });
+    res.end('export function startModeController(){} export function stopModeController(){}');
+    return;
+  }
   if (pathname === '/__nav-test.html') {
     res.writeHead(200, { 'Content-Type': mime['.html'] });
     res.end(fixture);

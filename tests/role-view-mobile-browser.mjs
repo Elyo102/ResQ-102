@@ -1,4 +1,5 @@
-import { chromium } from 'playwright';
+import { createContainedServer } from './lib/localize-worker.mjs';
+import { chromium } from './lib/contained-playwright.cjs';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ const stub = path.join(here, 'stub');
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
   '.css':'text/css; charset=utf-8', '.json':'application/json', '.png':'image/png',
   '.jpg':'image/jpeg', '.svg':'image/svg+xml' };
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let name = decodeURIComponent((req.url || '/').split('?')[0]);
   if (name === '/') name = '/login.html';
   const file = path.join(root, name);

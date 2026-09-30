@@ -1,3 +1,4 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 // ============================================================
 //  מסך ההתראות — פילטרים (הכל / לא נצפו / קריאות פתע) בדפדפן אמיתי
 //  42H.20 closure batch item 2: קריאות פתע סגורות בפיד + בדיקת
@@ -7,7 +8,7 @@
 //  Firebase מוחלף ב-stubs מקומיים (tests/stub). הבדיקה אינה דורשת
 //  רשת, אינה קוראת נתוני אמת ואינה יכולה לכתוב ל-production.
 
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ const types = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json'
 };
 
-const server = http.createServer((req, res) => {
+const server = createContainedServer((req, res) => {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/alerts.html';
   const file = path.join(root, urlPath);

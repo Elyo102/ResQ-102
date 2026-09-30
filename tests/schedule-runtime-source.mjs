@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'acorn';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
@@ -29,7 +32,16 @@ const indexes = JSON.parse(read('firestore.indexes.json'));
 const manifest = JSON.parse(read('manifest.json'));
 
 let passed = 0;
-function check(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
+const registered = new Set();
+function check(name, fn) {
+  assert.equal(typeof name, 'string');
+  assert.ok(name.trim());
+  assert.equal(registered.has(name), false, 'duplicate check: ' + name);
+  registered.add(name);
+  fn();
+  passed += 1;
+  console.log('✓ ' + name);
+}
 /* קוד בלי הערות — כדי שטענה על קוד לא תסופק על ידי הערה. */
 function stripComments(text) {
   return String(text)
@@ -297,6 +309,101 @@ check('outbox release never blindly overwrites a blocked row', () => {
   assert.ok(resume.includes('await reconcileOutbox(doc.ref, now)'));
   assert.equal(resume.includes('await doc.ref.update('), false);
 });
+// Compare executable AST nodes, not text: comments, strings, nested/dead
+// functions and if(false) blocks cannot stand in for a delivery fence.
+const expectedDeliveryEntry = `async function expected() {
+  await beforeOutboxSend(claimed);
+  if (!await validateOutboxForSend(ref, claimed.lease_token, claimed,
+    claimed.delivery_policy !== 'trial_control')) return { skipped: true };
+  if (claimed.delivery_policy === 'trial_control') {
+    let currentAuth = null;
+    try { currentAuth = await getAuthUser(String(claimed.person || '')); }
+    catch (error) {
+      if (!terminalAuthLookupFailure(error)) {
+        const unavailable = new Error('TRIAL_AUTH_TEMPORARY');
+        unavailable.code = 'TRIAL_AUTH_TEMPORARY';
+        throw unavailable;
+      }
+    }
+    if (!trialAuthValid(currentAuth, String(claimed.person || ''),
+      String(claimed.station_id || ''), Number(claimed.control_auth_time_ms))) {
+      await cancelLeasedOutbox(ref, claimed.lease_token, 'trial-control-inactive');
+      return { skipped: true };
+    }
+    if (!await validateOutboxForSend(ref, claimed.lease_token, claimed, true)) return { skipped: true };
+  }
+  providerEntered = true;
+  const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
+    claimed.title, claimed.body, claimed.url, claimed.important);
+}`;
+const parseContract = source => parse(source, { ecmaVersion: 'latest', sourceType: 'script' });
+function contractNodes(node, predicate, found = []) {
+  if (!node || typeof node !== 'object') return found;
+  if (predicate(node)) found.push(node);
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) value.forEach(child => contractNodes(child, predicate, found));
+    else if (value && typeof value === 'object') contractNodes(value, predicate, found);
+  }
+  return found;
+}
+const astShape = value => JSON.parse(JSON.stringify(value,
+  (key, item) => ['start', 'end', 'raw'].includes(key) ? undefined : item));
+const expectedEntryNodes = astShape(parseContract(expectedDeliveryEntry).body[0].body.body);
+function assertOutboxEntryContract(source) {
+  const tree = parseContract(source);
+  const named = name => contractNodes(tree, node =>
+    node.type === 'FunctionDeclaration' && node.id?.name === name);
+  const definitions = named('validateOutboxForSend');
+  assert.equal(definitions.length, 1, 'unique validator definition');
+  assert.equal(definitions[0].async, true, 'async validator');
+  assert.deepEqual(astShape(definitions[0].params),
+    ['ref', 'leaseToken', 'claimed', 'enterProvider'].map(name => ({ type: 'Identifier', name })),
+    'exact validator parameters');
+  const deliveries = named('deliverOutbox');
+  assert.equal(deliveries.length, 1, 'unique delivery definition');
+  const factories = tree.body.filter(node => node.type === 'FunctionDeclaration'
+    && node.id?.name === 'createScheduleRuntime');
+  assert.equal(factories.length, 1, 'direct runtime factory');
+  const factory = factories[0];
+  assert.ok(factory.body.body.includes(definitions[0]), 'validator directly in runtime factory');
+  assert.ok(factory.body.body.includes(deliveries[0]), 'delivery directly in runtime factory');
+  const protectedNames = new Set(['validateOutboxForSend', 'deliverOutbox']);
+  const protectedBinding = node => contractNodes(node, item => item.type === 'Identifier'
+    && protectedNames.has(item.name)).length > 0;
+  assert.equal(contractNodes(factory, node =>
+    (node.type === 'VariableDeclarator' && protectedBinding(node.id))
+    || (node.type === 'AssignmentExpression' && protectedBinding(node.left))
+    || (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)
+      && node.params.some(protectedBinding))
+    || (node.type === 'CatchClause' && protectedBinding(node.param))).length, 0,
+  'no validator/delivery shadow bindings or reassignment');
+  const delivery = deliveries[0];
+  assert.equal(delivery.async, true);
+  const tries = delivery.body.body.filter(node => node.type === 'TryStatement');
+  assert.equal(tries.length, 1, 'direct delivery try');
+  // No inserted return/dead wrapper before the try may make the proof unreachable.
+  assert.equal(delivery.body.body.indexOf(tries[0]), 5, 'delivery preamble length');
+  // Exact AST digest of the unchanged five-statement claim preamble, including
+  // its transaction callback. Whitespace/comments are excluded; executable
+  // changes require review, not merely matching statement types. This pins the
+  // ref guard, claimed=null, leased claim transaction, !claimed return and
+  // providerEntered=false without copying the large claim transaction here.
+  assert.equal(createHash('sha256').update(JSON.stringify(astShape(delivery.body.body.slice(0, 5))))
+    .digest('hex'), '0314e140b780f70725d71d90bfee50b845ca353e0984421f877597a1108e401d',
+  'exact permitted claim preamble AST');
+  assert.deepEqual(astShape(tries[0].block.body.slice(0, 5)), expectedEntryNodes,
+    'hook, ordinary fence, trial reauth/fence, provider entry, send order');
+  for (const [name, count] of [['beforeOutboxSend', 1], ['validateOutboxForSend', 2], ['sendPush', 1]]) {
+    assert.equal(contractNodes(delivery, node => node.type === 'CallExpression'
+      && node.callee.type === 'Identifier' && node.callee.name === name).length, count,
+    'exact executable call count: ' + name);
+  }
+  assert.equal(contractNodes(delivery, node => node.type === 'AssignmentExpression'
+    && node.left.type === 'Identifier' && node.left.name === 'providerEntered'
+    && node.right.type === 'Literal' && node.right.value === true).length, 1,
+  'unique provider entry assignment');
+}
+
 check('outbox expiry and active-pointer are rechecked immediately before send', () => {
   const validateStart = runtime.indexOf('async function validateOutboxForSend');
   const start = runtime.indexOf('async function deliverOutbox');
@@ -304,16 +411,73 @@ check('outbox expiry and active-pointer are rechecked immediately before send', 
   const body = runtime.slice(start, end);
   const validation = runtime.slice(validateStart, start);
   const send = body.indexOf('await sendPush');
-  const hook = body.lastIndexOf('await beforeOutboxSend', send);
-  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token, claimed)', send);
   assert.ok(validateStart > -1 && start > validateStart && end > start && send > -1);
-  assert.ok(hook > -1 && hook < guard && guard < send);
+  assertOutboxEntryContract(runtime);
   assert.ok(validation.includes('return db.runTransaction(async (tx) => {'));
   assert.equal(validation.includes('let sendable'), false,
     'transaction retries must not leak an earlier callback decision');
   assert.ok(validation.includes('outboxExpired(value, now)'));
   assert.ok(validation.includes('publicationMatches(value, pointer, publication)'));
   assert.ok(validation.includes("'publication-not-active'"));
+});
+check('outbox executable entry contract rejects single-change mutations', () => {
+  const tree = parseContract(runtime);
+  const delivery = contractNodes(tree, node => node.type === 'FunctionDeclaration'
+    && node.id?.name === 'deliverOutbox')[0];
+  const definition = contractNodes(tree, node => node.type === 'FunctionDeclaration'
+    && node.id?.name === 'validateOutboxForSend')[0];
+  const local = runtime.slice(delivery.start, delivery.end);
+  const validator = runtime.slice(definition.start, definition.end);
+  const first = "if (!await validateOutboxForSend(ref, claimed.lease_token, claimed,\n        claimed.delivery_policy !== 'trial_control')) return { skipped: true };";
+  const second = "if (!await validateOutboxForSend(ref, claimed.lease_token, claimed, true)) return { skipped: true };";
+  const hook = 'await beforeOutboxSend(claimed);';
+  const entry = 'providerEntered=true;';
+  const send = "const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',\n        claimed.title, claimed.body, claimed.url, claimed.important);";
+  const cases = [];
+  const add = (name, from, to, target = local) => cases.push({ name, from, to, target });
+  add('definition arity', 'ref, leaseToken, claimed, enterProvider', 'ref, leaseToken, claimed', validator);
+  add('definition order', 'ref, leaseToken, claimed, enterProvider', 'ref, claimed, leaseToken, enterProvider', validator);
+  for (const [label, fence] of [['ordinary', first], ['trial', second]]) {
+    for (const [arg, replacement] of [['ref,', 'otherRef,'], ['claimed.lease_token', 'otherLease'],
+      [', claimed,', ', otherClaim,'], ['validateOutboxForSend', 'otherValidator'],
+      ['!await ', '!'], ['skipped: true', 'skipped: false']]) {
+      add(label + ' ' + arg, fence, fence.replace(arg, replacement));
+    }
+    add(label + ' unconsumed', fence, fence.slice(5, fence.indexOf(')) return') + 1) + ';');
+    add(label + ' comment', fence, '/* ' + fence + ' */');
+    add(label + ' string', fence, JSON.stringify(fence) + ';');
+    add(label + ' dead function', fence, 'async function dead() { ' + fence + ' }');
+    add(label + ' dead conditional', fence, 'if (false) { ' + fence + ' }');
+  }
+  add('ordinary policy', first, first.replace("claimed.delivery_policy !== 'trial_control'", 'true'));
+  add('trial false', second, second.replace(', true)', ', false)'));
+  add('trial missing fourth', second, second.replace(', true)', ')'));
+  add('hook reordered', hook, entry + '\n' + hook);
+  add('send reordered', hook, send.replace('const delivery =', 'const premature =') + '\n' + hook);
+  add('trial fence before auth', 'let currentAuth = null;', second + '\nlet currentAuth = null;');
+  add('trial fence outside branch', entry, second + '\n' + entry);
+  add('duplicate send', send, send + '\n' + send.replace('const delivery =', 'const duplicate ='));
+  add('hook no await', hook, hook.replace('await ', ''));
+  add('send no await', send, send.replace('await ', ''));
+  add('provider entry false', entry, 'providerEntered=false;');
+  add('early return missing', second, second.replace('return ', 'void '));
+  add('unreachable preamble', 'if (!claimed) return { skipped: true };', 'if (true) return { skipped: true };');
+  add('local shadow', 'let providerEntered=false;', 'let providerEntered=false, validateOutboxForSend=async()=>true;');
+  add('misplaced validator', validator, 'if (false) { ' + validator + ' }', validator);
+  add('misplaced delivery', local, 'if (false) { ' + local + ' }');
+  for (const { name, from, to, target } of cases) {
+    assert.equal(target.split(from).length - 1, 1, name + ': exactly one mutation anchor');
+    const changed = target.replace(from, to);
+    assert.notEqual(changed, target, name + ': mutation applied');
+    const start = target === local ? delivery.start : definition.start;
+    const end = target === local ? delivery.end : definition.end;
+    const mutated = runtime.slice(0, start) + changed + runtime.slice(end);
+    // Invalid syntax is a rejection too, but each listed mutation must itself
+    // parse so it proves a semantic/control-flow check, not a parser accident.
+    parseContract(mutated);
+    assert.throws(() => assertOutboxEntryContract(mutated), undefined, name);
+  }
+  console.log('outbox AST contract mutations rejected: ' + cases.length);
 });
 check('all pre-provider transaction gates return the final callback decision', () => {
   const activeStart = runtime.indexOf('async function activePublicationGate');
@@ -414,22 +578,279 @@ check('every new schedule collection has an explicit backup policy', () => {
     assert.ok(backup.includes(pathName), pathName);
   }
 });
+const expectedIntegrationFence = String.raw`if (!/^(?:127\.0\.0\.1|localhost):(?:8080|8191)$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')
+    || process.env.GCLOUD_PROJECT !== 'demo-resq'
+    || (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_PROJECT !== 'demo-resq')) {
+  console.error('Exact demo-resq loopback emulator target is required; refusing unsafe target.');
+  process.exit(2);
+}
+const admin = require('firebase-admin');
+if (!admin.apps.length) admin.initializeApp({ projectId: 'demo-resq' });
+const db = admin.firestore();`;
+const expectedIntegrationNodes = astShape(parseContract(expectedIntegrationFence).body);
+function assertIntegrationFence(source) {
+  const tree = parseContract(source);
+  const isAdminRequire = node => node.type === 'CallExpression'
+    && node.callee.type === 'Identifier' && node.callee.name === 'require'
+    && node.arguments[0]?.type === 'Literal' && node.arguments[0].value === 'firebase-admin';
+  const isAdminCall = name => node => node.type === 'CallExpression'
+    && node.callee.type === 'MemberExpression' && !node.callee.computed
+    && node.callee.object.type === 'Identifier' && node.callee.object.name === 'admin'
+    && node.callee.property.name === name;
+  assert.equal(contractNodes(tree, isAdminRequire).length, 1, 'one Firebase Admin require');
+  assert.equal(contractNodes(tree, isAdminCall('initializeApp')).length, 1, 'one Firebase initialization');
+  assert.equal(contractNodes(tree, isAdminCall('firestore')).length, 1, 'one Firestore initialization');
+  const fences = tree.body.filter(node => node.type === 'IfStatement'
+    && contractNodes(node.test, part => part.type === 'MemberExpression'
+      && part.property?.name === 'FIRESTORE_EMULATOR_HOST').length > 0);
+  assert.equal(fences.length, 1, 'one direct emulator fence');
+  assert.equal(tree.body.indexOf(fences[0]), 3, 'fence before any Firebase initialization');
+  assert.deepEqual(astShape(tree.body.slice(3, 7)), expectedIntegrationNodes,
+    'exact three denial clauses, unconditional exit2 and ordered require/init/firestore');
+  assert.deepEqual(astShape(tree.body.slice(0, 3)), astShape(parseContract(
+    "'use strict'; const assert = require('node:assert/strict'); const crypto = require('node:crypto');").body),
+  'only known inert imports before fence');
+}
 check('runtime integration refuses a real Firestore project', () => {
-  assert.ok(integration.includes('if (!process.env.FIRESTORE_EMULATOR_HOST)'));
-  assert.ok(integration.includes('process.exit(2)'));
+  assertIntegrationFence(integration);
 });
-check('runtime integration covers spoofing, events, idempotency and stale pushes', () => {
-  for (const token of ['station spoofing is rejected', 'answer only an event assigned',
-    'publication request is idempotent', 'publication is no longer active']) assert.ok(integration.includes(token), token);
-});
-check('runtime integration covers privilege escalation, stale drafts, leases and rollback', () => {
-  for (const token of ['profile flag alone never grants', 'policy changed under the same id',
-    'expired sending lease', 'rolled back only by creating a new revision',
-    'blocked notification for a staging publication', 'expired notification is cancelled before delivery',
-    'pointer change after claim and before send', 'concurrent outbox resumes claim',
-    'revocation during snapshot finalization']) {
-    assert.ok(integration.includes(token), token);
+check('runtime integration fence rejects weakening and dead-code mutations', () => {
+  const tree = parseContract(integration);
+  const start = tree.body[3].start;
+  const end = tree.body[6].end;
+  const prefix = integration.slice(start, end);
+  const mutations = [];
+  const add = (name, from, to) => mutations.push({ name, from, to });
+  const fence = integration.slice(tree.body[3].start, tree.body[3].end);
+  const requireAdmin = "const admin = require('firebase-admin');";
+  const initialize = "if (!admin.apps.length) admin.initializeApp({ projectId: 'demo-resq' });";
+  const firestore = 'const db = admin.firestore();';
+  add('unanchored regex', '/^(?:', '/(?:');
+  add('missing end anchor', ')$/.test', ')/.test');
+  add('regex flags', '$/.test', '$/i.test');
+  add('public host', '127\\.0\\.0\\.1|localhost', 'example\\.com|localhost');
+  add('extra port', '8080|8191', '8080|8191|443');
+  add('host env changed', 'FIRESTORE_EMULATOR_HOST', 'OTHER_EMULATOR_HOST');
+  add('host fallback changed', "FIRESTORE_EMULATOR_HOST || ''", "FIRESTORE_EMULATOR_HOST || 'localhost:8191'");
+  add('host test inverted', 'if (!/', 'if (/');
+  add('primary project inverted', "GCLOUD_PROJECT !== 'demo-resq'", "GCLOUD_PROJECT === 'demo-resq'");
+  add('primary project removed', "|| process.env.GCLOUD_PROJECT !== 'demo-resq'", '');
+  add('optional project inverted', "GOOGLE_CLOUD_PROJECT !== 'demo-resq'", "GOOGLE_CLOUD_PROJECT === 'demo-resq'");
+  add('optional project removed', "|| (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_PROJECT !== 'demo-resq')", '');
+  add('denials changed to AND', "|| process.env.GCLOUD_PROJECT", '&& process.env.GCLOUD_PROJECT');
+  add('optional project AND changed', 'GOOGLE_CLOUD_PROJECT &&', 'GOOGLE_CLOUD_PROJECT ||');
+  add('exit success', 'process.exit(2);', 'process.exit(0);');
+  add('exit missing', 'process.exit(2);', '');
+  add('exit conditional', 'process.exit(2);', 'if (false) process.exit(2);');
+  add('fence dead conditional', fence, 'if (false) { ' + fence + ' }');
+  add('fence dead function', fence, 'function deadFence() { ' + fence + ' }');
+  add('fence comment', fence, '/* ' + fence + ' */');
+  add('fence string', fence, JSON.stringify(fence) + ';');
+  add('duplicate fence', fence, fence + '\n' + fence);
+  add('require before fence', prefix, requireAdmin + '\n' + fence + '\n' + initialize + '\n' + firestore);
+  add('initialize before fence', prefix, requireAdmin + '\n' + initialize + '\n' + fence + '\n' + firestore);
+  add('firestore before initialize', prefix, fence + '\n' + requireAdmin + '\n' + firestore + '\n' + initialize);
+  add('wrong project initialized', initialize, initialize.replace('demo-resq', 'other-project'));
+  add('duplicate init', initialize, initialize + '\n' + initialize);
+  add('duplicate require', requireAdmin, requireAdmin + "\nrequire('firebase-admin');");
+  add('duplicate firestore', firestore, firestore + '\nadmin.firestore();');
+  for (const { name, from, to } of mutations) {
+    assert.equal(prefix.split(from).length - 1, 1, name + ': exactly one mutation anchor');
+    const changed = prefix.replace(from, to);
+    assert.notEqual(changed, prefix, name + ': mutation applied');
+    const mutated = integration.slice(0, start) + changed + integration.slice(end);
+    parseContract(mutated);
+    assert.throws(() => assertIntegrationFence(mutated), undefined, name);
   }
+  console.log('integration fence AST mutations rejected: ' + mutations.length);
+});
+// Reviewed full callback ASTs pin setup, awaited action, assertions, and cleanup.
+// Titles select cases; a title alone supplies no evidence. Positions, comments,
+// whitespace and literal quote style are ignored, executable edits are not.
+// Native emulator execution remains mandatory; these are regression contracts.
+const integrationCases = [
+  ['station spoofing is rejected before any schedule work', '3c791a238d7646b74353020643b2b29d85b6544080ba03e4f55090bf861e8b5c'],
+  ['a client-writable profile flag alone never grants schedule management', '46b4b87cbf2472a0bec4afda8bd1d7b56fe240fd102e2ea432de180a4138193f'],
+  ['a policy changed under the same id makes an old draft stale', 'ed0a5030603b14dc283a6137b4ca74ef2ea78e70b6e3f9786b4ac5949478f37b'],
+  ['publication request is idempotent after activation', 'b895742ce5215fea9653163a03c053a87cf37e0d1093377cc8115e4d077d4f98'],
+  ['firefighter can answer only an event assigned to them', '33b87d0286699705b1bbca88b41329222acd5b32c63f1c91868e15a19c41ff66'],
+  ['a second publication can be rolled back only by creating a new revision', '07e8673554a5b6a6c4624a7f7864243c8ded18cbd410b88e73177a149049065e'],
+  // No provider-entry fixture flag: preserve current absence semantics. Both
+  // inactive-recipient and off/shadow cases explicitly assert zero provider sends.
+  ['resume cancels inactive retry and expired sending rows without resurrecting them', '57c4c9556592a1ff094233055d7c85fa1ab9af2239edcd62f9a259fa16089dab'],
+  ['off and shadow cancel queued retry and expired sending pushes before delivery', '7b92d8c22e63f5f1370cba7f6dbe4acebbc8552d538d5b5fa19907b1b94314ea'],
+  // Provider-entered expiry must remain queued/uncertain with duplicate risk,
+  // never silently collapse to the preceding no-send cancellation contracts.
+  ['an expired provider-entered lease is retried with duplicate risk visible', 'bcf29d73f8ab5f4f6007518da1d4bb6ecbac802ca479e94f1c4f81d1a324468e'],
+  ['outbox delivery is cancelled if publication is no longer active', '31027f9c7410f859abb954f23cfa877f8cc66d1fc0e0600c527698f4e6406244'],
+  ['a blocked notification for a staging publication survives outbox resume', '9fc98314458998ad638fa4eea965c16c080ca3536ea89ec4ea61a6d199042620'],
+  ['an expired notification is cancelled before delivery or resume can send it', '8376dee5ce54bbfe8baee20ef11c3fc486f4b6ac1b9eb06fd4b70f697a57ef2b'],
+  ['a pointer change after claim and before send cancels the notification without sending', '87d149364cef08c32659d538bf50fe6a9aee9cd24fa71a1dd800a3bd1f687bf9'],
+  ['concurrent outbox resumes claim a queued notification only once', 'dffb3335706e5fb2c3a3493364649c30738eb83ef1cecfdc68f7a5b8a5b54eca'],
+  ['revocation during snapshot finalization leaves no complete draft or active publication', 'f0c97ce2a180bc68d009750b6513953d2173968719dab2055425fd75501bc25f']
+];
+const astDigest = node => createHash('sha256').update(JSON.stringify(astShape(node))).digest('hex');
+function liveIntegrationCases(source) {
+  const tree = parseContract(source);
+  const invocation = tree.body.at(-1);
+  const outer = invocation?.expression;
+  assert.equal(invocation?.type, 'ExpressionStatement');
+  assert.equal(outer?.type, 'CallExpression');
+  assert.equal(outer.callee?.type, 'MemberExpression');
+  assert.equal(outer.callee.computed, false);
+  assert.equal(outer.callee.property.name, 'catch');
+  const immediate = outer.callee.object;
+  assert.equal(immediate.type, 'CallExpression');
+  assert.deepEqual(immediate.arguments, []);
+  const run = immediate.callee;
+  assert.equal(run.type, 'FunctionExpression');
+  assert.equal(run.id?.name, 'run');
+  assert.equal(run.async, true);
+  assert.equal(run.generator, false);
+  assert.deepEqual(run.params, []);
+  const invokers = tree.body.filter(node => node.type === 'FunctionDeclaration' && node.id?.name === 'test');
+  assert.equal(invokers.length, 1, 'unique executable test invoker');
+  assert.deepEqual(astShape(invokers[0]), astShape(parseContract(
+    "async function test(name, fn) { await fn(); passed += 1; console.log('✓ ' + name); }").body[0]));
+  const scaffold = astShape(tree);
+  const selectedTitles = new Set(integrationCases.map(([title]) => title));
+  contractNodes(scaffold, node => {
+    if (node.type === 'CallExpression' && node.callee?.type === 'Identifier'
+      && node.callee.name === 'test' && selectedTitles.has(node.arguments[0]?.value)
+      && node.arguments[1]?.body) {
+      node.arguments[1].body = { type: 'BlockStatement', body: [] };
+    }
+    return false;
+  });
+  // Pin the complete surrounding executable file, not just the IIFE: top-level
+  // invoker reassignment, premature exits and swallowed terminal failures must
+  // not make a dead suite look live. Only the selected fifteen callback bodies
+  // are excluded and checked separately below. Other callbacks stay pinned:
+  // an earlier unselected callback must not disable subsequent registrations.
+  assert.equal(astDigest(scaffold), '6ca1cf84744071cfb266de7e90c989e74eb00fa83393e82ee656b8108325036a',
+    'live top-level registration and failure-propagation scaffold');
+  const calls = contractNodes(tree, node => node.type === 'CallExpression'
+    && node.callee?.type === 'Identifier' && node.callee.name === 'test');
+  const result = new Map();
+  for (const [title, digest] of integrationCases) {
+    const matching = calls.filter(call => call.arguments[0]?.type === 'Literal'
+      && call.arguments[0].value === title);
+    assert.equal(matching.length, 1, 'unique registration: ' + title);
+    const call = matching[0];
+    const registration = run.body.body.find(node => node.type === 'ExpressionStatement'
+      && node.expression.type === 'AwaitExpression' && node.expression.argument === call);
+    assert.ok(registration, 'direct awaited registration: ' + title);
+    assert.equal(call.arguments.length, 2);
+    assert.equal(call.arguments[1].type, 'ArrowFunctionExpression');
+    assert.equal(call.arguments[1].async, true);
+    assert.deepEqual(call.arguments[1].params, []);
+    assert.equal(astDigest(call.arguments[1]), digest, 'setup/action/outcome/cleanup: ' + title);
+    result.set(title, { call, registration });
+  }
+  return result;
+}
+check('runtime integration preserves fifteen live semantic scenarios', () => {
+  assert.equal(liveIntegrationCases(integration).size, 15);
+});
+check('runtime integration rejects weakened outcomes and non-executed registrations', () => {
+  const cases = liveIntegrationCases(integration);
+  let count = 0;
+  const mutate = (name, start, end, from, to) => {
+    const original = integration.slice(start, end);
+    assert.equal(original.split(from).length - 1, 1, name + ': exactly one mutation anchor');
+    const changed = original.replace(from, to);
+    assert.notEqual(changed, original, name + ': applied');
+    const source = integration.slice(0, start) + changed + integration.slice(end);
+    parseContract(source);
+    assert.throws(() => liveIntegrationCases(source), undefined, name);
+    count += 1;
+  };
+  for (const [index, [title]] of integrationCases.entries()) {
+    const { call, registration } = cases.get(title);
+    const callback = call.arguments[1];
+    const text = integration.slice(registration.start, registration.end);
+    // Exact same title in comments, strings, nested functions or dead branches
+    // must never supply coverage; duplicating a live registration is ambiguous.
+    for (const [label, replacement] of [
+      ['comment', '/* ' + text.replaceAll('*/', '* /') + ' */'],
+      ['string', JSON.stringify(text) + ';'],
+      ['dead function', 'async function deadCase' + index + '() { ' + text + ' }'],
+      ['dead branch', 'if (false) { ' + text + ' }'],
+      ['duplicate', text + '\n' + text],
+      ['unawaited', text.replace('await test(', 'test(')]
+    ]) mutate(title + ' ' + label, registration.start, registration.end, text, replacement);
+    // Every assertion in the reviewed callback must remain executable. Mutate
+    // each independently (also catches nested/finally/loop checks) with one exact
+    // AST-bounded anchor, not a broad text replacement across repeated outcomes.
+    for (const assertion of contractNodes(callback, node => node.type === 'CallExpression'
+      && node.callee.type === 'MemberExpression' && node.callee.object.name === 'assert')) {
+      const before = integration.slice(assertion.start, assertion.end);
+      mutate(title + ' assertion@' + assertion.start, assertion.start, assertion.end, before, 'Boolean(true)');
+    }
+  }
+  // Named semantic weakening probes make the lease distinction and the most
+  // consequential values explicit in addition to whole-callback fingerprints.
+  const changes = [
+    [0, "error.code === 'client-station-forbidden'", 'true'],
+    [1, "error.code === 'manager-required'", 'true'],
+    [2, "error.code === 'draft-source-changed'", 'true'],
+    [2, 'content_digest: digest(policyBasis)', 'content_digest: digest(changed)'],
+    [3, '{ duplicate: true }', '{ duplicate: false }'],
+    [4, "item_id: 'course_not_owned'", "item_id: 'course_sep_1'"],
+    [5, 'firstNewRevision + 2', 'firstNewRevision'],
+    [5, 'third.content_digest, first.content_digest', "third.content_digest, 'anything'"],
+    [6, 'active: false', 'active: true'],
+    [6, "after.cancel_reason, 'recipient-inactive'", "after.cancel_reason, 'anything'"],
+    [6, 'assert.equal(sends, 0)', 'assert.equal(sends, 1)'],
+    [7, "['off', 'shadow']", "['off']"],
+    [7, "['queued', 'retry', 'sending']", "['queued', 'retry']"],
+    [7, "after.cancel_reason, 'delivery-forbidden'", "after.cancel_reason, 'anything'"],
+    [7, 'assert.equal(sendCalls, 0)', 'assert.equal(sendCalls, 1)'],
+    [7, "update({ mode: 'new' })", "update({ mode: 'off' })"],
+    [8, "provider_state: 'entered'", "provider_state: 'not-entered'"],
+    [8, "after.status, 'queued'", "after.status, 'cancelled'"],
+    [8, 'after.delivery_uncertain, true', 'after.delivery_uncertain, false'],
+    [8, 'after.duplicate_risk_count, 1', 'after.duplicate_risk_count, 0'],
+    [8, "after.last_uncertain_attempt_id, 'dat_crashed'", "after.last_uncertain_attempt_id, 'lost'"],
+    [8, "after.provider_state, 'uncertain'", "after.provider_state, 'not-entered'"],
+    [9, 'result.skipped, true', 'result.skipped, false'],
+    [10, "after.status, 'blocked'", "after.status, 'sent'"],
+    [11, 'await guarded.resumeOutbox();', 'await Promise.resolve();'],
+    [12, 'await pointerRef.set(before);', 'await Promise.resolve();'],
+    [13, 'await Promise.all([first, second]);', 'await Promise.resolve();'],
+    [13, ".status, 'sent'", ".status, 'queued'"],
+    [14, 'roles: [], active: false', "roles: ['manager'], active: true"],
+    [14, 'draftQueued.size, 0', 'draftQueued.size, 1'],
+    [14, 'queued.size, 0', 'queued.size, 1']
+  ];
+  for (const [index, from, to] of changes) {
+    const callback = cases.get(integrationCases[index][0]).call.arguments[1];
+    mutate('semantic value ' + index + ':' + from, callback.start, callback.end, from, to);
+  }
+  const tree = parseContract(integration);
+  const invocation = tree.body.at(-1);
+  const finalText = integration.slice(invocation.start, invocation.end);
+  for (const [name, replacement] of [
+    ['top-level invoker reassignment', 'test = async () => {};\n' + finalText],
+    ['top-level early exit', 'process.exit(0);\n' + finalText],
+    ['dead execution', 'if (false) { ' + finalText + ' }']
+  ]) mutate(name, invocation.start, invocation.end, finalText, replacement);
+  const terminalCatch = invocation.expression.arguments[0];
+  const catchText = integration.slice(terminalCatch.start, terminalCatch.end);
+  mutate('swallowed terminal failure', terminalCatch.start, terminalCatch.end,
+    catchText, '(error) => {}');
+  const selected = new Set(integrationCases.map(([title]) => title));
+  const run = invocation.expression.callee.object.callee;
+  const earlierUnselected = run.body.body.find(node => node.type === 'ExpressionStatement'
+    && node.expression.type === 'AwaitExpression'
+    && node.expression.argument.callee?.name === 'test'
+    && !selected.has(node.expression.argument.arguments[0]?.value));
+  assert.ok(earlierUnselected && earlierUnselected.start < cases.get(integrationCases[1][0]).registration.start,
+    'unselected callback precedes a selected scenario');
+  const unselectedBody = earlierUnselected.expression.argument.arguments[1].body;
+  mutate('unselected callback disables invoker', unselectedBody.start, unselectedBody.start + 1,
+    '{', '{ test = async () => {};');
+  console.log('integration semantic AST mutations rejected: ' + count);
 });
 check('runtime integration is wired into emulator CI', () => {
   assert.ok(workflow.includes('node schedule-runtime.integration.test.js'));
@@ -524,6 +945,143 @@ check('the policy author invents no business value and mirrors the runtime diges
  * ההתראה אומרת מתי ואיפה
  * ------------------------------------------------------------------ */
 
+// Full reviewed ASTs pin the current live-read -> sanitized message/target ->
+// intent -> leased claim -> final authorization -> provider flow. These are
+// structural regression contracts; native integration remains a separate gate.
+const guardFunctionDigests = {
+  guardPlaceText: '350115d961c2ca0a9139f5d0a4d3c5e261de6e75bb9c64c6249c1ee5656a9b53',
+  guardOutboxText: '38069c8e5ae3894fb7f14cbfd3634a7a8672190f843eada1e0bf9cd1a53f2b70',
+  guardOutboxDelivery: 'c83654db33e76e4810aff89d3fb6506dc66bf1bb0614f13302b1eb53a76dc58a',
+  deliverGuardOutbox: 'ca4ff4128af0075435fb027eefe0c4dfda6fc36b355c0ac2216d94d88c5e7d40',
+  resumeGuardNotificationJobs: 'c9e1aa534a666ad96888f16a0cfee07d9783003684a42171f2e7751fcac3ba5a',
+  resumeGuardOutbox: '07aac12b1fbd7ad644b308ed2689581b4af4f561901917c63c67ff5b186fa5b7'
+};
+function guardedRuntimeFunctions(source, names) {
+  const tree = parseContract(source);
+  const factories = tree.body.filter(node => node.type === 'FunctionDeclaration'
+    && node.id?.name === 'createScheduleRuntime');
+  assert.equal(factories.length, 1);
+  const factory = factories[0];
+  const result = new Map();
+  for (const name of names) {
+    const found = contractNodes(tree, node => node.type === 'FunctionDeclaration' && node.id?.name === name);
+    assert.equal(found.length, 1, 'unique guard function: ' + name);
+    assert.ok(factory.body.body.includes(found[0]), 'direct guard factory definition: ' + name);
+    assert.equal(astDigest(found[0]), guardFunctionDigests[name], 'guard flow: ' + name);
+    result.set(name, found[0]);
+  }
+  const protectedNames = new Set([...names, 'outboxFairScan']);
+  const touches = node => contractNodes(node, part => part.type === 'Identifier'
+    && protectedNames.has(part.name)).length > 0;
+  assert.equal(contractNodes(factory, node =>
+    (node.type === 'VariableDeclarator' && touches(node.id))
+    || (node.type === 'AssignmentExpression' && touches(node.left))
+    || (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)
+      && node.params.some(touches))
+    || (node.type === 'CatchClause' && touches(node.param))).length, 0,
+  'guard helpers cannot be shadowed or reassigned');
+  return result;
+}
+const fairScanSource = read('functions/schedule-outbox-fair-scan.js');
+// Pure helper with a deterministic transaction/query fake: no SDK, network,
+// emulator startup or user data. Async setup settles before assertions run.
+async function fairScanMockEvidence() {
+  const { takeFairPage } = createRequire(import.meta.url)('../functions/schedule-outbox-fair-scan.js');
+  const rows = [
+    ['guard_outbox', 'queued', 'a'], ['guard_outbox', 'queued', 'b'], ['guard_outbox', 'queued', 'c'],
+    ['guard_outbox', 'sending', 'd'], ['guard_notification_jobs', 'queued', 'e']
+  ].map(([collection, status, id]) => ({ collection, status, ref: { path: 'stations/mock/' + collection + '/' + id } }));
+  let state = { sentinel: 'preserve', cursors: {} };
+  const writes = [];
+  const reads = [];
+  const documentId = Symbol('documentId');
+  const query = collection => ({
+    collection,
+    where(field, op, value) { this.filter = [field, op, value]; return this; },
+    orderBy(field) { this.order = field; return this; },
+    limit(value) { this.bound = value; return this; },
+    startAfter(ref) { this.after = ref.path; return this; }
+  });
+  const db = {
+    collection: name => ({ doc: id => ({ path: name + '/' + id, stateRef: true }) }),
+    doc: path => ({ path }),
+    collectionGroup: query,
+    async runTransaction(fn) {
+      return fn({
+        async get(ref) {
+          if (ref.stateRef) return { exists: true, data: () => structuredClone(state) };
+          reads.push({ collection: ref.collection, filter: ref.filter, order: ref.order, bound: ref.bound, after: ref.after });
+          const docs = rows.filter(row => row.collection === ref.collection
+            && row.status === ref.filter[2] && (!ref.after || row.ref.path > ref.after))
+            .sort((a, b) => a.ref.path.localeCompare(b.ref.path)).slice(0, ref.bound);
+          return { docs, empty: docs.length === 0 };
+        },
+        set(ref, value, options) {
+          writes.push({ path: ref.path, value: structuredClone(value), options });
+          state = { ...state, ...value, cursors: { ...state.cursors, ...value.cursors } };
+        }
+      });
+    }
+  };
+  const get = (collection, status, pageSize) => takeFairPage({ db,
+    FieldPath: { documentId: () => documentId }, collection, status, pageSize });
+  const first = await get('guard_outbox', 'queued', 2);
+  const second = await get('guard_outbox', 'queued', 2);
+  const wrapped = await get('guard_outbox', 'queued', 2);
+  const sending = await get('guard_outbox', 'sending', 2);
+  const jobs = await get('guard_notification_jobs', 'queued', 2);
+  const bounded = await get('guard_notification_jobs', 'sending', 999);
+  return { first, second, wrapped, sending, jobs, bounded, state, reads, writes, documentId };
+}
+const fairMock = await fairScanMockEvidence();
+check('fair scanner persists isolated cursors, wraps and bounds transactional pages', () => {
+  const paths = page => page.docs.map(doc => doc.ref.path);
+  assert.deepEqual(paths(fairMock.first), ['stations/mock/guard_outbox/a', 'stations/mock/guard_outbox/b']);
+  assert.deepEqual(paths(fairMock.second), ['stations/mock/guard_outbox/c']);
+  assert.equal(fairMock.first.cursor, 'stations/mock/guard_outbox/b');
+  assert.equal(fairMock.second.cursor, 'stations/mock/guard_outbox/c');
+  assert.equal(fairMock.second.wrapped, false);
+  assert.equal(fairMock.wrapped.wrapped, true);
+  assert.deepEqual(paths(fairMock.wrapped), paths(fairMock.first));
+  assert.deepEqual(paths(fairMock.sending), ['stations/mock/guard_outbox/d']);
+  assert.deepEqual(paths(fairMock.jobs), ['stations/mock/guard_notification_jobs/e']);
+  assert.equal(fairMock.state.cursors.guard_outbox_queued, 'stations/mock/guard_outbox/b');
+  assert.equal(fairMock.state.cursors.guard_outbox_sending, 'stations/mock/guard_outbox/d');
+  assert.equal(fairMock.state.cursors.guard_notification_jobs_queued, 'stations/mock/guard_notification_jobs/e');
+  assert.equal(fairMock.state.cursors.guard_notification_jobs_sending, null);
+  assert.equal(fairMock.state.sentinel, 'preserve');
+  assert.equal(fairMock.writes.length, 6);
+  assert.equal(fairMock.reads.length, 7, 'empty cursor page makes exactly one bounded wrap query');
+  assert.ok(fairMock.writes.every(write => write.path === 'schedule_runtime_workers/outbox_resume'
+    && write.options.merge === true && Object.keys(write.value.cursors).length === 1));
+  assert.ok(fairMock.reads.every(read => read.filter[0] === 'status' && read.filter[1] === '=='
+    && read.order === fairMock.documentId && read.bound >= 1 && read.bound <= 200));
+  assert.equal(fairMock.reads[1].after, fairMock.first.cursor);
+  assert.equal(fairMock.reads[2].after, fairMock.second.cursor);
+  assert.equal(fairMock.reads[3].after, undefined, 'wrap restarts without stale cursor');
+  assert.equal(fairMock.reads.at(-1).bound, 100, 'invalid requested page size uses bounded default');
+});
+function assertFairScanContract(source, helper) {
+  const functions = guardedRuntimeFunctions(source, ['resumeGuardNotificationJobs', 'resumeGuardOutbox']);
+  const tree = parseContract(source);
+  const bindings = contractNodes(tree, node => node.type === 'VariableDeclarator' && node.id?.name === 'outboxFairScan');
+  assert.equal(bindings.length, 1);
+  assert.ok(tree.body.some(node => node.type === 'VariableDeclaration'
+    && node.kind === 'const' && node.declarations.length === 1 && node.declarations[0] === bindings[0]));
+  assert.deepEqual(astShape(bindings[0]), astShape(parseContract(
+    "const outboxFairScan = require('./schedule-outbox-fair-scan');").body[0].declarations[0]));
+  // Includes safe-key validation, default100/max200, transactional durable state,
+  // status-filtered document-ID order, bounded initial/wrap queries, startAfter,
+  // per-collection/status cursors, merged state write and returned page metadata.
+  assert.equal(astDigest(parseContract(helper)), '61a734f5c47951a4c17d1ef0f70401a6187790298137f990995b84639cfe63ee',
+    'exact fair scanner validation/query/cursor/transaction contract');
+  for (const fn of functions.values()) {
+    assert.equal(contractNodes(fn, node => node.type === 'CallExpression'
+      && node.callee.type === 'MemberExpression'
+      && ['collectionGroup', 'orderBy', 'limit', 'get'].includes(node.callee.property?.name)).length, 0,
+    'guard resume delegates all page queries to the bounded scanner');
+  }
+}
 check('a guard notice names the date, the hours and the place', () => {
   // „יש עדכון לאבטחה בסידור שלך" הוא נכון וחסר תועלת: הוא מחייב
   // לפתוח את האפליקציה רק כדי לדעת אם זה נוגע למחר.
@@ -536,12 +1094,103 @@ check('a guard notice names the date, the hours and the place', () => {
   assert.ok(text.includes('shortDate(value.date)'), 'התאריך אינו בהתראה');
   assert.ok(text.includes('guardPlaceText(value)'), 'המקום אינו בהתראה');
   // ⭐ המקום נלקח ממסמך האבטחה החי שכבר נקרא, ולא מעותק ישן בתור.
-  assert.ok(runtime.includes('lease_token: leaseToken, place: live.place'));
+  guardedRuntimeFunctions(runtime, ['guardPlaceText', 'guardOutboxText', 'guardOutboxDelivery', 'deliverGuardOutbox']);
   // והוא מנוקה לפני שהוא מגיע למסך נעול.
   const clean = runtime.slice(runtime.indexOf('function guardPlaceText(value)'),
     runtime.indexOf('function guardOutboxText(value)'));
   assert.ok(clean.includes('replace(CONTROL_RE'), 'תווי בקרה אינם מוסרים');
   assert.ok(clean.includes('.slice(0, 40)'), 'האורך אינו נחתך');
+});
+check('guard live-place flow and fair scanner reject semantic mutations', () => {
+  const functions = guardedRuntimeFunctions(runtime, Object.keys(guardFunctionDigests));
+  const mutate = (name, source, from, to, validate) => {
+    assert.equal(source.split(from).length - 1, 1, name + ': one anchor');
+    const changed = source.replace(from, to);
+    assert.notEqual(changed, source);
+    parseContract(changed);
+    assert.throws(() => validate(changed), undefined, name);
+  };
+  const runtimeMutations = [
+    ['deliverGuardOutbox', 'tx.get(guardRef(sid, guardId))', 'tx.get(ref)'],
+    ['deliverGuardOutbox', 'const guard = related[0];', 'const guard = related[1];'],
+    ['deliverGuardOutbox', 'place: live.place', 'place: value.place'],
+    ['deliverGuardOutbox', 'guardOutboxText(withPlace)', 'guardOutboxText(value)'],
+    ['deliverGuardOutbox', 'guardOutboxDelivery(withPlace)', 'guardOutboxDelivery(value)'],
+    ['deliverGuardOutbox', 'Object.assign({}, withPlace, intent, {', 'Object.assign({}, value, intent, {'],
+    ['deliverGuardOutbox', 'if (!guardOutboxCurrent(value, guard))', 'if (false)'],
+    ['deliverGuardOutbox', 'if (!recipientIsActive(related[1], sid))', 'if (false)'],
+    ['deliverGuardOutbox', 'claimed.delivery_attempt_id)) return { skipped: true };', 'claimed.delivery_attempt_id)) return { skipped: false };'],
+    ['deliverGuardOutbox', 'const delivery = await sendPush(', 'const delivery = sendPush('],
+    ['deliverGuardOutbox', 'claimed.body,', 'value.body,'],
+    ['guardPlaceText', ".replace(CONTROL_RE, ' ')", ''],
+    ['guardPlaceText', '.slice(0, 40)', '.slice(0, 4000)'],
+    ['guardOutboxText', 'guardPlaceText(value)', 'String(value.place)'],
+    ['guardOutboxText', 'shortDate(value.date)', "'unknown'"],
+    ['guardOutboxDelivery', "type: 'guard_mine'", "type: 'guard_open'"],
+    ['resumeGuardNotificationJobs', "['queued', 'sending']", "['queued']"],
+    ['resumeGuardNotificationJobs', "collection: 'guard_notification_jobs'", "collection: 'schedule_outbox'"],
+    ['resumeGuardNotificationJobs', 'collected.set(doc.ref.path, doc)', 'collected.set(doc.id, doc)'],
+    ['resumeGuardNotificationJobs', 'if (!result.fanout) continue;', 'if (false) continue;'],
+    ['resumeGuardNotificationJobs', 'await reconcileGuardNotificationJob(doc.ref, now)', 'Promise.resolve({fanout:true})'],
+    ['resumeGuardOutbox', 'await resumeGuardNotificationJobs()', 'Promise.resolve({})'],
+    ['resumeGuardOutbox', "['retry', 'sending', 'queued']", "['queued']"],
+    ['resumeGuardOutbox', "collection: 'guard_outbox'", "collection: 'schedule_outbox'"],
+    ['resumeGuardOutbox', 'collected.set(doc.ref.path, doc)', 'collected.set(doc.id, doc)'],
+    ['resumeGuardOutbox', 'await reconcileGuardOutbox(doc.ref, now)', 'Promise.resolve({deliver:true})'],
+    ['resumeGuardOutbox', 'if (result.deliver) await deliverGuardOutbox(doc.ref);', 'await deliverGuardOutbox(doc.ref);']
+  ];
+  let count = 0;
+  for (const [name, from, to] of runtimeMutations) {
+    const fn = functions.get(name);
+    const source = runtime.slice(fn.start, fn.end);
+    mutate(name + ':' + from, source, from, to, changed => guardedRuntimeFunctions(
+      runtime.slice(0, fn.start) + changed + runtime.slice(fn.end), Object.keys(guardFunctionDigests)));
+    count += 1;
+  }
+  for (const [name, fn] of functions) {
+    const original = runtime.slice(fn.start, fn.end);
+    for (const altered of ['/* ' + original.replaceAll('*/', '* /') + ' */',
+      'if (false) { ' + original + ' }', original + '\n' + original]) {
+      mutate(name + ' dead/duplicate', original, original, altered, changed => guardedRuntimeFunctions(
+        runtime.slice(0, fn.start) + changed + runtime.slice(fn.end), Object.keys(guardFunctionDigests)));
+      count += 1;
+    }
+  }
+  const helperMutations = [
+    ['DEFAULT_PAGE_SIZE = 100', 'DEFAULT_PAGE_SIZE = 1000'],
+    ['MAX_PAGE_SIZE = 200', 'MAX_PAGE_SIZE = 2000'],
+    ["STATE_DOCUMENT = 'outbox_resume'", "STATE_DOCUMENT = 'other'"],
+    ["collection + '_' + status", 'collection'],
+    ['input.pageSize >= 1', 'input.pageSize >= 0'],
+    ['input.pageSize <= MAX_PAGE_SIZE', 'true'],
+    ['!SAFE_KEY_RE.test(cursorKey)', 'false'],
+    ['return db.runTransaction(async (tx) => {', 'return Promise.resolve(async (tx) => {'],
+    ['const stateSnap = await tx.get(stateRef);', 'const stateSnap = {exists:false};'],
+    ['if (cursorPath) query = query.startAfter(db.doc(cursorPath));', ''],
+    ['if (page.empty && cursorPath)', 'if (false)'],
+    ['{ [cursorKey]: last }', '{ [cursorKey]: null }'],
+    ['{ merge: true }', '{ merge: false }'],
+    ['return { docs: page.docs, cursor: last, wrapped };', 'return { docs: [], cursor: null, wrapped: false };']
+  ];
+  for (const [from, to] of helperMutations) {
+    mutate('helper:' + from, fairScanSource, from, to, changed => assertFairScanContract(runtime, changed));
+    count += 1;
+  }
+  // Initial and wrap queries contain repeated syntax. Bound each AST occurrence
+  // separately so the proof never mutates two anchors accidentally.
+  const helperTree = parseContract(fairScanSource);
+  for (const call of contractNodes(helperTree, node => node.type === 'CallExpression'
+    && node.callee.type === 'MemberExpression'
+    && ['where', 'orderBy', 'limit'].includes(node.callee.property?.name))) {
+    const original = fairScanSource.slice(call.start, call.end);
+    const property = call.callee.property;
+    const changed = original.slice(0, property.start - call.start) + 'unsafeQuery'
+      + original.slice(property.end - call.start);
+    mutate('query@' + call.start, original, original, changed, value => assertFairScanContract(runtime,
+      fairScanSource.slice(0, call.start) + value + fairScanSource.slice(call.end)));
+    count += 1;
+  }
+  console.log('guard flow/fair scan AST mutations rejected: ' + count);
 });
 
 check('a schedule change notice names the date and the sub-station', () => {
@@ -895,8 +1544,7 @@ check('a verified super claim receives every schedule capability without a legac
   assert.ok(runtime.includes('if (ctx.super) return { uid: ctx.uid, role: ctx.role, super: true };'));
 });
 check('guard notification outbox is independent from the monthly publication outbox', () => {
-  assert.ok(runtime.includes("collectionGroup('guard_outbox')"));
-  assert.ok(runtime.includes("collectionGroup('guard_notification_jobs')"));
+  assertFairScanContract(runtime, fairScanSource);
   assert.ok(runtime.includes('async function fanoutGuardOutbox(ref)'));
   assert.ok(runtime.includes('async function deliverGuardOutbox(ref)'));
   assert.ok(runtime.includes('async function resumeGuardOutbox()'));
@@ -925,7 +1573,8 @@ check('guard notification outbox is independent from the monthly publication out
   assert.ok(guardFanoutStart > -1 && guardFanoutEnd > guardFanoutStart);
   assert.ok(guardFanout.includes('tx.create(childRefs[index], child)'));
   assert.equal(guardFanout.includes('await batch.commit()'), false);
-  assert.ok(runtime.includes("orderBy('created_at', 'asc')"));
+  // Cursor fairness is document-ID ordered in the scanner, not created_at
+  // ordered directly here. Existing index and TTL coverage remains below.
   assert.ok(runtime.includes('async function enqueueGuardOpenNotifications(input)'));
   assert.ok(runtime.includes('MAX_GUARD_OPEN_AUDIENCE = 5000'));
   assert.ok(runtime.includes("collection('users')\n        .limit(MAX_GUARD_OPEN_AUDIENCE + 1)"));
@@ -2192,5 +2841,61 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 131);
-console.log('\n131 schedule runtime source checks passed.');
+check('source check registry rejects duplicate names and counts only successful callbacks', () => {
+  const source = read('tests/schedule-runtime-source.mjs');
+  const validate = text => {
+    const tree = parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
+    const definitions = tree.body.filter(node => node.type === 'FunctionDeclaration' && node.id?.name === 'check');
+    assert.equal(definitions.length, 1);
+    assert.deepEqual(astShape(definitions[0]), astShape(parseContract(`function check(name, fn) {
+      assert.equal(typeof name, 'string');
+      assert.ok(name.trim());
+      assert.equal(registered.has(name), false, 'duplicate check: ' + name);
+      registered.add(name);
+      fn();
+      passed += 1;
+      console.log('✓ ' + name);
+    }`).body[0]));
+    const registrations = tree.body.filter(node => node.type === 'ExpressionStatement'
+      && node.expression.type === 'CallExpression' && node.expression.callee.name === 'check');
+    const names = registrations.map(node => node.expression.arguments[0]?.value);
+    assert.ok(names.length > 0 && names.every(name => typeof name === 'string' && name.trim()));
+    assert.equal(new Set(names).size, names.length, 'all check registrations uniquely named');
+    assert.deepEqual(astShape(tree.body.slice(-3)), astShape(parseContract(
+      "assert.ok(registered.size > 0); assert.equal(passed, registered.size); console.log('\\n' + passed + ' schedule runtime source checks passed.');").body));
+  };
+  validate(source);
+  const tree = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  const fn = tree.body.find(node => node.type === 'FunctionDeclaration' && node.id?.name === 'check');
+  const original = source.slice(fn.start, fn.end);
+  const changes = [
+    ['registered.add(name);\n  fn();', 'fn();\n  registered.add(name);'],
+    ['passed += 1;', ''],
+    ['fn();\n  passed += 1;', 'passed += 1;\n  fn();'],
+    ["assert.equal(registered.has(name), false, 'duplicate check: ' + name);", '']
+  ];
+  for (const [from, to] of changes) {
+    assert.equal(original.split(from).length - 1, 1);
+    const changed = source.slice(0, fn.start) + original.replace(from, to) + source.slice(fn.end);
+    parse(changed, { ecmaVersion: 'latest', sourceType: 'module' });
+    assert.throws(() => validate(changed));
+  }
+  const calls = tree.body.filter(node => node.expression?.callee?.name === 'check');
+  const nameNode = calls[0].expression.arguments[0];
+  const duplicate = calls[1].expression.arguments[0].value;
+  for (const name of ['', duplicate]) {
+    const changed = source.slice(0, nameNode.start) + JSON.stringify(name) + source.slice(nameNode.end);
+    parse(changed, { ecmaVersion: 'latest', sourceType: 'module' });
+    assert.throws(() => validate(changed));
+  }
+  const lastAssert = tree.body.at(-2);
+  const exact = source.slice(lastAssert.start, lastAssert.end);
+  assert.equal(exact, 'assert.equal(passed, registered.size);');
+  const hardcoded = source.slice(0, lastAssert.start) + exact.replace('registered.size', '131')
+    + source.slice(lastAssert.end);
+  parse(hardcoded, { ecmaVersion: 'latest', sourceType: 'module' });
+  assert.throws(() => validate(hardcoded));
+});
+assert.ok(registered.size > 0);
+assert.equal(passed, registered.size);
+console.log('\n' + passed + ' schedule runtime source checks passed.');

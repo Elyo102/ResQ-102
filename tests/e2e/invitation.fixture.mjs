@@ -1,4 +1,4 @@
-import { test as base, expect } from 'playwright/test';
+import { test as base, expect } from '../lib/contained-test.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

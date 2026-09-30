@@ -1,0 +1,1672 @@
+{
+  "schema": 1,
+  "excludedPlaceholders": 1,
+  "mutations": [
+    {
+      "id": "calendar-01",
+      "name": "קו מינימום חסר שמתקבל",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "74d079ceb0c4d8de222abd573b0235cd6f144132606e863ecfbf6b78dfaf142b",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizePolicy",
+            "params": "d70dfca22e703ddf8c1159b5e7909801efd22979a42c2a199e76a79b20d0dfad"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "74d079ceb0c4d8de222abd573b0235cd6f144132606e863ecfbf6b78dfaf142b",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "74d079ceb0c4d8de222abd573b0235cd6f144132606e863ecfbf6b78dfaf142b",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-02",
+      "name": "מנוחה חסרה שמתקבלת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "4f62f4924a78aade71c8ceffcbf0d200893d35b415b2b8b5db585ec9fcc024f4",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizePolicy",
+            "params": "d70dfca22e703ddf8c1159b5e7909801efd22979a42c2a199e76a79b20d0dfad"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "4f62f4924a78aade71c8ceffcbf0d200893d35b415b2b8b5db585ec9fcc024f4",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "4f62f4924a78aade71c8ceffcbf0d200893d35b415b2b8b5db585ec9fcc024f4",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-03",
+      "name": "מחזוריות לא מוצהרת שמתקבלת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "UnaryExpression",
+        "digest": "028a1b58e116925cc63d5218aaec608d4991673386828b7891f79bc25bb54ef7",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizePolicy",
+            "params": "d70dfca22e703ddf8c1159b5e7909801efd22979a42c2a199e76a79b20d0dfad"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "028a1b58e116925cc63d5218aaec608d4991673386828b7891f79bc25bb54ef7",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "028a1b58e116925cc63d5218aaec608d4991673386828b7891f79bc25bb54ef7",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-04",
+      "name": "תקרה לא מוצהרת שמתקבלת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "UnaryExpression",
+        "digest": "a5be6323a6af9aea12368b822870f4419e689144cb5464d739b16fa0d6618e79",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizePolicy",
+            "params": "d70dfca22e703ddf8c1159b5e7909801efd22979a42c2a199e76a79b20d0dfad"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "a5be6323a6af9aea12368b822870f4419e689144cb5464d739b16fa0d6618e79",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "a5be6323a6af9aea12368b822870f4419e689144cb5464d739b16fa0d6618e79",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-05",
+      "name": "חובה/רשות שמנוחשת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "5f5636f71ecfd1ba8d37237e05ef3c522904230582fa89f6209cdad300653271",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizePolicy",
+            "params": "d70dfca22e703ddf8c1159b5e7909801efd22979a42c2a199e76a79b20d0dfad"
+          },
+          {
+            "kind": "VariableDeclarator",
+            "id": {
+              "name": "reqs",
+              "type": "Identifier"
+            }
+          },
+          {
+            "kind": "ArrowFunctionExpression",
+            "name": null,
+            "params": "455a96ffbadebc4c1c09bc397754029af267eed4b999353ac91736279310beef"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "5f5636f71ecfd1ba8d37237e05ef3c522904230582fa89f6209cdad300653271",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "5f5636f71ecfd1ba8d37237e05ef3c522904230582fa89f6209cdad300653271",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-06",
+      "name": "פעיל/לא פעיל שמנוחש",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "7a5f401292c34b7fe518792bf50dc435b338b752163beca23ba53343d51b9198",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizeRoster",
+            "params": "e190aca05e80d4f3ba0d6392ac69c578ac208d47b22c56af37e427e5736cd0be"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "7a5f401292c34b7fe518792bf50dc435b338b752163beca23ba53343d51b9198",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "7a5f401292c34b7fe518792bf50dc435b338b752163beca23ba53343d51b9198",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-07",
+      "name": "תכנון חודשי שמתחיל באמצע חודש",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "712dfe67a3b6391dc027f1a83d7fce5557edf13883bcb34fb8aad4d7f7cfe947",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planMonths",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "712dfe67a3b6391dc027f1a83d7fce5557edf13883bcb34fb8aad4d7f7cfe947",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "712dfe67a3b6391dc027f1a83d7fce5557edf13883bcb34fb8aad4d7f7cfe947",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-08",
+      "name": "תכנון שנתי שמצטמצם שוב לשלושה חודשים",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "Literal",
+        "digest": "333eaa88e496e0c1a5425d9610fd2143b94dd151fd2d57849cfce416595ef3f6",
+        "context": [
+          {
+            "kind": "VariableDeclarator",
+            "id": {
+              "name": "LIMITS",
+              "type": "Identifier"
+            }
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "MAX_MONTHS",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "333eaa88e496e0c1a5425d9610fd2143b94dd151fd2d57849cfce416595ef3f6",
+      "replacementHash": "0187c7dff2a11473f9fb64719ed5462a434bd9d0962a52745ca41975cef131cc",
+      "replacementText": "3"
+    },
+    {
+      "id": "calendar-09",
+      "name": "טווח ביניים לא נתמך שמתקבל",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "a20c8f17ceadf582ee5e4f9a9d1c7f8b7fa7d4f0a45c3b13430ba5a4e29ea4d2",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planMonths",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "a20c8f17ceadf582ee5e4f9a9d1c7f8b7fa7d4f0a45c3b13430ba5a4e29ea4d2",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "a20c8f17ceadf582ee5e4f9a9d1c7f8b7fa7d4f0a45c3b13430ba5a4e29ea4d2",
+      "replacementHash": "c33044d69a7b7093923b15829858ada790d9f80a1ac12bc27e2bae89ed939ac0",
+      "replacementText": "!isInt(months) || months < 1 || months > LIMITS.MAX_MONTHS"
+    },
+    {
+      "id": "calendar-10",
+      "name": "תחנה זרה שמתקבלת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "5b5b387280d120b9e751a44a5c74f8093256bf0d9f3b624f1c29e4f0d5694049",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertSameSource",
+            "params": "9798904cadeba36a3010fdc35afb9c816bd944af91b5b06e24c51b91ee2973dc"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "5b5b387280d120b9e751a44a5c74f8093256bf0d9f3b624f1c29e4f0d5694049",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "5b5b387280d120b9e751a44a5c74f8093256bf0d9f3b624f1c29e4f0d5694049",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-11",
+      "name": "גרסת מדיניות זרה שמתקבלת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "ae5b5055d974880130f18463a511e9c6023eced34ccf96b8a99618013ea88d91",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertSameSource",
+            "params": "9798904cadeba36a3010fdc35afb9c816bd944af91b5b06e24c51b91ee2973dc"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "ae5b5055d974880130f18463a511e9c6023eced34ccf96b8a99618013ea88d91",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "ae5b5055d974880130f18463a511e9c6023eced34ccf96b8a99618013ea88d91",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-12",
+      "name": "צילום מקור שאינו נדרש",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "UnaryExpression",
+        "digest": "67e216e5d19f946976d1d24d9b0bac62fbcbd3d2f568cc440a4b8d88ec3c8914",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertSameSource",
+            "params": "9798904cadeba36a3010fdc35afb9c816bd944af91b5b06e24c51b91ee2973dc"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "67e216e5d19f946976d1d24d9b0bac62fbcbd3d2f568cc440a4b8d88ec3c8914",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "67e216e5d19f946976d1d24d9b0bac62fbcbd3d2f568cc440a4b8d88ec3c8914",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-13",
+      "name": "אדם מגרסה אחרת שמתקבל",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "3a036fd8e8011a61f031ea3fafef7d8560bdbdab46476711f2fb4cd36744a1b3",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizeRoster",
+            "params": "e190aca05e80d4f3ba0d6392ac69c578ac208d47b22c56af37e427e5736cd0be"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "3a036fd8e8011a61f031ea3fafef7d8560bdbdab46476711f2fb4cd36744a1b3",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "3a036fd8e8011a61f031ea3fafef7d8560bdbdab46476711f2fb4cd36744a1b3",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-14",
+      "name": "תאריך בלתי אפשרי שמתקבל",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "0913301b78d17b0a47074fb12d861cfc1602240aefac9898e1b017e9d3b081db",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "toDayNumber",
+            "params": "da23e9860e5771431145d3691aec81d7bb005d6a6bec2de63ceebdb64e26917a"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "0913301b78d17b0a47074fb12d861cfc1602240aefac9898e1b017e9d3b081db",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "0913301b78d17b0a47074fb12d861cfc1602240aefac9898e1b017e9d3b081db",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-15",
+      "name": "תאריך כפול שמתקבל",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "37506b9e69f95e45e1d716e6c2211bf8ffcb58c35d63da853ce4e68531b05727",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizeDays",
+            "params": "65de2c935ed34cfdd433eab751f67d437af57cea55e7e87fd18860e934bede6b"
+          },
+          {
+            "kind": "VariableDeclarator",
+            "id": {
+              "name": "out",
+              "type": "Identifier"
+            }
+          },
+          {
+            "kind": "ArrowFunctionExpression",
+            "name": null,
+            "params": "aac33ee7ef0c5720c0892ce1aebd43d37d5507305e8d536fb23e2c05c82bcfbf"
+          }
+        ]
+      },
+      "originalHash": "37506b9e69f95e45e1d716e6c2211bf8ffcb58c35d63da853ce4e68531b05727",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-16",
+      "name": "ימים הפוכים שמתקבלים",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "9396fe437ce4000cf85baa01b35a26e5e3aa69c3c1172abdcee9d64055ef667b",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "normalizeDays",
+            "params": "65de2c935ed34cfdd433eab751f67d437af57cea55e7e87fd18860e934bede6b"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "9396fe437ce4000cf85baa01b35a26e5e3aa69c3c1172abdcee9d64055ef667b",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "9396fe437ce4000cf85baa01b35a26e5e3aa69c3c1172abdcee9d64055ef667b",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-17",
+      "name": "חציית תחנות קצה שמותרת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "6715dfab07fdf71298679b6f461e069472cd38dbf7790366280e565928d1c010",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "blockCode",
+            "params": "7e50d819d7dcd19ba9100c830b3c5d351eb4c0e559b537c9e145b89f99ffc859"
+          }
+        ]
+      },
+      "originalHash": "6715dfab07fdf71298679b6f461e069472cd38dbf7790366280e565928d1c010",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-18",
+      "name": "אדם לא פעיל שמשובץ",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "443a5f7383ef29df8d1a9d42b1eddb83b786f81c94bf7963987a5e25953eec53",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "443a5f7383ef29df8d1a9d42b1eddb83b786f81c94bf7963987a5e25953eec53",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "443a5f7383ef29df8d1a9d42b1eddb83b786f81c94bf7963987a5e25953eec53",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-19",
+      "name": "כשירות שאינה נבדקת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "a53e0e3bc10bc87be4ffcbdcfe24d32fc80e60d6e3cc11080f4308919cbb447f",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          }
+        ]
+      },
+      "originalHash": "a53e0e3bc10bc87be4ffcbdcfe24d32fc80e60d6e3cc11080f4308919cbb447f",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-20",
+      "name": "אי-זמינות שאינה נבדקת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "2f819f8cd37cf848c1e041856e9c610f25cc53e1108edf6fd000a6839fd0be9c",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "blockCode",
+            "params": "7e50d819d7dcd19ba9100c830b3c5d351eb4c0e559b537c9e145b89f99ffc859"
+          }
+        ]
+      },
+      "originalHash": "2f819f8cd37cf848c1e041856e9c610f25cc53e1108edf6fd000a6839fd0be9c",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-21",
+      "name": "כפילות ביום שאינה נחסמת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "6303c2b6a707cf0a399612ec2f8ea5092bcd0eebca6ed23067d9855e80a7812c",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "augment",
+            "params": "566c953f40bbc5f7047639be2ecac56d1c40aa2e3ac5b82163b682bc726c771b"
+          }
+        ]
+      },
+      "originalHash": "6303c2b6a707cf0a399612ec2f8ea5092bcd0eebca6ed23067d9855e80a7812c",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-22",
+      "name": "מנוחה שאינה נאכפת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "e9a232e4a28464ca05f2ae36692cd574f3750b4bace5f8e2f5caf6d85285d48a",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "blockCode",
+            "params": "7e50d819d7dcd19ba9100c830b3c5d351eb4c0e559b537c9e145b89f99ffc859"
+          }
+        ]
+      },
+      "originalHash": "e9a232e4a28464ca05f2ae36692cd574f3750b4bace5f8e2f5caf6d85285d48a",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-23",
+      "name": "סיבת ההיעדרות שמוחזרת כמות שהיא",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "MemberExpression",
+        "digest": "3b8cb8196099fc0db7997793d979f458bb61a6a6fd8c6837fb47b555ede97707",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "blockCode",
+            "params": "7e50d819d7dcd19ba9100c830b3c5d351eb4c0e559b537c9e145b89f99ffc859"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "d8a1453c1f4ebc8f5e79b904a94c47533938db84e0f7133a88876b624117ef4f",
+            "edge": "consequent"
+          }
+        ]
+      },
+      "originalHash": "3b8cb8196099fc0db7997793d979f458bb61a6a6fd8c6837fb47b555ede97707",
+      "replacementHash": "b7f77bad4e8b40763a65f6e83d2e8db0074aa68054edf691602a681ff39e9580",
+      "replacementText": "JSON.stringify(ctx.unavailable)"
+    },
+    {
+      "id": "calendar-24",
+      "name": "רשימת ההיתר של הפוש שנפרצת",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "ForOfStatement",
+        "digest": "be4790f0cf0c345cee1bcd10205e267f5a295e0263866fe9490790df3d041d41",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "pickPushFields",
+            "params": "0eee4222da16165af5c90688b623cf0950c4ee0c259187453f1b6a779496f79f"
+          }
+        ]
+      },
+      "originalHash": "be4790f0cf0c345cee1bcd10205e267f5a295e0263866fe9490790df3d041d41",
+      "replacementHash": "bd369371bda134cf5a988b6e11c50c1b94e3fa18e5d6eaf0c60583362a7fe16b",
+      "replacementText": "{ Object.assign(out, flat); out.crew = (change.to || change.from || {}).crew || []; }"
+    },
+    {
+      "id": "calendar-25",
+      "name": "בדיקת הדליפה שמנוטרלת",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "ExpressionStatement",
+        "digest": "2b5d84df687952313e25cf9eb16aba06db90609fdfa51918de604b7f18c89227",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planPublication",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "2b5d84df687952313e25cf9eb16aba06db90609fdfa51918de604b7f18c89227",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-27",
+      "name": "אדם ידני לא מוכר שאינו נחסם",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "UnaryExpression",
+        "digest": "7fb2e5123a504db12e6331c654bf7c3f225a2ddc7f228b6a3e4d6abb59a6cf1d",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "7fb2e5123a504db12e6331c654bf7c3f225a2ddc7f228b6a3e4d6abb59a6cf1d",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "7fb2e5123a504db12e6331c654bf7c3f225a2ddc7f228b6a3e4d6abb59a6cf1d",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-28",
+      "name": "כפילות ידנית באותו יום שאינה נחסמת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "CallExpression",
+        "digest": "452eca75c99e95a6ae82829b15f5c560323f816f310a42374dbd1a6bcd7f3e3e",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "452eca75c99e95a6ae82829b15f5c560323f816f310a42374dbd1a6bcd7f3e3e",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "452eca75c99e95a6ae82829b15f5c560323f816f310a42374dbd1a6bcd7f3e3e",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-29",
+      "name": "אזהרת מעבר תחנת קצה שאובדת",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "ebd227e7b86bdb5e8715ebd00ca00b3d8b98702f54b820fcbd7a137f130101a7",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          }
+        ]
+      },
+      "originalHash": "ebd227e7b86bdb5e8715ebd00ca00b3d8b98702f54b820fcbd7a137f130101a7",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-30",
+      "name": "מתחת לקו שאינו מסומן",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "d4d3fe3bd81c48ac4a7c1b00568d1afe725ae17354b2bda68af679f08b88ef40",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "below_minimum",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "d4d3fe3bd81c48ac4a7c1b00568d1afe725ae17354b2bda68af679f08b88ef40",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-31",
+      "name": "קו המינימום שמקודד בקוד",
+      "target": "functions/schedule-calendar-engine.js",
+      "suites": [
+        "engine"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "MemberExpression",
+        "digest": "b181abfc2968f52ae4d0d4816513db58301693be46d66e23bdcbc44fd929b6cb",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createCalendarEngine",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planOneDay",
+            "params": "9cd59408b2c7d958195ab09a489ae16872f3ddde11334beed292ef8529a78c2a"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "minimum",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "b181abfc2968f52ae4d0d4816513db58301693be46d66e23bdcbc44fd929b6cb",
+      "replacementHash": "8a0a5c14a5fceb5620b59cde14799de9cb0bce030f0a712057a74e13af95ea19",
+      "replacementText": "6"
+    },
+    {
+      "id": "calendar-32",
+      "name": "פרסום ראשון שמושתק",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "insert-before",
+      "selector": {
+        "type": "VariableDeclaration",
+        "digest": "ae9ff9507617f4fb8a90e1e9c78412078d1c09c18f8742373b8d15b115ea02d6",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "diff",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "ae9ff9507617f4fb8a90e1e9c78412078d1c09c18f8742373b8d15b115ea02d6",
+      "replacementHash": "fe4eeba45b566beac2bef25cb9a5f6173a52618e44f51d7b3bb7c0775065b0b0",
+      "replacementText": "if (!prev) continue;\n"
+    },
+    {
+      "id": "calendar-33",
+      "name": "פרסום עם חוסרים שמותר",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "ExpressionStatement",
+        "digest": "ac6e5d021740d5b93eb48a004562de4cabf8365494c548af703e2bb36a3be2bd",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planPublication",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "ac6e5d021740d5b93eb48a004562de4cabf8365494c548af703e2bb36a3be2bd",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-34",
+      "name": "פערי כוח אדם חוזרים להיות חסם",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "50c8d07ff82d772808c7c5f2ec840dc5c24da5cd38dcfb6a2db59ba120ab74da",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertPublishable",
+            "params": "d990c25b5ff3bf6b19cac6c79633d445f88bf41f6f05426b0518453de1f0eab3"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "50c8d07ff82d772808c7c5f2ec840dc5c24da5cd38dcfb6a2db59ba120ab74da",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "50c8d07ff82d772808c7c5f2ec840dc5c24da5cd38dcfb6a2db59ba120ab74da",
+      "replacementHash": "931504174b46ff1e60b67a18b2b8af3f8ea187b346380e4836d6800e75d622cd",
+      "replacementText": "summary.rejected_manual > 0 || summary.blocking_gaps > 0 || summary.days_below_minimum > 0"
+    },
+    {
+      "id": "calendar-35",
+      "name": "הודעה לכל שינוי במקום לכל אדם",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "insert-before",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "927ffb0d6a723d8eaaf04104aaa74fb23dc66ad0f4ceef2493f96ea20ca7401b",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "diff",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "927ffb0d6a723d8eaaf04104aaa74fb23dc66ad0f4ceef2493f96ea20ca7401b",
+      "replacementHash": "2044b4075de25709a1d310fc049894cf60dfc63dee87121d754bedb359dab271",
+      "replacementText": "out.set(person + ':' + changes.length, changes);\n"
+    },
+    {
+      "id": "calendar-36",
+      "name": "לחיצה כפולה שמייצרת פרסום שני",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "6ffcedf7c1afa3903cc6f250a3a1fb30d3d1cd2087ed0d8a0977713abc10404e",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planPublication",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "a265263d9ddd6a3aae1fada39797b88d23c3187951e571bad1e57806b289a9c5",
+            "edge": "consequent"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "6b8529c6eb1aa55f985558918085a3884d8a23d122e603b9b5cf06c600d4f694",
+            "edge": "consequent"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "6ffcedf7c1afa3903cc6f250a3a1fb30d3d1cd2087ed0d8a0977713abc10404e",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "6ffcedf7c1afa3903cc6f250a3a1fb30d3d1cd2087ed0d8a0977713abc10404e",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-37",
+      "name": "התנגשות מזהים שאינה נחסמת",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "ThrowStatement",
+        "digest": "ff5406e3649b76ffe4d9fc6d4ff1518771e13492350aaa31c5028f9a1d680bf5",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planPublication",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "a265263d9ddd6a3aae1fada39797b88d23c3187951e571bad1e57806b289a9c5",
+            "edge": "consequent"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "6b8529c6eb1aa55f985558918085a3884d8a23d122e603b9b5cf06c600d4f694",
+            "edge": "consequent"
+          }
+        ]
+      },
+      "originalHash": "ff5406e3649b76ffe4d9fc6d4ff1518771e13492350aaa31c5028f9a1d680bf5",
+      "replacementHash": "abd144f94af7e3a15282bf8c60d804a424b997735c9942ab28b4322fa0ebcc67",
+      "replacementText": "return null || new PublicationError('publication-conflict',\n          'אותו מזהה פרסום עם תוכן אחר. צור מזהה חדש.');"
+    },
+    {
+      "id": "calendar-38",
+      "name": "כשל שליחה שמבטל את הפרסום",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "Literal",
+        "digest": "1a099891f3d6d3f0eb2bf11be546dbddca45f0eacd9c246b49ccd8b1a11ee922",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planRetry",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "d326de1a5fc4ae22eff284cf5c474fa900a2811eade6480e0f57171ab34b816c",
+            "edge": "consequent"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "publication_still_valid",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "1a099891f3d6d3f0eb2bf11be546dbddca45f0eacd9c246b49ccd8b1a11ee922",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-39",
+      "name": "מחיקה שקטה במקום dead_letter",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication",
+        "source"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "Literal",
+        "digest": "a584ffd9a1194eaa326e3e8570fa974319991ce6eb0ba64f6d335856f2850267",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "planRetry",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "d326de1a5fc4ae22eff284cf5c474fa900a2811eade6480e0f57171ab34b816c",
+            "edge": "consequent"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "status",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "a584ffd9a1194eaa326e3e8570fa974319991ce6eb0ba64f6d335856f2850267",
+      "replacementHash": "5452c313baeae64fc123d3a4ec89128c0ffd2351a2e67469a1da89454fbf4daf",
+      "replacementText": "'dropped'"
+    },
+    {
+      "id": "calendar-40",
+      "name": "שינוי צוות שאינו מזוהה",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "bd7a0b0d67d70e55bf3dea064a8b0080d9812b0c5739cebc009a64a1dd8ac7c7",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "diffOnePerson",
+            "params": "cbfc0a6698d34f2360e0fc9b1221efc8b71a35fc3542e4199bd9dea89d5bd091"
+          }
+        ]
+      },
+      "originalHash": "bd7a0b0d67d70e55bf3dea064a8b0080d9812b0c5739cebc009a64a1dd8ac7c7",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-41",
+      "name": "שינוי סבב שאינו מזוהה",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "8431c1163171978919272ff631dbf68c7b1bef5e74f377a4353c2c5e05278fcb",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "diffOnePerson",
+            "params": "cbfc0a6698d34f2360e0fc9b1221efc8b71a35fc3542e4199bd9dea89d5bd091"
+          }
+        ]
+      },
+      "originalHash": "8431c1163171978919272ff631dbf68c7b1bef5e74f377a4353c2c5e05278fcb",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-42",
+      "name": "ביטול שיבוץ שאינו מזוהה",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "081dbdf3847e7b70b463f3f08ba3cf3a5753519d3b43bf1fe1fe9d2efb3667de",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "diffOnePerson",
+            "params": "cbfc0a6698d34f2360e0fc9b1221efc8b71a35fc3542e4199bd9dea89d5bd091"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "081dbdf3847e7b70b463f3f08ba3cf3a5753519d3b43bf1fe1fe9d2efb3667de",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "081dbdf3847e7b70b463f3f08ba3cf3a5753519d3b43bf1fe1fe9d2efb3667de",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-43",
+      "name": "אותו אדם פעמיים ביום שמתקבל",
+      "target": "functions/schedule-publication.js",
+      "suites": [
+        "publication"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "CallExpression",
+        "digest": "4c2f4433002f1bfd8b1a3c65dde9d05619be2a7360397aa3ca267c751708f1a4",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createPublication",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "personView",
+            "params": "d990c25b5ff3bf6b19cac6c79633d445f88bf41f6f05426b0518453de1f0eab3"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "4c2f4433002f1bfd8b1a3c65dde9d05619be2a7360397aa3ca267c751708f1a4",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "4c2f4433002f1bfd8b1a3c65dde9d05619be2a7360397aa3ca267c751708f1a4",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-44",
+      "name": "השער שמנוטרל בהרצה",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "ExpressionStatement",
+        "digest": "dc7dfdf643f4d46ddcffa09703744df8feaf98200944625c3c586cc754313c3f",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "runPlanner",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "dc7dfdf643f4d46ddcffa09703744df8feaf98200944625c3c586cc754313c3f",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-45",
+      "name": "השער שמנוטרל בפרסום",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "ExpressionStatement",
+        "digest": "ddff1b7a0042cd4d996a88dff3216d599805f017710e1bf200ad04c94f1e0495",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "publish",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          }
+        ]
+      },
+      "originalHash": "ddff1b7a0042cd4d996a88dff3216d599805f017710e1bf200ad04c94f1e0495",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-46",
+      "name": "תוכנית של תחנה זרה שמתקבלת",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "LogicalExpression",
+        "digest": "58e941151c4258619c92b2ddcc2aef49c4912915f85ec5e15b3776f73c210225",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertPlan",
+            "params": "d990c25b5ff3bf6b19cac6c79633d445f88bf41f6f05426b0518453de1f0eab3"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "58e941151c4258619c92b2ddcc2aef49c4912915f85ec5e15b3776f73c210225",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "58e941151c4258619c92b2ddcc2aef49c4912915f85ec5e15b3776f73c210225",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-47",
+      "name": "כל תפקיד רשאי הכול",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "d37367059710480608899383455fcf96bc5c54bb7b0aa453040397c46cc35c03",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertMay",
+            "params": "4ed22013cb629a9cfab274a3f6e5eaa777e61d4ceedacfc13bc0080a99815c0b"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "d37367059710480608899383455fcf96bc5c54bb7b0aa453040397c46cc35c03",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "d37367059710480608899383455fcf96bc5c54bb7b0aa453040397c46cc35c03",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-48",
+      "name": "מענה בשם אדם אחר",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "6a60c178e11b90ca2d7199d8da13a90e72bb4f0e0f988cdcce9e1d29f1e44a23",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertMay",
+            "params": "4ed22013cb629a9cfab274a3f6e5eaa777e61d4ceedacfc13bc0080a99815c0b"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "1d52fcc5d9914f91f978275a2ff7c9af2c0fcfbc7cb19ef959ce438077d2c417",
+            "edge": "consequent"
+          }
+        ]
+      },
+      "originalHash": "6a60c178e11b90ca2d7199d8da13a90e72bb4f0e0f988cdcce9e1d29f1e44a23",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-49",
+      "name": "משתמש לא פעיל שעובר",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service",
+        "source"
+      ],
+      "operation": "remove",
+      "selector": {
+        "type": "IfStatement",
+        "digest": "54f93c9c3f212569125ff70a93d1fb52710056e4cdf10a167f95e8b594b8b952",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertActor",
+            "params": "f50751cb5a9b09cd91a3e27abbedeaa1e118788ee47e755aa7a46c9dcbfe29d8"
+          }
+        ]
+      },
+      "originalHash": "54f93c9c3f212569125ff70a93d1fb52710056e4cdf10a167f95e8b594b8b952",
+      "replacementHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "replacementText": ""
+    },
+    {
+      "id": "calendar-50",
+      "name": "משתמש מתחנה אחרת שעובר",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "bdd7d60515b2ca0758a3c6157e05d15e4d5a43d241dee1d19fcf76ac3f88072a",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "assertActor",
+            "params": "f50751cb5a9b09cd91a3e27abbedeaa1e118788ee47e755aa7a46c9dcbfe29d8"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "bdd7d60515b2ca0758a3c6157e05d15e4d5a43d241dee1d19fcf76ac3f88072a",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "bdd7d60515b2ca0758a3c6157e05d15e4d5a43d241dee1d19fcf76ac3f88072a",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-51",
+      "name": "„הסידור שלי\" של אדם אחר",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "3b19cc7d84438e4f094364c2f26b1b026be448a4bdd58729e669ac785129c216",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "buildMySchedule",
+            "params": "e65e62713c6620b2ea7ae22c9f427f6bc6ad416b999efa64767bd8aa73530916"
+          },
+          {
+            "kind": "IfStatement",
+            "test": "3b19cc7d84438e4f094364c2f26b1b026be448a4bdd58729e669ac785129c216",
+            "edge": "test"
+          }
+        ]
+      },
+      "originalHash": "3b19cc7d84438e4f094364c2f26b1b026be448a4bdd58729e669ac785129c216",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-52",
+      "name": "הדגשת המשתמש שמבוטלת",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "BinaryExpression",
+        "digest": "134550ea97d1d6b1227b93b9b2ae4921472dc3de09a02bd66c9f8bf92d5bfb7c",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "dayBlock",
+            "params": "085f78abe48e18f7c55d7d8b45e2b2e26ec4755bacc8cc7aceb4cfa3d4854d95"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "people",
+              "type": "Identifier"
+            }
+          },
+          {
+            "kind": "ArrowFunctionExpression",
+            "name": null,
+            "params": "40be8bea5afb8d1de985719132b5921eb7de994d0f4ae20c05fcdc01f9d2745c"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "is_me",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "134550ea97d1d6b1227b93b9b2ae4921472dc3de09a02bd66c9f8bf92d5bfb7c",
+      "replacementHash": "483a76f169f3a9985e9d36e9023a0e24eff4f7db6d885838d46b781488f16694",
+      "replacementText": "false"
+    },
+    {
+      "id": "calendar-53",
+      "name": "יום שלפני ואחרי שנעלמים",
+      "target": "functions/schedule-service.js",
+      "suites": [
+        "service"
+      ],
+      "operation": "replace",
+      "selector": {
+        "type": "CallExpression",
+        "digest": "a3fd49f102ec3fc52eb90ba8309e52a50c477dcef3591fa77c7a3e47c4da5d34",
+        "context": [
+          {
+            "kind": "FunctionDeclaration",
+            "name": "createScheduleService",
+            "params": "4e764e3ccdfb05caa0a70cad4243b98606b6c59494e35aa5f9cdbbb5b13d84c0"
+          },
+          {
+            "kind": "FunctionDeclaration",
+            "name": "stationScheduleView",
+            "params": "43f209d2b9a61831db6e890c40b506429a2754ce111120d51cc67b2b5325bd1e"
+          },
+          {
+            "kind": "Property",
+            "key": {
+              "name": "previous_day",
+              "type": "Identifier"
+            }
+          }
+        ]
+      },
+      "originalHash": "a3fd49f102ec3fc52eb90ba8309e52a50c477dcef3591fa77c7a3e47c4da5d34",
+      "replacementHash": "84ff714452026902fe79251354025a29eb8a2b40571c10d7c8ddd154bbc788e4",
+      "replacementText": "date"
+    }
+  ]
+}

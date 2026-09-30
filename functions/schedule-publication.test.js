@@ -4,12 +4,14 @@ const assert = require('assert');
 const {
   createPublication, PublicationError, CHANGE, PUSH_FIELDS, FORBIDDEN_KEYS
 } = require('./schedule-publication.js');
+const { createMutationReporter } = require('../tests/lib/mutation-reporter.cjs');
+const mutationReporter = createMutationReporter('functions/schedule-publication.test.js');
 
 let pass = 0;
 const fails = [];
 function t(name, fn) {
   try { fn(); pass += 1; }
-  catch (e) { fails.push(name + ' → ' + (e && e.message)); }
+  catch (e) { fails.push(name + ' → ' + (e && e.message)); mutationReporter.failure(name, e); }
 }
 function throwsCode(fn, code) {
   try { fn(); }
@@ -18,7 +20,7 @@ function throwsCode(fn, code) {
     assert.strictEqual(e.code, code, 'קוד ' + e.code + ' במקום ' + code);
     return;
   }
-  throw new Error('לא נזרקה שגיאה, ציפיתי ל-' + code);
+  assert.fail('לא נזרקה שגיאה, ציפיתי ל-' + code);
 }
 
 const AT = '2026-09-01T12:00:00.000Z';
@@ -112,9 +114,12 @@ t('חוסר כוח אדם הוא אזהרה ואינו חוסם פרסום', () 
   bad.summary.blocking_gaps = 1;
   bad.summary.days_below_minimum = 1;
   bad.rows[0].complete = false;
-  const result = mk().planPublication(publicationInput({
-    next: bad, previous: null, publication_id: 'blocked', actor: 'רמי'
-  }));
+  let result;
+  assert.doesNotThrow(() => {
+    result = mk().planPublication(publicationInput({
+      next: bad, previous: null, publication_id: 'blocked', actor: 'רמי'
+    }));
+  }, 'CALENDAR_STAFFING_GAPS_MUST_NOT_BLOCK_PUBLICATION');
   assert.deepStrictEqual(result.publication.warnings,
     { blocking_gaps: 1, days_below_minimum: 1,
       manual_warning_assignments: 0, manual_warnings: 0, manual_warning_counts: {} });
@@ -133,9 +138,12 @@ t('שורה לא מלאה בשל פער נשמרת כאזהרה ואינה נח�
   const bad = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג')])]);
   bad.rows[0].complete = false;
   bad.summary.blocking_gaps = 1;
-  const result = mk().planPublication(publicationInput({
-    next: bad, previous: null, publication_id: 'open-row', actor: 'רמי'
-  }));
+  let result;
+  assert.doesNotThrow(() => {
+    result = mk().planPublication(publicationInput({
+      next: bad, previous: null, publication_id: 'open-row', actor: 'רמי'
+    }));
+  }, 'CALENDAR_OPEN_ROW_MUST_PUBLISH_WITH_WARNING');
   assert.equal(result.publication.warnings.blocking_gaps, 1);
 });
 
@@ -196,18 +204,26 @@ t('שינוי משמרת', () => {
 
 t('שינוי סבב', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('רון', 'team_cmd', 'מפקד צוות')], 'ב')]);
-  assert.ok(changeKinds(P1, next)['דן'].indexOf(CHANGE.ROTATION_CHANGED) > -1);
+  const kinds = changeKinds(P1, next)['דן'];
+  assert.ok(Array.isArray(kinds), 'CALENDAR_ROTATION_CHANGE_REQUIRED');
+  assert.ok(kinds.indexOf(CHANGE.ROTATION_CHANGED) > -1);
 });
 
 t('שינוי בהרכב הצוות', () => {
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('גיא', 'team_cmd', 'מפקד צוות')])]);
-  assert.ok(changeKinds(P1, next)['דן'].indexOf(CHANGE.CREW_CHANGED) > -1, 'לא זוהה שינוי צוות');
+  const kinds = changeKinds(P1, next)['דן'];
+  assert.ok(Array.isArray(kinds), 'CALENDAR_CREW_CHANGE_REQUIRED');
+  assert.ok(kinds.indexOf(CHANGE.CREW_CHANGED) > -1, 'לא זוהה שינוי צוות');
 });
 
 t('ביטול שיבוץ והחזרתו', () => {
   const cancelled = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג', { cancelled: true }), slot('רון', 'team_cmd', 'מפקד צוות')])]);
-  assert.ok(changeKinds(P1, cancelled)['דן'].indexOf(CHANGE.ASSIGNMENT_CANCELLED) > -1);
-  assert.ok(changeKinds(cancelled, P1)['דן'].indexOf(CHANGE.ASSIGNMENT_RESTORED) > -1);
+  const kinds = changeKinds(P1, cancelled)['דן'];
+  assert.ok(Array.isArray(kinds), 'CALENDAR_CANCELLATION_CHANGE_REQUIRED');
+  assert.ok(kinds.indexOf(CHANGE.ASSIGNMENT_CANCELLED) > -1);
+  const restoredKinds = changeKinds(cancelled, P1)['דן'];
+  assert.ok(Array.isArray(restoredKinds), 'CALENDAR_RESTORATION_CHANGE_REQUIRED');
+  assert.ok(restoredKinds.indexOf(CHANGE.ASSIGNMENT_RESTORED) > -1);
 });
 
 t('שיבוץ לאירוע', () => {
@@ -333,6 +349,7 @@ t('ההתראה אינה נושאת שם של אף אדם אחר', () => {
     [slot('דן', 'driver', 'נהג'), slot('אבי', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  assert.ok(mine, 'CALENDAR_CREW_PRIVACY_NOTIFICATION_REQUIRED');
   const text = JSON.stringify(mine.push);
   // ⭐ הרכב הצוות השתנה, והשם של מי שנוסף אינו במטען. מי שרוצה
   // לדעת מי איתו פותח את האפליקציה.
@@ -384,6 +401,7 @@ t('אין שמות של אנשים אחרים במטען הפוש — גם בש�
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('גיא_סודי', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  assert.ok(mine, 'CALENDAR_CREW_PUSH_NOTIFICATION_REQUIRED');
   const json = JSON.stringify(mine.push);
   assert.strictEqual(json.indexOf('גיא_סודי'), -1, 'שם של אדם אחר דלף לפוש');
   assert.strictEqual(json.indexOf('רון'), -1, 'שם של אדם אחר דלף לפוש');
@@ -437,6 +455,7 @@ t('הפירוט הפנימי כן מכיל את הצוות — הוא לא במ�
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'driver', 'נהג'), slot('גיא', 'team_cmd', 'מפקד צוות')])]);
   const r = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'p', actor: 'רמי' }));
   const mine = r.notifications.filter((n) => n.person === 'דן')[0];
+  assert.ok(mine, 'CALENDAR_CREW_DETAIL_NOTIFICATION_REQUIRED');
   const crewChange = mine.detail.filter((x) => x.kind === CHANGE.CREW_CHANGED)[0];
   assert.ok(crewChange && crewChange.crew.indexOf('גיא') > -1);
 });
@@ -447,10 +466,13 @@ t('אותו מזהה ואותו תוכן — אין פרסום שני ואין �
   const next = plan([row('2026-09-01', 'eilat', 'אילת', [slot('דן', 'team_cmd', 'מפקד צוות'), slot('רון', 'team_cmd', 'מפקד צוות')])]);
   const first = mk().planPublication(publicationInput({ next, previous: P1, publication_id: 'pub_7', actor: 'רמי' }));
   assert.ok(first.notifications.length > 0);
-  const again = mk().planPublication(publicationInput({
-    next, previous: P1, publication_id: 'pub_7', actor: 'רמי',
-    existing_publication: first.publication
-  }));
+  let again;
+  assert.doesNotThrow(() => {
+    again = mk().planPublication(publicationInput({
+      next, previous: P1, publication_id: 'pub_7', actor: 'רמי',
+      existing_publication: first.publication
+    }));
+  }, 'CALENDAR_IDENTICAL_PUBLICATION_RETRY_MUST_SUCCEED');
   assert.strictEqual(again.duplicate, true);
   assert.strictEqual(again.notifications.length, 0);
   assert.strictEqual(again.audit.action, 'publish_duplicate_ignored');
@@ -651,4 +673,5 @@ t('היעדרות כפולה או פגומה — סירוב', () => {
 });
 
 console.log((fails.length ? '✗' : '✓') + ' schedule-publication: ' + pass + '/' + (pass + fails.length));
+mutationReporter.end(fails.length);
 if (fails.length) { fails.forEach((f) => console.log('   ✗ ' + f)); process.exit(1); }

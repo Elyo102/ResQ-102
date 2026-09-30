@@ -1,9 +1,10 @@
+import { createContainedServer } from './lib/localize-worker.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from './lib/contained-playwright.cjs';
 import { FAULT_KINDS, bySubject, faultKind, groupOf, kindHe, needsVehicle } from '../faults.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,7 +23,7 @@ for (const file of ['faults.js', 'faults.html', 'functions/index.js']) {
   assert.equal(read(file).includes('תקלת מבנה'), false, file + ': אין תווית ישנה למשתמש');
 }
 
-const server = http.createServer((request, response) => {
+const server = createContainedServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
   const file = path.resolve(root, '.' + pathname);
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
