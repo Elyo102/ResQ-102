@@ -232,6 +232,8 @@ try {
     await page.waitForFunction(() => document.querySelector('#btnManual') && !document.querySelector('#btnManual').disabled);
     await page.addStyleTag({ content:'#coWrap{display:none!important}' });
     await page.locator('#btnManual').click();
+    await page.locator('#manualDate').waitFor({ state:'visible' });
+    await page.locator('#manualChoose').click();
     await page.locator('#dFullDay').waitFor({ state:'visible' });
     assert.equal(await page.locator('#dStart').inputValue(), '07:00');
     assert.equal(await page.locator('#dEnd').inputValue(), '07:00');
@@ -254,7 +256,9 @@ try {
     console.log('✓ a 24-hour manual report needs an explicit next-day choice');
   }
   {
-    const context = await contextWithPlan({});
+    const context = await contextWithPlan({ mutateMyAttendanceMonth:['b','c'].map(id => ({ data:{
+      operation_id:id.repeat(64), outcome:'recorded', duplicate:false, operation:'fill', changed_count:0
+    } })) });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/attendance.html`, { waitUntil:'load' });
     await page.waitForFunction(() => document.querySelector('#rows tr.sug') &&
@@ -263,22 +267,30 @@ try {
     assert.ok(await page.locator('#rows tr.sug').count() > 0, 'fixture has roster-backed missing days');
     assert.match(await page.locator('#rows tr.sug').first().textContent(), /24/,
       'the suggested row uses the same explicit 24-hour interval');
-    await page.locator('#btnFill').click();
+    await page.locator('#btnView').click();
+    await page.locator('#pSend').click();
     await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
-      .some(call => call.name === 'mutateMyAttendanceMonth'));
+      .some(call => call.name === 'mutateMyAttendanceMonth' && call.payload.operation === 'fill'));
     const fill = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
-      .find(call => call.name === 'mutateMyAttendanceMonth').payload);
+      .find(call => call.name === 'mutateMyAttendanceMonth' && call.payload.operation === 'fill').payload);
     assert.ok(fill.entries.length > 0);
     assert.ok(fill.entries.every(entry => entry.patch.start === '07:00' &&
       entry.patch.end === '07:00' && entry.patch.end_day === 1),
     'all auto-created days have the trusted next-day offset');
+    // This fixture does not persist monthly fills. The unchanged refresh must
+    // require confirmation again, not silently submit an unmaterialized report.
+    await page.waitForFunction(() => document.querySelector('#msg')?.textContent.includes('נדרש אישור מחדש'));
+    assert.equal(await page.evaluate(() => (window.__CALLABLE_CALLS || [])
+      .filter(call => call.name === 'mutateMyAttendanceMonth' && call.payload.operation === 'submit').length), 0);
+    assert.equal(await page.locator('#state').textContent(), 'טרם אושר');
+    await page.locator('#pBack').click();
     await page.waitForFunction(() => document.querySelector('#btnSync') &&
       !document.querySelector('#btnSync').disabled);
     await page.locator('#btnSync').click();
     await page.waitForFunction(() => (window.__CALLABLE_CALLS || [])
-      .filter(call => call.name === 'mutateMyAttendanceMonth').length > 1);
+      .filter(call => call.name === 'mutateMyAttendanceMonth' && call.payload.operation === 'fill').length > 1);
     const sync = await page.evaluate(() => (window.__CALLABLE_CALLS || [])
-      .filter(call => call.name === 'mutateMyAttendanceMonth').at(-1).payload);
+      .filter(call => call.name === 'mutateMyAttendanceMonth' && call.payload.operation === 'fill').at(-1).payload);
     assert.ok(sync.entries.length > 0 && sync.entries.every(entry => entry.patch.end_day === 1),
       'reconciliation uses the same explicit roster-backed interval');
     await context.close();

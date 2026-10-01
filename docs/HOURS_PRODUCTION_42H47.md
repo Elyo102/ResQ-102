@@ -32,13 +32,17 @@ Rollback retains new course-label compatible readers and existing records. Admis
 
 ## Local evidence before release gate
 
-- Ready-report browser: 32/32 in one final run at 375/430 px, including exact-request recovery for lost fill/submit responses, stale views, no-write export and real course rendering.
+- Ready-report browser: 38/38 in one final targeted run at 375/430 px, including exact-request recovery for lost fill/submit responses, stale views, no-write export, real course rendering and truthful draft/submitted/approved export status.
 - Course-entry browser: 18/18 on this production-based tree.
+- Corrected legacy browser fixture: 10/10 in one final targeted run under the network guard. It traverses the date chooser and visible confirmation flow; fixture-local zero-change receipts preserve the no-submit/reconfirmation and explicit 24-hour assertions. Final independent POST review approved the changes.
 - Native course transaction/Rules integration: 6/6 with synthetic identities on `demo-resq` emulator. Expected denied-write logs occurred; this is not a claim of zero emulator log messages.
+- The complete `rules-test` npm test chain exited 0 on the owned local emulator for candidate `12e478d`; later changes are export text, browser fixtures and release-contract validation only. No Rules/backend changes followed that run.
 - Backend course/calculator/rollout/correction/support suites: 152/152 (reviewer run); exact callable wiring 12/12.
 - Version contract: 377 references and 19/19 mutations; provider boundary checks and fresh source receipt passed.
 - Test inventory: 364/364 registered. Existing application test chain retained, with two new browser suites added.
 - Two independent local reviewers approved the ready-report flow and uncertainty recovery. They are not external Claude/Grok provider attestations.
 - Fixed test-fixture mismatches: actual `{data,fence}` envelope, obsolete preparation-step labels, and an asynchronous share-result race. No failing assertion was removed to obtain a pass.
 
-Full clean-tree release gate, physical-device sharing and deployment verification are still pending.
+The full gate on `b8d4fda` reached the broad browser group and stopped at a legacy fixture that skipped the new date chooser. This is not a full-gate PASS or a release attestation. The dedicated 42H.47 release-contract check passed 153/153; it explicitly remains local validation, not production authorization.
+
+Full clean-tree release gate on the final corrected candidate, physical-device sharing and deployment verification are still pending. The existing external 42H.46 deployment adapter is version/target pinned and must not be reused blindly for the twelve-target 42H.47 scope.

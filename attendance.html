@@ -2483,7 +2483,8 @@ function submitPreview(){
   };
   const exportFile = () => {
     requireMonthWrite(previewTarget);
-    const preview = st !== 'approved' || proposed.length > 0;
+    const exportStatus = proposed.length > 0 ? 'draft' : st;
+    const preview = exportStatus === 'draft';
     const rows = saved.map(row => Object.assign({}, row, {
       day_type_he:row.course_overlay === true ? 'קורס' : dayTypeHe(row.day_type),
       site_name:(sites.find(site => site.id === row.sub_station) || {}).name || '',
@@ -2491,8 +2492,9 @@ function submitPreview(){
       reason:row._unconfirmed ? 'לפי הסידור בלבד · טרם אושר' : row.overtime_reason || row.reason || ''
     }));
     const page = reportPage({ full_name:SUBJ.full_name || '', month:previewTarget.month,
-      station_name:SID, status:preview ? 'draft' : st, total:s.hours }, rows);
-    const banner = preview ? '<p style="border:2px solid #b45b00;padding:12px">תצוגה מקדימה · טרם אושר. ימים המסומנים לפי הסידור אינם אישור נוכחות.</p>' : '';
+      station_name:SID, status:exportStatus, total:s.hours }, rows);
+    const banner = preview ? '<p style="border:2px solid #b45b00;padding:12px">תצוגה מקדימה · טרם אושר.' +
+      (proposed.length ? ' ימים המסומנים לפי הסידור אינם אישור נוכחות.' : ' הדוח טרם נשלח לאישור.') + '</p>' : '';
     return new File([page.replace('<body>', '<body>' + banner)],
       'ResQ-hours-' + previewTarget.month + (preview ? '-PREVIEW' : '') + '.html', { type:'text/html' });
   };
