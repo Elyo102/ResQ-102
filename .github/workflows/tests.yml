@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hours47-validation-315e190
+  group: hours47-validation-192d322
   cancel-in-progress: false
 
 defaults:
@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 315e190a5e8a90ee18e645ae7b9147a171fe5d58
+          ref: 192d322a2c660668ea1a1198ff8ab96fb1bd160e
           persist-credentials: false
 
       - name: Prove frozen product checkout independently of the control workflow
@@ -57,7 +57,7 @@ jobs:
           export RESQ_CI_SCRATCH="$(realpath "$RESQ_CI_SCRATCH")"
           printf 'RESQ_CI_SCRATCH=%s\nTMPDIR=%s\n' "$RESQ_CI_SCRATCH" "$RESQ_CI_SCRATCH" >> "$GITHUB_ENV"
           printf 'scratch=%s\n' "$RESQ_CI_SCRATCH" >> "$GITHUB_OUTPUT"
-          test "$(git rev-parse HEAD)" = 315e190a5e8a90ee18e645ae7b9147a171fe5d58
+          test "$(git rev-parse HEAD)" = 192d322a2c660668ea1a1198ff8ab96fb1bd160e
           test -z "$(git status --porcelain)"
           printf 'product_sha=%s\nproduct_tree=%s\ncontrol_workflow_sha=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_SHA" | tee "$RESQ_CI_SCRATCH/product-app.txt"
 
@@ -97,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hours47-app-315e190-${{ github.run_id }}
+          name: hours47-app-192d322-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 7
           path: |
@@ -118,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 315e190a5e8a90ee18e645ae7b9147a171fe5d58
+          ref: 192d322a2c660668ea1a1198ff8ab96fb1bd160e
           persist-credentials: false
 
       - uses: actions/setup-node@v4
@@ -134,7 +134,7 @@ jobs:
           export RESQ_EMULATOR_CONFIG="$RESQ_CI_SCRATCH/emulators.json"
           printf 'RESQ_CI_SCRATCH=%s\nTMPDIR=%s\nRESQ_EMULATOR_CONFIG=%s\n' "$RESQ_CI_SCRATCH" "$RESQ_CI_SCRATCH" "$RESQ_EMULATOR_CONFIG" >> "$GITHUB_ENV"
           printf 'scratch=%s\n' "$RESQ_CI_SCRATCH" >> "$GITHUB_OUTPUT"
-          test "$(git rev-parse HEAD)" = 315e190a5e8a90ee18e645ae7b9147a171fe5d58
+          test "$(git rev-parse HEAD)" = 192d322a2c660668ea1a1198ff8ab96fb1bd160e
           test -z "$(git status --porcelain)"
           test -s storage.rules
           test "$(git hash-object storage.rules)" = 768db12457025ee5b72cc5e8db692dfecf40ddbe
@@ -260,7 +260,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hours47-rules-315e190-${{ github.run_id }}
+          name: hours47-rules-192d322-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 7
           path: |
