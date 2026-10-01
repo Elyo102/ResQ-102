@@ -85,6 +85,7 @@ const costBillingReaderModule = require('./cost-billing-reader');
 const costCompletionOutboxModule = require('./cost-completion-outbox');
 const { defineSecret: defineCostUsageSecret } = require('firebase-functions/params');
 const RESQ_COST_USAGE_HASH_KEY = defineCostUsageSecret('RESQ_COST_USAGE_HASH_KEY');
+const RESQ_METRICS_HASH_KEY = defineCostUsageSecret('RESQ_METRICS_HASH_KEY');
 const scheduleQualificationsModule = require('./schedule-qualifications');
 const homeCommandCenterModule = require('./home-command-center');
 const formSubmissionsModule = require('./form-submissions');
@@ -780,8 +781,7 @@ exports.listOrganizations = onCall({ enforceAppCheck: true }, req => saasService
 // ---------- מדדים תפעוליים ----------
 //
 // מונים יומיים בלבד, קטלוג אירועים סגור, בלי טקסט חופשי ובלי מזהה אישי.
-// תחנה/ארגון/UID נשמרים כגיבוב; בלי RESQ_METRICS_HASH_KEY הגיבוב הוא
-// sha256 רגיל, והלוח מסמן במפורש "פסאודונים, הפיך במנייה".
+// New metrics require a validated HMAC key; historical unkeyed rows stay readable.
 const metricsSink = metricsSinkModule.createFirestoreMetricsSink({
   db, fieldIncrement: n => FV.increment(n), serverTimestamp: () => FV.serverTimestamp()
 });
@@ -792,9 +792,9 @@ const metricsService = metricsServiceModule.createMetricsService({
   getAuthUser: uid => admin.auth().getUser(uid),
   now: Date.now,
   serverTimestamp: () => FV.serverTimestamp(),
-  hashKey: process.env.RESQ_METRICS_HASH_KEY || ''
+  getHashKey: () => RESQ_METRICS_HASH_KEY.value()
 });
-exports.recordMetrics = onCall({ enforceAppCheck: true }, req => metricsService.recordMetrics(req));
+exports.recordMetrics = onCall({ enforceAppCheck: true, secrets: [RESQ_METRICS_HASH_KEY] }, req => metricsService.recordMetrics(req));
 exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsService.getMetricsDashboard(req));
 
 // ---------- עלות ושימוש (מנהל-על בלבד) ----------

@@ -27,8 +27,9 @@
 
 ```js
 // ---------- מדדים תפעוליים ----------
-// מונים יומיים בלבד. תחנה/ארגון/UID נשמרים כגיבוב; בלי RESQ_METRICS_HASH_KEY
-// הגיבוב הוא sha256 רגיל והלוח מסמן "פסאודונים, הפיך במנייה".
+// New writes require validated HMAC. Historical unkeyed data remains readable.
+const { defineSecret } = require('firebase-functions/params');
+const RESQ_METRICS_HASH_KEY = defineSecret('RESQ_METRICS_HASH_KEY');
 const metricsSinkModule = require('./metrics-sink');
 const metricsServiceModule = require('./metrics-service');
 const metricsSink = metricsSinkModule.createFirestoreMetricsSink({
@@ -41,9 +42,9 @@ const metricsService = metricsServiceModule.createMetricsService({
   getAuthUser: uid => admin.auth().getUser(uid),
   now: Date.now,
   serverTimestamp: () => FV.serverTimestamp(),
-  hashKey: process.env.RESQ_METRICS_HASH_KEY || ''
+  getHashKey: () => RESQ_METRICS_HASH_KEY.value()
 });
-exports.recordMetrics = onCall({ enforceAppCheck: true }, req => metricsService.recordMetrics(req));
+exports.recordMetrics = onCall({ enforceAppCheck: true, secrets: [RESQ_METRICS_HASH_KEY] }, req => metricsService.recordMetrics(req));
 exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsService.getMetricsDashboard(req));
 ```
 
@@ -51,7 +52,8 @@ exports.getMetricsDashboard = onCall({ enforceAppCheck: true }, req => metricsSe
 - `requireAuth` הקיים ב-index.js מחזיר את `req.auth` או זורק `unauthenticated` — זה מה שהשירות מצפה לו.
 - `pruneExpired` **לא** מחובר. כשיוחלט על משימה מתוזמנת:
   `exports.pruneMetrics = onSchedule('every day 03:30', () => metricsService.pruneExpired({}))` — ≤200 מחיקות לריצה.
-- `RESQ_METRICS_HASH_KEY`: מפתח ≥16 תווים (מומלץ 32 בתים hex). מוגדר ב-Secret Manager או ב-`.env` של הפונקציות; לעולם לא בקוד. שינוי מפתח = גיבובים חדשים = היסטוריה ישנה לא מצטרפת (מקובל: הצבירות נגזרות).
+- `RESQ_METRICS_HASH_KEY`: Secret Manager key, 32–4096 UTF-8 bytes, not whitespace-only. Generate cryptographically random material; length validation is not an entropy guarantee. Read lazily only during ingestion. Missing/invalid keys deny new writes without disabling historical reads or unrelated functions. Never log the value.
+- Deployment requires verifying the existing key/version and binding for `recordMetrics`. Do not rotate automatically: rotation changes quota and replay identifiers as well as aggregate identifiers. A previously valid 16–31-byte key needs a separately reviewed migration before rollout; no blind replacement or quota reset.
 
 ## 2. `firestore.rules` — ארבעה בלוקים סגורים
 

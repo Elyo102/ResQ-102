@@ -123,7 +123,8 @@ function build(over) {
     requireAuth: (r) => { if (!r || !r.auth) fail('unauthenticated', 'auth', 'auth'); return r.auth; },
     getAuthUser: async (uid) => AUTH_USERS.get(uid) || null,
     now: () => clock,
-    hashKey: o.hashKey === undefined ? 'test-key-0123456789abcdef' : o.hashKey,
+    hashKey: o.hashKey === undefined ? 'test-key-0123456789abcdef-0123456789' : o.hashKey,
+    getHashKey: o.getHashKey,
     pickShard: shards ? () => (shards.length ? shards.shift() : 0) : (o.pickShard || (() => 0)),
     serverTimestamp: () => new Date(clock)
   });

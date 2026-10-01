@@ -3,9 +3,8 @@
  *
  * עקרונות:
  * - התחנה נקבעת מה-claims החיים של החשבון בלבד; גוף הבקשה שמכיל תחנה — נדחה.
- * - תחנה, ארגון ו-UID נשמרים כגיבוב בלבד. עם מפתח (RESQ_METRICS_HASH_KEY)
- *   זה HMAC; בלי מפתח זה sha256 רגיל, ואז כל צבירה נושאת `keyed:false` והלוח
- *   מציג "פסאודונים, הפיך במנייה". השכבה אינה טוענת לאנונימיות.
+ * - New scope identifiers require HMAC-SHA256 with a validated server key.
+ *   Historical unkeyed aggregates remain readable and explicitly labeled.
  * - מכסה: 60 קריאות ליום לכל חשבון. מגבלת קרדינליות: עד 60 צבירות חדשות
  *   ליום לכל תחנה. שתיהן נספרות במסמכי `metrics_quota`.
  * - חזרה (replay): אותו request_id עם אותו גוף — `duplicate:true` ללא כתיבה;
@@ -33,15 +32,15 @@ const SCOPE_PREFIX = 'metrics-scope-v1|';
 const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 
-/** גיבוב היקף: HMAC-SHA256 עם מפתח, או sha256 רגיל בלי מפתח (keyed:false). */
+/** Invalid configuration disables ingestion, never the module or historical reads. */
 function createScopeHasher(hashKey) {
   const key = typeof hashKey === 'string' ? hashKey : '';
-  const keyed = key.length >= 16;
+  const bytes = Buffer.byteLength(key, 'utf8');
+  const keyed = bytes >= 32 && bytes <= 4096 && key.trim().length > 0;
   function hashScope(id) {
     const input = SCOPE_PREFIX + String(id);
-    return keyed
-      ? crypto.createHmac('sha256', key).update(input, 'utf8').digest('hex')
-      : crypto.createHash('sha256').update(input, 'utf8').digest('hex');
+    if (!keyed) throw new Error('metrics-key-unavailable');
+    return crypto.createHmac('sha256', key).update(input, 'utf8').digest('hex');
   }
   return Object.freeze({ hashScope, keyed });
 }
@@ -75,7 +74,12 @@ function createMetricsService(deps) {
     if (d[name] === undefined || d[name] === null) throw new TypeError('metrics dependency is required: ' + name);
   }
   const { db, sink, fail, requireAuth, getAuthUser, now } = d;
-  const hasher = createScopeHasher(d.hashKey);
+  function getHasher() {
+    let key;
+    try { key = typeof d.getHashKey === 'function' ? d.getHashKey() : d.hashKey; }
+    catch (_) { key = undefined; } // Never log a secret-provider error or value.
+    return createScopeHasher(key);
+  }
   const pickShard = typeof d.pickShard === 'function' ? d.pickShard : () => crypto.randomInt(SHARD_COUNT);
   const serverTimestamp = typeof d.serverTimestamp === 'function' ? d.serverTimestamp : () => new Date(now());
 
@@ -148,6 +152,8 @@ function createMetricsService(deps) {
   async function recordMetrics(req) {
     const actor = await memberActor(req);
     const input = normalizeRecordInput(req.data);
+    const hasher = getHasher();
+    if (!hasher.keyed) fail('failed-precondition', 'שירות המדדים אינו מוגדר כרגע.', 'metrics-key-unavailable');
     const nowMs = now();
     const day = dayOf(nowMs);
     const organizationId = await organizationOf(actor.station_id);
@@ -299,7 +305,8 @@ function createMetricsService(deps) {
     return Object.freeze({ ok: true, removed, limit, more: keys.length >= limit });
   }
 
-  return Object.freeze({ recordMetrics, getMetricsDashboard, pruneExpired, hashScope: hasher.hashScope, keyed: hasher.keyed });
+  return Object.freeze({ recordMetrics, getMetricsDashboard, pruneExpired,
+    hashScope: id => getHasher().hashScope(id), get keyed() { return getHasher().keyed; } });
 }
 
 module.exports = Object.freeze({

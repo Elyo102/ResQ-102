@@ -46,7 +46,7 @@ check('service and sink never carry identity or free-text fields, and stored doc
   && !/req\.data\.station|input\.station|data\.stationId|token\.stationId/.test(service)
   && !/station_hash: sid|station_hash: actor\.station_id|organization_hash: organizationId\b/.test(service));
 check('service takes the station from live claims via getAuthUser and rejects client station keys', /const sid = typeof live\.stationId === 'string' \? live\.stationId : '';/.test(service) && /rejectStationKeys\(req && req\.data\);/.test(service));
-check('scope hashing is HMAC when keyed and sha256 otherwise, with keyed:false recorded', /createHmac\('sha256', key\)/.test(service) && /createHash\('sha256'\)/.test(service) && (service.match(/keyed: hasher\.keyed/g) || []).length >= 4);
+check('new scope hashing is HMAC only and missing key fails closed', /createHmac\('sha256', key\)/.test(service) && /if \(!hasher\.keyed\) fail\('failed-precondition'/.test(service) && !/createHash/.test(service.slice(service.indexOf('function createScopeHasher'), service.indexOf('function eventsFingerprint'))) && (service.match(/keyed: hasher\.keyed/g) || []).length >= 4);
 check('no analytics vendor or network client in the metrics layer', !/analytics|googleapis|fetch\(|XMLHttpRequest|require\('https?'\)/i.test(service + sink + read('functions/metrics-catalog.js')));
 check('client vocabulary equals the server catalog (codes, results, buckets)', (() => {
   const client = read('metrics-client.js');
@@ -92,7 +92,7 @@ check('retention and caps are the mandated constants', /const RETENTION_DAYS = 9
 check('prune is exported for a future scheduled job and not wired to any schedule here', /pruneExpired/.test(service) && !/onSchedule|pubsub\.schedule/.test(service + sink));
 check('METRICS-WIRING.md documents the paste snippets, cost model and TTL caveat', (() => {
   const doc = read('METRICS-WIRING.md');
-  return /exports\.recordMetrics = onCall\(\{ enforceAppCheck: true \}/.test(doc) && /exports\.getMetricsDashboard = onCall\(\{ enforceAppCheck: true \}/.test(doc)
+  return /exports\.recordMetrics = onCall\(\{ enforceAppCheck: true, secrets: \[RESQ_METRICS_HASH_KEY\] \}/.test(doc) && /exports\.getMetricsDashboard = onCall\(\{ enforceAppCheck: true \}/.test(doc)
     && /RESQ_METRICS_HASH_KEY/.test(doc) && /match \/metrics_daily\/\{id\}/.test(doc) && /match \/shards\/\{shard\}/.test(doc) && /match \/metrics_quota\/\{id\}/.test(doc)
     && /match \/metrics_operations\/\{id\}/.test(doc) && /TTL/.test(doc) && /who: 'super'/.test(doc) && /metrics:test/.test(doc);
 })());
@@ -153,8 +153,8 @@ mustFail('conflict check removed (same id, different body treated as duplicate)'
   mutant('functions/metrics-service.js', "if (operation.fingerprint !== fingerprint) fail('already-exists', 'אותו מזהה בקשה כבר שימש לגוף אחר.', 'request-conflict');", ''), 'functions/metrics-service.test.js');
 mustFail('scope hashing bypassed (raw id stored)',
   mutant('functions/metrics-service.js', '  function hashScope(id) {\n    const input = SCOPE_PREFIX + String(id);', '  function hashScope(id) {\n    return String(id);\n    const input = SCOPE_PREFIX + String(id);'), 'functions/metrics-service.test.js');
-mustFail('keyed flag forced true without a key',
-  mutant('functions/metrics-service.js', 'const keyed = key.length >= 16;', 'const keyed = true;'), 'functions/metrics-service.test.js');
+mustFail('key validation bypassed',
+  mutant('functions/metrics-service.js', 'const keyed = bytes >= 32 && bytes <= 4096 && key.trim().length > 0;', 'const keyed = true;'), 'functions/metrics-service.test.js');
 mustFail('dashboard opened to non-super signed tokens',
   mutant('functions/metrics-service.js', "if (!signed.token || signed.token.super !== true) fail('permission-denied', 'לוח המדדים זמין למנהל-על בלבד.', 'super');", ''), 'functions/metrics-service.test.js');
 mustFail('dashboard trusts the signed super claim without re-reading live claims',

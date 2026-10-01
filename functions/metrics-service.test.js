@@ -59,22 +59,42 @@ const opsOf = (db) => [...db._store.keys()].filter((p) => p.startsWith('metrics_
     await rejects(service.recordMetrics(req('w_disabled', body(1, [event()]))), 'actor-inactive', 'permission-denied');
     await rejects(service.recordMetrics(req('w_nostation', body(1, [event()]))), 'actor-station', 'permission-denied');
   });
-  await check('keyed hashing is HMAC and differs from unkeyed sha256; keyed flag recorded everywhere', async () => {
+  await check('new scope hashing requires HMAC; keyed flag recorded everywhere', async () => {
     const keyed = build({ hashKey: 'k'.repeat(32) });
-    const unkeyed = build({ hashKey: '' });
     const hmac = crypto.createHmac('sha256', 'k'.repeat(32)).update('metrics-scope-v1|eilat').digest('hex');
     const sha = crypto.createHash('sha256').update('metrics-scope-v1|eilat').digest('hex');
     assert.equal(keyed.service.hashScope('eilat'), hmac);
-    assert.equal(unkeyed.service.hashScope('eilat'), sha);
     assert.notEqual(hmac, sha);
     const a = await keyed.service.recordMetrics(req('w1', body(1, [event()])));
-    const b = await unkeyed.service.recordMetrics(req('w1', body(1, [event()])));
-    assert.equal(a.keyed, true); assert.equal(b.keyed, false);
-    assert.equal((await unkeyed.sink.readDaily('2026-09-18', {}))[0].meta.keyed, false);
+    assert.equal(a.keyed, true);
     assert.equal((await keyed.sink.readDaily('2026-09-18', {}))[0].meta.keyed, true);
-    const quota = [...unkeyed.db._store.entries()].find(([p]) => p.startsWith('metrics_quota/'))[1];
-    assert.equal(quota.keyed, false);
-    assert.equal(opsOf(unkeyed.db).map((p) => unkeyed.db._get(p).keyed)[0], false);
+    const quota = [...keyed.db._store.entries()].find(([p]) => p.startsWith('metrics_quota/'))[1];
+    assert.equal(quota.keyed, true);
+    assert.equal(opsOf(keyed.db).map((p) => keyed.db._get(p).keyed)[0], true);
+  });
+  await check('invalid or unavailable key denies ingestion with no database reads or writes', async () => {
+    for (const key of [undefined, null, 123, {}, '', 'k'.repeat(31), ' '.repeat(32), 'k'.repeat(4097)]) {
+      const { service, db, sink } = build({ getHashKey: () => key });
+      const before = JSON.stringify(db._stats);
+      await rejects(service.recordMetrics(req('w1', body(1, [event()]))), 'metrics-key-unavailable', 'failed-precondition');
+      assert.equal(JSON.stringify(db._stats), before);
+      assert.equal(sink.stats.writes, 0);
+      assert.throws(() => service.hashScope('eilat'), /metrics-key-unavailable/);
+    }
+    let calls = 0;
+    const { service, db, sink } = build({ getHashKey: () => { calls++; throw new Error('private-provider-error'); } });
+    assert.equal(calls, 0, 'no secret read during construction');
+    await service.getMetricsDashboard(req('super1', { days: 1 }));
+    assert.equal(calls, 0, 'historical dashboard does not need the secret');
+    await rejects(service.recordMetrics(req('w1', body(1, [event()]))), 'metrics-key-unavailable', 'failed-precondition');
+    assert.equal(calls, 1);
+    assert.equal(db._stats.writes, 0); assert.equal(sink.stats.writes, 0);
+  });
+  await check('HMAC validation uses byte bounds and preserves valid key bytes', async () => {
+    for (const key of ['k'.repeat(32), 'k'.repeat(4096), 'א'.repeat(16), '  ' + 'k'.repeat(32) + '  ']) {
+      const { service } = build({ hashKey: key });
+      assert.equal(service.hashScope('eilat'), crypto.createHmac('sha256', key).update('metrics-scope-v1|eilat').digest('hex'));
+    }
   });
   await check('raw station, organization and uid never appear in any stored document', async () => {
     const { service, db, sink } = build();
@@ -237,8 +257,11 @@ const opsOf = (db) => [...db._store.keys()].filter((p) => p.startsWith('metrics_
     h.setClock(NOW);
   });
   await check('unkeyed aggregates make the dashboard say unkeyed (pseudonymous), never anonymous', async () => {
-    const { service } = build({ hashKey: '' });
-    await service.recordMetrics(req('w1', body(1, [event()])));
+    const { service, sink } = build({ hashKey: '' });
+    sink.write('2026-09-18__login_success__42H.20__' + 'a'.repeat(64), 0, { count: 1, ok: 1 }, {
+      isNew: true, meta: { day: '2026-09-18', event_code: 'login_success', release: '42H.20',
+        station_hash: 'a'.repeat(64), organization_hash: 'none', keyed: false, expires_at: new Date(NOW + 86400000) }
+    });
     const dash = await service.getMetricsDashboard(req('super1', { days: 1 }));
     assert.equal(dash.hash_mode, 'unkeyed'); assert.equal(dash.unkeyed_seen, true);
   });
