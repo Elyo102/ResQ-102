@@ -219,7 +219,8 @@ exports.getMaintenanceDashboard = onCall(MAINTENANCE_OPTIONS, req => maintenance
 exports.setMaintenanceMode = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.setMode(req));
 exports.runMaintenanceAnalysis = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.runAnalysis(req));
 exports.prepareMaintenanceHandoff = onCall(MAINTENANCE_OPTIONS, req => maintenanceService.prepareHandoff(req));
-const courseCredits = courseCreditModule.createCourseCreditService({ db, auth: admin.auth(), HttpsError });
+const courseCredits = courseCreditModule.createCourseCreditService({ db, auth: admin.auth(), HttpsError,
+  readAssignmentBasis: require('./attendance-course-assignment').createCourseAssignmentReader({ db }) });
 const hrHours = hrHoursModule.createHrHoursService({ db, auth: admin.auth(), HttpsError, serverTimestamp: () => FV.serverTimestamp(), readCourseMonth: courseCredits.readCourseMonth });
 exports.getAttendanceCourseMonth = onCall({ enforceAppCheck: true, region: 'europe-west1' }, async req => courseCredits.context(req));
 exports.getHrMonthReports = onCall({ enforceAppCheck: true }, async (req) => hrHours.listMonth(req));

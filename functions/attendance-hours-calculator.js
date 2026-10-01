@@ -117,6 +117,21 @@ function validateAttendanceEdit(record, before) {
     }
   }
 }
+// A correction audit reason does not replace the employee's business reason.
+// Only new/material writes enforce this; historical reads and note-only repairs
+// retain their original calculation contract.
+function validateAttendanceWriteReason(record, before) {
+  if (record.day_type !== 'swap') return;
+  const fields = ['day_type','shape','start','end','end_day','start2','end2','end_day2','sub_station','overtime_reason'];
+  const equivalent = (value, key) => value[key] === undefined
+    ? (key === 'shape' ? 'regular' : key === 'end_day2' ? 0
+      : ['start2','end2','sub_station','overtime_reason'].includes(key) ? '' : undefined)
+    : value[key];
+  if (before && !fields.some(key => equivalent(record,key) !== equivalent(before,key))) return;
+  if (typeof record.overtime_reason !== 'string' || !record.overtime_reason.trim()) {
+    throw new TypeError('החלפה לצורכי מערכת מחייבת נימוק בדיווח.');
+  }
+}
 // Called only by trusted write paths, never on read, submit or month recalculate.
 function stampReserveCalculationVersion(record, before) {
   if (record.day_type !== 'reserve_shift') { delete record.reserve_calculation_version; return record; }
@@ -167,5 +182,5 @@ function assertCourseDayCompatible(course, date, candidate) {
   if (course && course.days && Object.prototype.hasOwnProperty.call(course.days, date)
       && candidate && candidate.day_type !== 'regular') throw new TypeError('Approved course must be revised by HR before changing this absence');
 }
-module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit,
+module.exports = Object.freeze({ calcHours, dayTypeHe, reasonWhy, calculateAttendanceDerived, validateAttendanceEdit, validateAttendanceWriteReason,
   stampReserveCalculationVersion, projectCourseHours, assertCourseDayCompatible });

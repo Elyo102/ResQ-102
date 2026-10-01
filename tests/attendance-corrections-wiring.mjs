@@ -26,7 +26,7 @@ const registration = one(/let attendanceCorrections;[\s\S]*?exports\.correctAtte
   'one correction registration block');
 const supportRegistration = one(/function getAttendanceCorrectionSupport\(\) \{[\s\S]*?exports\.getAttendanceCorrectionAudit = onCall\([\s\S]*?getAudit\(req\)\);/g,
   'one correction support registration block');
-one(/^const courseCredits = courseCreditModule\.createCourseCreditService\(\{ db, auth: admin\.auth\(\), HttpsError \}\);$/gm,
+one(/^const courseCredits = courseCreditModule\.createCourseCreditService\(\{ db, auth: admin\.auth\(\), HttpsError,\n  readAssignmentBasis: require\('\.\/attendance-course-assignment'\)\.createCourseAssignmentReader\(\{ db \}\) \}\);$/gm,
   'one trusted course service initializer');
 
 class HttpsError extends Error {}

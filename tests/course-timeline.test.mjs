@@ -11,6 +11,11 @@ for(const count of [9,10,11])test('approved original cycle count '+count+' has n
   assert.equal(model.full_count,count);assert.equal(model.full_hours,count*20);assert.equal(model.days.length,33);
   assert.equal(model.days.filter(d=>d.credit_hours!==null).length,count);assert.equal(JSON.stringify(value),before);
 });
+test('assigned schedule provenance accepts only the exact server version and preserves credits',()=>{
+  const value={...snapshot(),source_label:'assigned-schedule-at-hr-approval-v2'};
+  assert.equal(validateCourseSnapshot(value),value);assert.equal(courseTimelineModel(value).full_hours,200);
+  assert.throws(()=>validateCourseSnapshot({...value,source_label:'assigned-schedule-at-hr-approval-v3'}));
+});
 test('cross-month clipping preserves full period and shows only approved work dates',()=>{
   const model=courseTimelineModel(snapshot(11),'2026-10');
   assert.equal(model.full_count,11);assert.equal(model.count,1);assert.equal(model.hours,20);

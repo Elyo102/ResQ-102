@@ -418,11 +418,12 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 <script type="module">
 import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h30';
 import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h30';
+import { createCourseEntry, mountManualDateChooser } from './attendance-course-entry.js?v=42h30';
 import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h30';
 import { subStationAvailable } from './stations.js?v=42h30';
 import { renderNav, renderStuckNav } from './nav.js?v=42h30';
 import { MEMBER_ROLES } from './roles.js?v=42h30';
-import { initPWA } from './pwa.js?v=42h30';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h30';
 import { watchCallouts } from './callout.js?v=42h30';
 import { errorText, logError } from './error-text.js?v=42h30';
 import { crewOnDate, swapEffect, overrideOn,
@@ -466,6 +467,17 @@ const callGetMyAttendanceMonth = httpsCallable(fns, 'getMyAttendanceMonth');
 const callMutateMyAttendanceMonth = httpsCallable(fns, 'mutateMyAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
+const callCreateCourseRequest = httpsCallable(fns, 'createHrRequest');
+const mountCourseEntry = createCourseEntry({ capture: captureMonthWrite, current: target =>
+  !!target && !!ME && !!SUBJ && auth.currentUser?.uid === ME.uid && target.viewer === ME.uid &&
+  target.uid === SUBJ.uid && target.sid === SID && target.auth === authGeneration && target.lifecycle === lifecycleGeneration,
+  currentView: sameMonthWrite,
+  send: async payload => (await callCreateCourseRequest(payload)).data });
+registerPwaUpdateGuard(() => mountCourseEntry.updateGuard());
+function openCourseRequest(key){
+  if (onOther() || locked()) return;
+  mountCourseEntry($('dlg'), key, closeOv); openOv();
+}
 
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
@@ -1590,9 +1602,12 @@ $('btnStop').onclick = async () => {
 
 $('btnManual').onclick = () => {
   if (onOther()) { msg('דיווח ידני יש לפתוח דרך שורת היום המתועדת.', 'err'); return; }
-  const now = new Date();
-  editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
-          records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
+  if (locked() || !monthDataReady) return;
+  const target = captureMonthWrite();
+  mountManualDateChooser($('dlg'), { month: target.month, today: localToday(),
+    current: () => sameMonthWrite(target), choose: key => editDay(key, records[key]),
+    course: openCourseRequest, cancel: closeOv });
+  openOv();
 };
 
 // ---------- תיקון וחישוב מחדש ----------
@@ -1800,7 +1815,7 @@ function editDay(key, rec){
   const types = DAY_TYPES.filter(t => t.id !== 'reserve_shift' || canSelectReserveShift(rec?.day_type)).map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
     '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
-    '</option>').join('');
+    '</option>').join('') + (!onOther() ? '<option value="course">קורס · בקשה לתקופה באישור HR</option>' : '');
   const shapes = SHAPES.map(s =>
     '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
     '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
@@ -1818,6 +1833,7 @@ function editDay(key, rec){
       : (key < localToday() ? '<p class="retro retro-note">היום הזה כבר עבר. הדיווח יסומן כרטרואקטיבי.</p>' : '')) +
     '<div class="hint" id="dHint"></div>' +
     '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
+    (!onOther() ? '<button type="button" class="btn" id="dCourseRequest">קורס · בקשה לתקופה באישור HR</button>' : '') +
 
     '<div id="dTimes">' +
       '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
@@ -1864,6 +1880,10 @@ function editDay(key, rec){
       '<button type="button" class="btn" id="dCancel">ביטול</button>' +
     '</div>';
   openOv();
+
+  if ($('dCourseRequest')) $('dCourseRequest').onclick = () => {
+    if (sameMonthWrite(editTarget)) openCourseRequest(key);
+  };
 
   // הצורה קובעת את חישוב היממות, ולא ניחוש מהשעות.
   //
@@ -1962,6 +1982,7 @@ function editDay(key, rec){
 
   ['dShape','dSite','dReserveEndDay'].forEach(id => { $(id).onchange = sync; });
   $('dType').onchange = () => {
+    if ($('dType').value === 'course') { if (sameMonthWrite(editTarget)) openCourseRequest(key); return; }
     if ($('dType').value === 'reserve_shift') {
       $('dShape').value = 'regular';
       $('dStart').value = '07:00'; $('dEnd').value = '07:00';
@@ -1975,6 +1996,7 @@ function editDay(key, rec){
 
   $('dSave').onclick = async () => {
     if (!sameMonthWrite(editTarget)) return;
+    if ($('dType').value === 'course') { openCourseRequest(key); return; }
     const cur = current();
     const t   = cur.day_type;
     const sh  = cur.shape;

@@ -33,7 +33,7 @@ async function local(suffix,body){
  if(!response.ok){lastRejection={status:response.status,message:JSON.parse(text)?.error?.message?.slice(0,1200)};const e=Error('LOCAL_REJECTED');e.status=response.status;throw e;}return JSON.parse(text);
 }
 async function seed(mutate=()=>{}){
- await environment.clearFirestore();uid=PRINCIPAL;authTime=undefined;
+ await environment.clearFirestore();uid=PRINCIPAL;authTime=Math.floor(Date.now()/1000)-60;
  store=budgetFixture({now:Date.now(),authorizationId:'rules-grant-'+(++count)});claim=store.authorizationId;mutate(store);
  await environment.withSecurityRulesDisabled(async c=>{for(const [path,value]of store.docs)await setDoc(doc(c.firestore(),path),Object.fromEntries(Object.entries(value.fields).map(([k,v])=>[k,decode(v)])));});
  await environment.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'private_budget_publishers/'+PRINCIPAL),{enabled:true,revokedAfter:0}));

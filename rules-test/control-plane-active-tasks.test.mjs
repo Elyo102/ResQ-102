@@ -39,7 +39,7 @@ await check('artifact = live f30d3d85 bytes + active-tasks block before the deny
  assert.equal((text.match(/match \/active_tasks\//g)||[]).length,1);assert.equal((text.match(/match \/task_listeners\//g)||[]).length,1);
  assert.ok(text.lastIndexOf('match /{document=**}')>text.indexOf('match /task_listeners/'));
  // The committed diff vs the live capture adds lines only (no live line removed or changed).
- const diff=read('control-plane/deploy/firestore-active-tasks.diff').toString('utf8');
+ const diff=read('control-plane/deploy/firestore-active-tasks.diff').toString('utf8').replace(/\r\n/g,'\n');
  assert.match(diff,/^--- live\/f30d3d85\/source-0\.rules\n\+\+\+ control-plane\/deploy\/firestore\.control-plane\.rules\n/);
  const body=diff.split('\n').slice(2).filter(l=>l&&!l.startsWith('@@'));
  assert.equal(body.filter(l=>l.startsWith('-')).length,0);assert.equal(body.filter(l=>l.startsWith('+')).length,block.toString('utf8').trimEnd().split('\n').length);

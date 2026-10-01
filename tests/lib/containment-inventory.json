@@ -31,6 +31,16 @@
       "child": 0
     },
     {
+      "file": "tests/attendance-course-entry-browser.mjs",
+      "imports": [
+        "./lib/contained-playwright.cjs"
+      ],
+      "launch": 1,
+      "context": 2,
+      "server": 0,
+      "child": 0
+    },
+    {
       "file": "tests/attendance-shadow-browser.mjs",
       "imports": [
         "./lib/contained-playwright.cjs"

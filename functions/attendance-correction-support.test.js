@@ -768,6 +768,20 @@ test('employee fill derives rows server-side and exact replay creates nothing tw
   const writes = f.db.metrics.writes, replay = await f.selfApi().mutateMonth(f.selfReq(data));
   assert.equal(replay.duplicate, true); assert.equal(f.db.metrics.writes, writes);
 });
+
+test('self save and fill reject missing swap reason without partial writes', async () => {
+  const f = fixture(), day = f.month + '-02';
+  f.db.seed(f.reportPath, { uid:f.uid, emp_number:f.emp, month:f.month, status:'draft' });
+  f.row(undefined, { status:'draft' });
+  const patch = { day_type:'swap', start:'08:00', end:'16:00', end_day:0, sub_station:'', overtime_reason:' ' };
+  const before = f.db.dump();
+  await assert.rejects(f.selfApi().mutateDay(f.selfReq({ date:day, operation:'save', expected_version:'absent', request_id:'reason_save_001', patch })), e => e.code === 'invalid-argument' && /נימוק/.test(e.message));
+  assert.deepEqual(f.db.dump(), before);
+  await assert.rejects(f.selfApi().mutateMonth(f.selfReq({ month:f.month, operation:'fill', request_id:'reason_fill_001', entries:[{date:day,patch}] })), e => e.code === 'invalid-argument' && /נימוק/.test(e.message));
+  assert.deepEqual(f.db.dump(), before);
+  await f.selfApi().mutateDay(f.selfReq({ date:day, operation:'save', expected_version:'absent', request_id:'reason_save_002', patch:{...patch,overtime_reason:'כיסוי משמרת חסרה'} }));
+  assert.equal(f.db.value(f.path(day)).hours, 8);
+});
 test('employee recalculate submit and unsubmit are CAS-bound atomic month actions', async () => {
   const f = fixture(), day = f.month + '-01';
   f.db.seed(f.reportPath, { uid: f.uid, emp_number: f.emp, month: f.month, status: 'draft' });

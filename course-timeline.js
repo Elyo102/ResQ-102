@@ -6,7 +6,7 @@ export function validateCourseSnapshot(value) {
     ||!validDate(value.from_date)||!validDate(value.to_date)||value.from_date>value.to_date
     ||(Date.parse(value.to_date)-Date.parse(value.from_date))/86400000>=400
     ||!['owner_uid','employee_number','crew','role'].every(k=>typeof value[k]==='string'&&value[k].length>0)
-    ||value.source_label!=='original-crew-cycle-at-hr-approval'||!/^[a-f0-9]{64}$/.test(value.source_digest)
+    ||!['original-crew-cycle-at-hr-approval','assigned-schedule-at-hr-approval-v2'].includes(value.source_label)||!/^[a-f0-9]{64}$/.test(value.source_digest)
     ||!Array.isArray(value.days)||value.days.length>400||!Number.isFinite(value.total_hours)||value.total_hours<0)throw new Error('Invalid approved course snapshot');
   let previous='',sum=0;
   for(const day of value.days){
@@ -33,16 +33,20 @@ export function renderCourseTimeline(snapshot,month) {
   const model=courseTimelineModel(snapshot,month),section=document.createElement('section');
   section.className='course-timeline';section.setAttribute('aria-label','ציר זמן קורס מאושר');section.dir='rtl';
   const title=document.createElement('p');title.textContent='קורס מאושר · '+model.from_date+' — '+model.to_date;
-  const summary=document.createElement('p');summary.textContent=model.full_count+' משמרות מקוריות · '+model.full_hours+' שעות תקן מאושרות';
+  const summary=document.createElement('p');summary.textContent=model.full_count+
+    (snapshot.source_label==='assigned-schedule-at-hr-approval-v2'?' משמרות בשיבוץ המאושר · ':' משמרות מקוריות · ')+model.full_hours+' שעות תקן מאושרות';
   if(month)summary.textContent+=' · בחודש המוצג: '+model.count+' משמרות, '+model.hours+' שעות';
   const line=document.createElement('ol');line.style.cssText='display:flex;gap:4px;overflow-x:auto;list-style:none;padding:8px 0;margin:0';
   for(const day of model.days){
     const cell=document.createElement('li'),working=day.credit_hours!==null;
     cell.style.cssText='flex:0 0 auto;min-width:44px;padding:8px;text-align:center;border-radius:6px;'+(working?'background:#ffe3e3;color:#692323;border:1px solid #a73535':'border:1px solid currentColor');
-    cell.textContent=day.date.slice(5);cell.title=day.date+' · '+(working?day.credit_hours+' שעות תקן קורס':'ללא משמרת מקורית מזכה');
+    cell.textContent=day.date.slice(5);cell.title=day.date+' · '+(working?day.credit_hours+' שעות תקן קורס':
+      snapshot.source_label==='assigned-schedule-at-hr-approval-v2'?'ללא שיבוץ מזכה':'ללא משמרת מקורית מזכה');
     cell.setAttribute('aria-label',cell.title);line.append(cell);
   }
-  const note=document.createElement('p');note.textContent='לפי הסבב המקורי שאושר במשאבי אנוש. השיבוץ המקורי נשמר; אין תוספת כפולה על אותן שעות.';
+  const note=document.createElement('p');note.textContent=(snapshot.source_label==='assigned-schedule-at-hr-approval-v2'
+    ?'לפי השיבוץ המאושר שנבדק בעת אישור משאבי אנוש. ':'לפי הסבב המקורי שאושר במשאבי אנוש. ')+
+    'השיבוץ המקורי נשמר; אין תוספת כפולה על אותן שעות.';
   section.append(title,summary,line,note);return section;
 }
 

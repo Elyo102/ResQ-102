@@ -29,6 +29,21 @@ test('exact current day-type vocabulary and Hebrew labels, including unknown pas
   for (const type of browser.DAY_TYPES) assert.equal(actual.dayTypeHe(type.id), type.he);
   for (const unknown of [undefined, null, '', 'unknown', 'constructor']) assert.equal(actual.dayTypeHe(unknown), browser.dayTypeHe(unknown));
 });
+
+test('system-needs swap requires its own business reason on new or material writes only', () => {
+  const row = { day_type:'swap', start:'08:00', end:'16:00', end_day:0, overtime_reason:'' };
+  for (const overtime_reason of [undefined, '', '   ']) {
+    assert.throws(() => actual.validateAttendanceWriteReason({ ...row, overtime_reason }), /נימוק/);
+  }
+  assert.doesNotThrow(() => actual.validateAttendanceWriteReason({ ...row, overtime_reason:'כיסוי משמרת חסרה' }));
+  assert.doesNotThrow(() => actual.validateAttendanceWriteReason({ ...row, notes:'הערה היסטורית' }, row));
+  const historical = { day_type:'swap', start:'08:00', end:'16:00', end_day:0 };
+  assert.doesNotThrow(() => actual.validateAttendanceWriteReason({ ...historical, shape:'regular', start2:'', end2:'', end_day2:0, sub_station:'', overtime_reason:'', notes:'תיקון הערה' }, historical));
+  assert.throws(() => actual.validateAttendanceWriteReason({ ...row, end:'17:00' }, row), /נימוק/);
+  assert.throws(() => actual.validateAttendanceWriteReason(row, { ...row, overtime_reason:'נימוק קודם' }), /נימוק/);
+  assert.equal(actual.calcHours(row, 0), 8, 'historical calculation is unchanged');
+  assert.doesNotThrow(() => actual.validateAttendanceWriteReason({ ...row, day_type:'regular' }));
+});
 test('exhaustive declared type/shape/offset/site/threshold/segment categorical parity', t => {
   const records = [
     {}, { start:'07:00', end:'19:00' }, { start:'19:00', end:'07:00' }, { start:'07:00', end:'07:00' },

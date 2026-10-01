@@ -11,7 +11,7 @@ const { monthKey } = require('./hr-hours-model');
 const { EDITABLE, DERIVED, TARGET_ROLES, COLLECTIONS } = require('./attendance-corrections');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit, stampReserveCalculationVersion, projectCourseHours, assertCourseDayCompatible } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, validateAttendanceWriteReason, stampReserveCalculationVersion, projectCourseHours, assertCourseDayCompatible } = require('./attendance-hours-calculator');
 
 const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
 const plain = v => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -178,6 +178,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           subStationIds: candidate.sub_station ? [candidate.sub_station] : [] });
         try { validateAttendanceEdit(candidate, before); }
         catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+        try { validateAttendanceWriteReason(candidate, before); }
+        catch (error) { fail('invalid-argument', error.message); }
         stampReserveCalculationVersion(candidate, before);
         const output = derived(candidate, config);
         try {
@@ -326,6 +328,8 @@ function createAttendanceSelfService({ db, auth, HttpsError, serverTimestamp,
           catch (error) { fail('failed-precondition', error.message); }
           try { validateAttendanceEdit(candidate, null); }
           catch (_) { fail('invalid-argument', 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+          try { validateAttendanceWriteReason(candidate, null); }
+          catch (error) { fail('invalid-argument', error.message); }
           stampReserveCalculationVersion(candidate, null);
           pending.push({ ...candidate, ...derived(candidate, config) });
         }
