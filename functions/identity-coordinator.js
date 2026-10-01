@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { approvalMailJob } = require('./approval-mail');
+const { appendSecurityAudit } = require('./security-audit');
 
 // Durable identity changes for ResQ.
 //
@@ -1159,6 +1160,7 @@ function createIdentityCoordinator(deps) {
         const mail = approvalMailJob(op, FV.serverTimestamp());
         tx.set(db.doc('mail/' + mail.id), mail.document);
       }
+      appendSecurityAudit(tx, db, op, FV.serverTimestamp());
       tx.set(opRef, completedDocument(op, result, true, now));
       if (op.audit_path) {
         tx.set(db.doc(op.audit_path), {
@@ -1215,6 +1217,7 @@ function createIdentityCoordinator(deps) {
         op.request_generation, opId, false);
 
       if (op.request_id) tx.delete(requestRef(uid));
+      appendSecurityAudit(tx, db, op, FV.serverTimestamp());
       tx.set(opRef, completedDocument(op, result, false, now));
       if (op.audit_path) {
         tx.set(db.doc(op.audit_path), {
@@ -1245,6 +1248,7 @@ function createIdentityCoordinator(deps) {
       if (op.op_id !== opId || op.status !== 'processing' || op.phase !== 'auth_applied') {
         throw recoveryError('אתחול מנהל המערכת אינו מוכן לסיום.');
       }
+      appendSecurityAudit(tx, db, op, FV.serverTimestamp());
       tx.set(ref, completedDocument(op, result, true, now));
       if (op.audit_path) {
         tx.set(db.doc(op.audit_path), {

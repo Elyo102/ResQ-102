@@ -17,8 +17,10 @@ test('missing or empty policy manifests fail closed', () => {
 });
 
 test('retention decisions cover all policies without changing the restore catalogue', () => {
+  const legacy = backupPolicy.DATA_POLICIES.filter(item => item.path !== 'security_audit_events/{eventId}');
+  assert.equal(legacy.length, 182);
   assert.equal(require('node:crypto').createHash('sha256')
-    .update(JSON.stringify(backupPolicy.DATA_POLICIES)).digest('hex'),
+    .update(JSON.stringify(legacy)).digest('hex'),
   '9d9a8f8cba0a65aee5e0f90fbc3c7da2dbb28afd351a05f305a241af54fa5c03');
   for (const item of backupPolicy.DATA_POLICIES) {
     const decision = backupPolicy.getRetentionDecision(item.path);
@@ -38,6 +40,20 @@ test('retention decisions cover all policies without changing the restore catalo
     assert(['declared', 'unresolved'].includes(decision.status));
     assert.equal(Object.hasOwn(item, 'automaticDeletionAuthorized'), false);
   }
+});
+
+test('immutable security audit has one exact private retention classification', () => {
+  const entries = backupPolicy.DATA_POLICIES.filter(item => item.path === 'security_audit_events/{eventId}');
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0], {
+    path: 'security_audit_events/{eventId}', scope: 'root', classification: 'audit_log',
+    monitorPolicy: 'activity', backupPolicy: 'managed_export', restorePolicy: 'restore',
+    sensitivity: 'restricted_identity', retention: 'audit_retention_policy_required',
+    reason: 'Immutable server-owned identity completion evidence; retention requires owner policy and activates no deletion.',
+    humanReadable: 'forbidden'
+  });
+  assert.equal(backupPolicy.getRetentionDecision(entries[0].path).status, 'unresolved');
+  assert.equal(backupPolicy.getRetentionDecision(entries[0].path).automaticDeletionAuthorized, false);
 });
 
 test('unresolved legal and audit policies retain data without invented durations', () => {

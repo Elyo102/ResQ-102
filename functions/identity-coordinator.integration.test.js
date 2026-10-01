@@ -1097,6 +1097,66 @@ async function clearEmulator() {
       'request-reject-r2-0000001');
   });
 
+  await test('immutable completion events cover every identity kind and bootstrap replay', async function () {
+    const uid = 'audit_bootstrap';
+    const fake = new FakeAuth(); fake.seed(uid, {});
+    const service = coordinator(fake);
+    const opId = 'audit-bootstrap-operation';
+    await service.acquireBootstrap({ uid, opId, actorUid:uid,
+      previousClaims:{}, desiredClaims:{super:true},
+      intentFingerprint:stableHash({uid, opId}), auditAction:'bootstrap' });
+    await service.runBootstrap(uid, opId, {ok:true});
+    const first = await db.collection('security_audit_events').get();
+    await service.runBootstrap(uid, opId, {ok:false});
+    const second = await db.collection('security_audit_events').get();
+    assert.equal(second.size, first.size, 'completed replay creates no second event');
+    const kinds = new Set(second.docs.map(doc => doc.data().operation_kind));
+    for (const kind of ['approve','set_role','transfer_station','clear_role','bootstrap']) assert(kinds.has(kind), kind);
+    const keys = second.docs.map(doc => {
+      const value = doc.data();
+      assert.equal(value.schema_version, 1);
+      assert(value.occurred_at instanceof Timestamp);
+      assert.equal(Object.hasOwn(value, 'email'), false);
+      return JSON.stringify([value.operation_kind,value.target_uid,value.operation_id]);
+    });
+    assert.equal(new Set(keys).size, keys.length);
+    const bootstrap = second.docs.map(doc=>doc.data()).find(value=>value.target_uid===uid);
+    assert.equal(bootstrap.before.super, false); assert.equal(bootstrap.after.super, true);
+  });
+
+  await test('audit collision never overwrites history or commits false completion', async function () {
+    const {createSecurityAuditEvent} = require('./security-audit');
+    const uid='audit_collision', opId='audit-collision-operation';
+    const fake=new FakeAuth(); fake.seed(uid,{}); const service=coordinator(fake);
+    const acquired=await service.acquireBootstrap({uid,opId,actorUid:uid,
+      previousClaims:{},desiredClaims:{super:true},intentFingerprint:stableHash({uid,opId}),auditAction:'bootstrap'});
+    const id=createSecurityAuditEvent(acquired.operation,FV.serverTimestamp()).id;
+    const ref=db.doc('security_audit_events/'+id);
+    await ref.create({sentinel:'existing immutable event'});
+    await assert.rejects(service.runBootstrap(uid,opId,{ok:true}));
+    assert.equal((await service.getOperation(uid)).phase,'auth_applied');
+    assert.notEqual((await service.getOperation(uid)).status,'completed');
+    assert.notEqual((await db.doc(acquired.operation.audit_path).get()).data().outcome,'done');
+    assert.deepEqual((await ref.get()).data(),{sentinel:'existing immutable event'});
+  });
+
+  await test('legacy actor is explicitly unknown and completed legacy operations are not backfilled', async function () {
+    const uid='audit_legacy_actor',opId='audit-legacy-actor-operation';
+    const fake=new FakeAuth(); fake.seed(uid,{}); const service=coordinator(fake);
+    await service.acquireBootstrap({uid,opId,actorUid:uid,previousClaims:{},desiredClaims:{super:true},
+      intentFingerprint:stableHash({uid,opId}),auditAction:'bootstrap'});
+    await db.doc('identity_operations/'+uid).update({actor_uid:FV.delete()});
+    await service.runBootstrap(uid,opId,{ok:true});
+    const events=await db.collection('security_audit_events').get();
+    const event=events.docs.map(doc=>doc.data()).find(value=>value.target_uid===uid);
+    assert.equal(event.actor_uid,null); assert.equal(event.actor_attribution,'legacy_missing');
+    const oldUid='audit_old_completed',oldId='audit-old-completed-operation';
+    fake.seed(oldUid,{super:true});
+    await db.doc('identity_operations/'+oldUid).set({op_id:oldId,target_uid:oldUid,kind:'bootstrap',status:'completed',phase:'completed',result:{ok:true}});
+    await service.runBootstrap(oldUid,oldId,{ok:false});
+    assert.equal((await db.collection('security_audit_events').get()).size,events.size);
+  });
+
   console.log('\n' + passed + ' identity coordinator integration checks passed.');
 })().finally(async function () {
   try {

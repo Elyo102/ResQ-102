@@ -687,6 +687,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Immutable identity completion evidence is server-only, including for super.
+    match /security_audit_events/{eventId} {
+      allow read, write: if false;
+    }
+
     // ---------- התחנה ----------
 
     // Private HR data is available only through live-authorized server APIs.
