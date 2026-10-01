@@ -6,10 +6,9 @@
 
 const assert = require('node:assert/strict');
 
-if (!process.env.FIRESTORE_EMULATOR_HOST) {
-  console.error('FIRESTORE_EMULATOR_HOST is required; refusing to run against a real project.');
-  process.exit(2);
-}
+assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/);
+assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq');
+assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
 
 const functions = require('./index');
 const admin = require('firebase-admin');
@@ -23,6 +22,8 @@ const SITE = 'main';
 const today = engine.localDateKey(new Date());
 const month = today.slice(0, 7);
 let passed = 0;
+const TERMS_ACTORS = Object.freeze(['u_super', 'u_hr', 'u_ff']);
+const ownedTerms = [];
 
 function auth(uid, role, superUser) {
   return {
@@ -160,10 +161,23 @@ function assertNoIdentityValues(value) {
 }
 
 async function main() {
+  for (const uid of TERMS_ACTORS) assert.equal((await db.doc('registration_terms_active/' + uid).get()).exists, false);
   await seed();
   const superUser = auth('u_super', '', true);
   const hr = auth('u_hr', 'hr_coordinator', false);
   const firefighter = auth('u_ff', 'firefighter', false);
+  await test('missing Terms consent denies Shadow configuration writes', async function () {
+    const ref = db.doc('config/attendance_shadow_v41');
+    const before = (await ref.get()).data();
+    await rejectsCode('failed-precondition', functions.setAttendanceShadowMode.run({ auth: superUser, data: { mode: 'shadow' } }));
+    assert.deepEqual((await ref.get()).data(), before);
+  });
+  for (const uid of TERMS_ACTORS) {
+    const ref = db.doc('registration_terms_active/' + uid);
+    await ref.create({ uid, consent_key: '1.3|2026-09-24', terms_version: '1.3',
+      privacy_version: '2026-09-24', receipt_path: 'registration_consents/' + uid + '/events/shadow-fixture' });
+    ownedTerms.push(ref);
+  }
 
   await test('only super can enable Shadow mode', async function () {
     await rejectsCode('permission-denied', functions.setAttendanceShadowMode.run({
@@ -412,7 +426,10 @@ async function main() {
   console.log('\n' + passed + ' attendance Shadow integration tests passed');
 }
 
-main().then(function () { process.exit(0); }).catch(function (error) {
+main().finally(async function () {
+  try { for (const ref of ownedTerms) await ref.delete(); }
+  finally { await admin.app().delete(); }
+}).then(function () { process.exit(0); }).catch(function (error) {
   console.error(error && error.stack || error);
   process.exit(1);
 });

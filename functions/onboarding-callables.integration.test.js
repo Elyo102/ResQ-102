@@ -42,6 +42,9 @@ try {
   functions = require('./index');
 } finally { Module._load = load; }
 const db = admin.firestore(), root = db.doc('stations/' + sid);
+const actorTermsRef = db.doc('registration_terms_active/' + actorUid);
+let actorTermsOwned = false;
+let generatedConsentPath = null, generatedConsentOwned = false;
 const owned = ['identity_operations/' + uid, 'registration_requests/' + uid, 'onboarding_assignment_links/' + uid,
   'directory/' + uid, 'emp_index/' + emp, 'emp_reservations/' + emp];
 let inviteId, fixtureValidated = false;
@@ -54,6 +57,17 @@ const call = (name, who, data) => { assert.equal(typeof functions[name]?.run, 'f
     for (const p of owned) assert.equal((await db.doc(p).get()).exists, false, 'fixture target must be absent: ' + p);
     fixtureValidated = true;
     const provisionId = 'provision_' + run, issueId = 'issue_request_' + run, redeemId = 'redeem_request_' + run;
+    assert.equal((await actorTermsRef.get()).exists, false);
+    assert.equal((await db.doc('registration_terms_active/' + uid).get()).exists, false);
+    const initialRecords = structuredClone([...records]);
+    await assert.rejects(call('provisionStation', actorUid, { request_id: provisionId, station_id: sid,
+      district_id: 'south', display_name: 'Synthetic Station', timezone: 'Asia/Jerusalem', template_id: 'fire-station-v1' }),
+      e => e.code === 'failed-precondition');
+    assert.equal((await root.get()).exists, false); assert.equal(grants, 0);
+    assert.deepEqual([...records], initialRecords);
+    await actorTermsRef.create({ uid: actorUid, consent_key: '1.3|2026-09-24', terms_version: '1.3',
+      privacy_version: '2026-09-24', receipt_path: 'registration_consents/' + actorUid + '/events/onboarding-fixture' });
+    actorTermsOwned = true;
     const provision = await call('provisionStation', actorUid, { request_id: provisionId, station_id: sid,
       district_id: 'south', display_name: 'Synthetic Station', timezone: 'Asia/Jerusalem', template_id: 'fire-station-v1' });
     assert.equal(provision.status, 'provisioning');
@@ -63,8 +77,23 @@ const call = (name, who, data) => { assert.equal(typeof functions[name]?.run, 'f
     assert.equal(issued.secret_available, true); assert.ok(issued.secret);
     const replayIssue = await call('issueFirstAdminInvitation', actorUid, issueData);
     assert.equal(replayIssue.secret_available, false); assert.equal('secret' in replayIssue, false);
-    const redeemed = await call('redeemInvitation', uid, { request_id: redeemId, invite_id: inviteId, secret: issued.secret });
+    generatedConsentPath = 'registration_consents/' + uid + '/events/' + redeemId;
+    assert.equal((await db.doc(generatedConsentPath).get()).exists, false);
+    const invitationBefore = (await db.doc('invitations/' + inviteId).get()).data();
+    const deniedTargets = ['registration_requests/' + uid, 'onboarding_assignment_links/' + uid,
+      'stations/' + sid + '/onboarding_operations/' + redeemId, generatedConsentPath];
+    for (const p of deniedTargets) assert.equal((await db.doc(p).get()).exists, false);
+    const authBeforeRedeem = structuredClone([...records]);
+    await assert.rejects(call('redeemInvitation', uid, { request_id: redeemId, invite_id: inviteId, secret: issued.secret }),
+      e => e.code === 'failed-precondition');
+    assert.deepEqual((await db.doc('invitations/' + inviteId).get()).data(), invitationBefore);
+    for (const p of deniedTargets) assert.equal((await db.doc(p).get()).exists, false);
+    assert.deepEqual([...records], authBeforeRedeem); assert.equal(grants, 0);
+    generatedConsentOwned = true;
+    const redeemed = await call('redeemInvitation', uid, { request_id: redeemId, invite_id: inviteId, secret: issued.secret,
+      ack: { terms_version: '1.3', privacy_version: '2026-09-24', marketing_opt_in: false } });
     assert.equal(redeemed.permissions_granted, false); assert.equal(grants, 0);
+    assert.equal((await db.doc('registration_terms_active/' + uid).get()).exists, false);
     const pending = await call('resumeOnboarding', actorUid, { station_id: sid, request_id: redeemId });
     assert.equal(pending.approved, false);
     let r = (await db.doc('registration_requests/' + uid).get()).data();
@@ -101,6 +130,16 @@ const call = (name, who, data) => { assert.equal(typeof functions[name]?.run, 'f
       for (const p of owned) await db.doc(p).delete();
     }
     global.fetch = oldFetch;
+    if (generatedConsentOwned) {
+      const markerRef = db.doc('registration_terms_active/' + uid), marker = await markerRef.get();
+      if (marker.exists) {
+        assert.equal(marker.data().uid, uid); assert.equal(marker.data().receipt_path, generatedConsentPath);
+        await markerRef.delete();
+      }
+      const receiptRef = db.doc(generatedConsentPath), receipt = await receiptRef.get();
+      if (receipt.exists) { assert.equal(receipt.data().uid, uid); await receiptRef.delete(); }
+    }
+    if (actorTermsOwned) await actorTermsRef.delete();
     await Promise.all(admin.apps.map(app => app.delete()));
   }
 })().catch(e => { console.error(e.stack || e); process.exitCode = 1; });
