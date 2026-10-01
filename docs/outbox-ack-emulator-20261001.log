@@ -1,0 +1,18 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-resq", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
++  firestore: Firestore Emulator was started in standard edition.
++  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: node functions/outbox-ack-race.integration.test.js
+Expected values to be strictly equal:
+
+0 !== 1
+
+!  Script exited unsuccessfully (code 1)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator
+
+Error: Script "node functions/outbox-ack-race.integration.test.js" exited with code 1

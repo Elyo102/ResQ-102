@@ -1,54 +1,22 @@
-# ResQ — safe development rules
+# Codex Autonomous Execution Guidelines - ResQ-102
 
-These rules apply to every Codex task in this repository.
+## 🛡️ STRICT SECURITY & SCOPE BOUNDARIES
+1. **PROJECT & SYSTEM TOOL ISOLATION:**
+   - File creation, modification, and deletion are strictly limited to the local ResQ project repository.
+   - **SYSTEM EXEMPTION:** You are explicitly PERMITTED to access and execute global system binaries, paths, and environment tools (Git, Node.js, npm, Firebase CLI, Google Cloud SDK) required to test, compile, and deploy the project.
+   - NEVER access, scan, or read personal user documents, desktop files, or directories unrelated to project build tools.
+2. **DATA & APP PROTECTION:** Zero destructive actions. Protect live services (`station-102`), Firestore schemas, and database documents.
+3. **SECRET SAFETY:** Never print, log, or expose raw API keys, tokens, or Secret Manager payload values in outputs.
 
-## Default workflow
+## 🚀 AUTONOMOUS EXECUTION & PERFORMANCE RULES
+1. **FULL AUTONOMY:** Execute all remaining tasks sequentially to completion. Do NOT pause or stop execution to ask for manual confirmations (such as secret generation, bug fixes, or test reruns).
+2. **SMART CACHING (NO DUPLICATE WORK):** Do NOT re-write or re-test code/modules that have already passed green evidence in previous candidates (e.g., commit 5dd2544). Resume strictly from the latest candidate state.
+3. **NO INFINITE LOOPS & SELF-HEALING:** If local CLI or helper errors (`helper_unknown_error`) occur, automatically retry using local fallbacks/mocks. Never enter infinite retry loops—simplify logic directly if a gate check fails twice.
+4. **ONE-SHOT UNIFIED PROMOTION:** Keep all verified code intact. Execute a SINGLE, UNIFIED live deployment (Firestore Rules & Indexes -> Cloud Functions v2 -> Live Promotion) ONLY when all 57 verification items pass.
 
-- Treat `main` and the Firebase project `station-102` as production.
-- Never work directly on `main`. Create or continue a dedicated branch under `codex/`.
-- Keep changes small and reviewable. Explain the intended change before editing when it affects authentication, authorization, Firestore rules, Cloud Functions, notifications, personal data, or deployment configuration.
-- Before proposing a merge, run the relevant tests and report the exact results and any untested areas.
-- Present the changed-file summary and diff for user review. Do not merge a pull request without explicit user approval.
-
-## Mandatory two-reviewer workflow
-
-- Before each proposed implementation action, two actually connected agents must each perform one independent review of the relevant code, dependencies, data flows, and likely system-wide impact. The reviews must consider regressions, security, privacy, performance, cost, data integrity, and rollback.
-- The agents must compare their conclusions. If they disagree, identify a material risk, or cannot assess the impact with reasonable confidence, stop and present the disagreement, risk, assumptions, and available options to the user before proceeding.
-- If both agents agree that no material risk has been identified and the residual risk is low, notify the user of the agreed scope, expected impact, validation plan, and rollback approach before starting; the implementation action may then proceed without an additional approval.
-- Validation must be proportionate to risk and include relevant automated tests plus targeted end-to-end or emulator checks when applicable. Never promise zero risk or absolute certainty; report failures, untested areas, assumptions, and residual risks.
-- Notify the user when work starts. When work finishes, report the changes, exact test results, failures, untested areas, and remaining risks.
-- A single explicit user approval may authorize one complete, predefined workflow, including only the implementation, validation, commit, push, and pull-request steps listed in the approval request. The request must state the scope, branch and other targets, planned actions, validation gates, known risks, and stopping conditions. Approval does not extend to omitted steps.
-- User instruction (2026-09-08): failed validation automatically authorizes corrective changes and reruns within the already approved workflow, without renewed approval solely because a test failed. Continue this repair-and-validation cycle toward deployment; retain the two-reviewer comparison and report actual results. Stop and request renewed approval for material changes to scope, target, planned actions, risk, or rollback assumptions, or a new material reviewer concern. This exception does not grant additional production permissions.
-- Merge to `main`, deploy, and every production action are excluded unless each is explicitly included in advance and the approval request names the exact production target and action, released commits or diff, required validation, known risks, and rollback plan.
-- Never state that Claude or any named external reviewer inspected or approved work unless that reviewer was actually connected and performed the review. If a second reviewer is unavailable, stop before implementation and tell the user.
-
-## Production boundary
-
-Approval for a workflow does not authorize merge to `main`, deployment, or any production change unless those steps were explicitly listed in advance and the production approval requirements below were fully satisfied.
-
-Do not run any command or action that can change production without explicit production approval, whether granted separately or explicitly included in advance in an approved workflow. The approval must name the production action. This includes, but is not limited to:
-
-- `firebase deploy` (including partial deploys of hosting, functions, rules, or indexes)
-- writes or migrations against the `station-102` Firebase project
-- changing production secrets, environment variables, IAM, authentication users, App Check, FCM, or billing
-- merging to `main`, publishing a release, or triggering a production deployment workflow
-
-Before requesting production approval, state:
-
-1. the exact command or action;
-2. the target project and services;
-3. the commits or diff being released;
-4. completed validation and known risks;
-5. the rollback plan.
-
-Approval is single-use and limited to the complete workflow and steps described. Failed validation permits corrective changes and reruns within that approved workflow without asking again. If the scope, target, planned production action, material risk, or rollback assumptions change, stop and ask again. Production actions remain subject to the exact approval requirements above.
-
-## Validation
-
-- Application/release checks: `cd tests && npm run release:validate`. This runs
-  the full `all` gate and writes a short-lived attestation bound to the exact
-  clean Git tree, Node 22 runtime, and release dependency/configuration files.
-  Ordinary development checks may still use `npm run all`; a production
-  Functions release must not reuse an attestation for a different tree.
-- Firestore rules: `firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"`
-- Prefer a demo project ID for emulator-only checks so validation cannot target production accidentally.
+## 📊 MANDATORY STATUS REPORTING
+In every response, always provide:
+- Estimated Real Development Progress (%)
+- Formal Gate Readiness Status (X/57)
+- Current Working Commit Hash
+- Next Immediate Action

@@ -9685,7 +9685,7 @@ function createScheduleRuntime(deps) {
         error.code = 'NO_ACTIVE_PUSH_TOKEN';
         throw error;
       }
-      await outcomeTransaction(async (tx) => {
+      const acknowledged = await outcomeTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
         if (live.status === 'sending' && live.lease_token === claimed.lease_token) {
@@ -9694,8 +9694,13 @@ function createScheduleRuntime(deps) {
             delivered_devices: Number(delivery.sent),
             lease_token: null, lease_until: null
           });
+          return true;
         }
+        return false;
       });
+      if (acknowledged !== true) return { sent: false, provider_accepted: true,
+        acknowledged: false, status: 'provider-accepted-unacknowledged',
+        delivery_semantics: 'at-least-once' };
       return { sent: true };
     } catch (error) {
       const publication = createPublication({
@@ -10147,10 +10152,10 @@ function createScheduleRuntime(deps) {
         error.code = 'NO_ACTIVE_PUSH_TOKEN';
         throw error;
       }
-      await db.runTransaction(async (tx) => {
+      const acknowledged = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const value = snap.exists ? (snap.data() || {}) : {};
-        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return;
+        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return false;
         tx.update(ref, {
           status: 'sent',
           sent_at: FV.serverTimestamp(),
@@ -10159,7 +10164,11 @@ function createScheduleRuntime(deps) {
           lease_token: null,
           lease_until: null
         });
+        return true;
       });
+      if (acknowledged !== true) return { sent: false, provider_accepted: true,
+        acknowledged: false, status: 'provider-accepted-unacknowledged',
+        delivery_semantics: 'at-least-once' };
       return { sent: true };
     } catch (error) {
       const nextAttempt = Number(claimed.attempt || 0) + 1;
