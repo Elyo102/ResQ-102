@@ -53,13 +53,18 @@ function createControlledRuntime({deps,api,createRuntime,resolveContext,verifySi
   };
   result.resumeOutbox=async()=>{
     const jobs=new Map();
+    // Allocation reuse only within this invocation. Selection is still read
+    // for every job and transaction fences remain bound to its exact digest.
+    const runtimes=new Map();
     for(const status of ['retry','sending','queued','blocked']){
       const found=await raw.collectionGroup('schedule_outbox').where('status','==',status).limit(100).get();
       found.docs.forEach(doc=>jobs.set(doc.ref.path,doc));
     }
     let queued=0;
     for(const doc of jobs.values()){
-      const sid=validateOutbox(doc.ref,doc.data()),selected=await control.select(sid),runtime=selectedRuntime(selected);
+      const sid=validateOutbox(doc.ref,doc.data()),selected=await control.select(sid),key=C.stable(selected);
+      if(!runtimes.has(key))runtimes.set(key,selectedRuntime(selected));
+      const runtime=runtimes.get(key);
       const state=await runtime.reconcileMonthControlledOutbox(doc.ref,Date.parse(deps.clock()));
       if(state.queued)queued++;
       if(state.deliver)await runtime.deliverOutbox(doc.ref);

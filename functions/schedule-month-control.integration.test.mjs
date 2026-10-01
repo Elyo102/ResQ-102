@@ -1,7 +1,101 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import controlledModule from './schedule-month-control-runtime.js';
 import {createFakeDb,buildRuntime,seed,req,ST,SHEET} from '../tests/_schedule-fake.mjs';
 const SID=ST.split('/')[1],RELEASE='42H.19.1';
+// Real control selector/transaction proxy with synthetic storage and counted
+// runtime allocation. This does not simulate provider delivery or Firestore races.
+function allocationFixture(stations, beforeReconcile=()=>{}){
+  const db=createFakeDb(),built=[],seen=[],selections=[];
+  const originalTransaction=db.runTransaction;
+  db.runTransaction=async fn=>{
+    let rootReads=0;
+    const result=await originalTransaction(async tx=>fn(new Proxy(tx,{get(target,key){
+      if(key==='get')return async ref=>{
+        if(ref.path?.endsWith('/publication_authority'))rootReads++;
+        return target.get(ref);
+      };
+      return target[key];
+    }})));
+    selections.push(rootReads);return result;
+  };
+  stations.forEach((sid,i)=>db._put('stations/'+sid+'/schedule_publications/p/schedule_outbox/j'+String(i).padStart(3,'0'),
+    {station_id:sid,publication_id:'p',status:'queued'}));
+  db.collectionGroup=name=>({where(field,op,status){
+    assert.equal(name,'schedule_outbox');assert.equal(field,'status');assert.equal(op,'==');
+    return {limit(max){return {async get(){
+      const paths=db._paths('stations/').filter(p=>p.includes('/schedule_outbox/') && db._get(p).status===status).slice(0,max);
+      return {docs:await Promise.all(paths.map(p=>db.doc(p).get()))};
+    }};}};
+  }});
+  const rt=controlledModule.createControlledRuntime({
+    deps:{db,clock:()=> '2026-10-01T00:00:00.000Z',monthAuthorityReleaseId:RELEASE},
+    api:{},resolveContext:async()=>{throw Error('not a request');},
+    translateError:e=>e,
+    createRuntime:deps=>{
+      const id=built.length;built.push(deps);
+      return {
+        async reconcileMonthControlledOutbox(ref){
+          await beforeReconcile({db,ref,id,ordinal:seen.length});
+          await deps.db.runTransaction(async tx=>{await tx.get(ref);});
+          seen.push({id,path:ref.path});return {queued:false,deliver:false};
+        },
+        async deliverOutbox(){throw Error('delivery not expected');}
+      };
+    }
+  });
+  return {db,rt,built,seen,selections};
+}
+function monthlyState(db,sid,activation='a'){
+  db._put('stations/'+sid+'/schedule_state/publication_authority',
+    {schema_version:1,station_id:sid,migrated:true,generation:1,last_operation_id:'operation',seed_publication_id:null});
+  db._put('stations/'+sid+'/schedule_state/publication_authority_control',
+    {schema_version:1,station_id:sid,enabled:true,release_id:RELEASE,activation_id:activation.repeat(64),
+      activated_by:'synthetic',activated_at:'2026-10-01T00:00:00.000Z'});
+}
+test('100 identical selections reuse one runtime but read selection and transaction fence for every job',async()=>{
+  const f=allocationFixture(Array(100).fill('one'));
+  assert.deepEqual(await f.rt.resumeOutbox(),{scanned:100,queued:0});
+  assert.equal(f.built.length,1);assert.equal(f.seen.length,100);
+  assert.equal(f.selections.length,200);assert.ok(f.selections.every(n=>n===1));
+  await f.rt.resumeOutbox();assert.equal(f.built.length,2);
+  assert.ok(f.seen.slice(100).every(row=>row.id===1),'next invocation has fresh runtime');
+});
+test('different station selections never share a runtime',async()=>{
+  const f=allocationFixture(['one','two']);
+  await f.rt.resumeOutbox();assert.equal(f.built.length,2);
+  assert.deepEqual(f.built.map(d=>d.monthAuthorityEnabled),[false,false]);
+});
+test('a changed selection mode creates a fresh runtime within the same invocation',async()=>{
+  const f=allocationFixture(['one','one']);
+  // Change after the first reconciliation has completed, before the next selection.
+  const original=f.db.runTransaction;let transactions=0;
+  f.db.runTransaction=async fn=>{
+    const result=await original(fn);
+    if(++transactions===2)monthlyState(f.db,'one','b');
+    return result;
+  };
+  await f.rt.resumeOutbox();assert.equal(f.built.length,2);
+  assert.deepEqual(f.built.map(d=>d.monthAuthorityEnabled),[false,true]);
+});
+test('a reused runtime still rejects authority changes between selection and transaction',async()=>{
+  const f=allocationFixture(['one','one'],({db,ordinal})=>{
+    if(ordinal===1)monthlyState(db,'one','c');
+  });
+  await assert.rejects(()=>f.rt.resumeOutbox(),/authority-selection-changed/);
+  assert.equal(f.built.length,1);assert.equal(f.seen.length,1);
+});
+test('same station and mode with changed control digest constructs a fresh runtime',async()=>{
+  const f=allocationFixture(['one','one']);monthlyState(f.db,'one','a');
+  const original=f.db.runTransaction;let transactions=0;
+  f.db.runTransaction=async fn=>{
+    const result=await original(fn);
+    if(++transactions===2)monthlyState(f.db,'one','b');
+    return result;
+  };
+  await f.rt.resumeOutbox();assert.equal(f.built.length,2);
+  assert.deepEqual(f.built.map(d=>d.monthAuthorityEnabled),[true,true]);
+});
 function activation(){const r=req({station_id:SID,expected_release_id:RELEASE});r.auth.token.super=true;r.auth.token.auth_time=1787637600;return r;}
 function superRequest(data={}){const r=activation();r.data=data;return r;}
 async function fixture(hooks={}){const db=createFakeDb(),rt=buildRuntime(db,{monthAuthorityEnabled:true,monthAuthorityControlEnabled:true,monthAuthorityReleaseId:RELEASE,
