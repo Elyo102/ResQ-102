@@ -722,6 +722,46 @@ t('אפס נגיעה במסד וברשת', () => {
   assert.strictEqual(/Date\.now\(\)/.test(src), false);
 });
 
+/* Exact calendar dates, independent of device timezone and DST. */
+for (const date of ['2026-02-29','2026-02-30','2026-04-31','2026-00-01',
+  '2026-13-01','2026-2-03','1900-02-29']) {
+  t('impossible calendar date rejected in single and range: ' + date, () => {
+    const {service,engine}=build(),plan=engine.planPeriod(REQ);
+    throwsCode(()=>service.buildStationSchedule({actor:FIREFIGHTER,plan,date}),'bad-date');
+    throwsCode(()=>service.buildStationScheduleRange({
+      actor:FIREFIGHTER,plan,dates:['2026-09-01',date]
+    }),'bad-date');
+  });
+}
+for (const [date,previous,next] of [
+  ['2024-02-29','2024-02-28','2024-03-01'],
+  ['2000-02-29','2000-02-28','2000-03-01'],
+  ['1900-03-01','1900-02-28','1900-03-02'],
+  ['2026-12-31','2026-12-30','2027-01-01'],
+  ['2026-01-01','2025-12-31','2026-01-02'],
+  ['2026-03-27','2026-03-26','2026-03-28'],
+  ['2026-10-25','2026-10-24','2026-10-26']
+]) {
+  t('exact leap/month/year/DST calendar neighbors: '+date,()=>{
+    const {service,engine}=build(),plan=engine.planPeriod(REQ);
+    const single=service.buildStationSchedule({actor:FIREFIGHTER,plan,date});
+    const [ranged]=service.buildStationScheduleRange({actor:FIREFIGHTER,plan,dates:[date]});
+    assert.deepStrictEqual(ranged,single);
+    assert.deepStrictEqual([single.previous_day.date,single.day.date,single.next_day.date],
+      [previous,date,next]);
+  });
+}
+t('invalid mixed range is rejected before generating any projected output',()=>{
+  const {engine,publication}=build(),plan=engine.planPeriod(REQ);
+  let calls=0;
+  const service=createScheduleService({engine,publication,clock:()=>{calls++;return AT;},
+    rules:{station_id:STATION,capabilities:CAPS}});
+  throwsCode(()=>service.buildStationScheduleRange({
+    actor:FIREFIGHTER,plan,dates:['2026-09-01','2026-02-30']
+  }),'bad-date');
+  assert.strictEqual(calls,0);
+});
+
 /* ================= 7. עומס · נדלק עם RESQ_LOAD=1 ================= */
 
 function loadRoster(n) {

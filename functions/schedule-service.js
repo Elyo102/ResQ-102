@@ -291,8 +291,13 @@ function createScheduleService(deps) {
   /* ---------------- תצוגה · סידור התחנה ---------------- */
 
   function shiftDate(iso, delta) {
+    if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      throw new ServiceError('bad-date', 'תאריך לא תקין: ' + iso);
+    }
     const ms = Date.parse(iso + 'T00:00:00.000Z');
-    if (Number.isNaN(ms)) throw new ServiceError('bad-date', 'תאריך לא תקין: ' + iso);
+    if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== iso) {
+      throw new ServiceError('bad-date', 'תאריך לא תקין: ' + iso);
+    }
     const dt = new Date(ms + delta * 86400000);
     const p = (x) => String(x).padStart(2, '0');
     return dt.getUTCFullYear() + '-' + p(dt.getUTCMonth() + 1) + '-' + p(dt.getUTCDate());
@@ -374,6 +379,7 @@ function createScheduleService(deps) {
     assertMay(ACTION.VIEW_STATION, actor);
     const plan = assertPlan(inp.plan);
     if (!isNonEmptyString(inp.date)) throw new ServiceError('date-required', 'חובה למסור תאריך');
+    shiftDate(inp.date, 0);
 
     const events = assertEvents(inp.events, plan, 'אירועי התחנה');
     return stationScheduleView(actor, inp.date,
@@ -389,6 +395,7 @@ function createScheduleService(deps) {
         || inp.dates.some((date) => !isNonEmptyString(date))) {
       throw new ServiceError('dates-required', 'חובה למסור רשימת תאריכים');
     }
+    inp.dates.forEach((date) => shiftDate(date, 0));
     const events = assertEvents(inp.events, plan, 'אירועי התחנה');
     const prepared = prepareStationProjection(plan, events, inp.roster);
     return Object.freeze(inp.dates.map((date) => stationScheduleView(actor, date, prepared)));
