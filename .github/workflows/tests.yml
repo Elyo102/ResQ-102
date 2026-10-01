@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hours47-validation-192d322
+  group: hours47-validation-7dc9c1f
   cancel-in-progress: false
 
 defaults:
@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 192d322a2c660668ea1a1198ff8ab96fb1bd160e
+          ref: 7dc9c1ff5579db529b49dcfe6c3b57dc095e9ca8
           persist-credentials: false
 
       - name: Prove frozen product checkout independently of the control workflow
@@ -57,7 +57,7 @@ jobs:
           export RESQ_CI_SCRATCH="$(realpath "$RESQ_CI_SCRATCH")"
           printf 'RESQ_CI_SCRATCH=%s\nTMPDIR=%s\n' "$RESQ_CI_SCRATCH" "$RESQ_CI_SCRATCH" >> "$GITHUB_ENV"
           printf 'scratch=%s\n' "$RESQ_CI_SCRATCH" >> "$GITHUB_OUTPUT"
-          test "$(git rev-parse HEAD)" = 192d322a2c660668ea1a1198ff8ab96fb1bd160e
+          test "$(git rev-parse HEAD)" = 7dc9c1ff5579db529b49dcfe6c3b57dc095e9ca8
           test -z "$(git status --porcelain)"
           printf 'product_sha=%s\nproduct_tree=%s\ncontrol_workflow_sha=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_SHA" | tee "$RESQ_CI_SCRATCH/product-app.txt"
 
@@ -97,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hours47-app-192d322-${{ github.run_id }}
+          name: hours47-app-7dc9c1f-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 7
           path: |
@@ -114,11 +114,12 @@ jobs:
     env:
       RESQ_CI_SCRATCH: ${{ github.workspace }}/../hours47-ci-rules-${{ github.run_id }}-${{ github.run_attempt }}
       RESQ_EMULATOR_CONFIG: ${{ github.workspace }}/../hours47-ci-rules-${{ github.run_id }}-${{ github.run_attempt }}/emulators.json
+      RESQ_RULES_EMULATOR_CONFIG: ${{ github.workspace }}/../hours47-ci-rules-${{ github.run_id }}-${{ github.run_attempt }}/rules-emulators.json
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 192d322a2c660668ea1a1198ff8ab96fb1bd160e
+          ref: 7dc9c1ff5579db529b49dcfe6c3b57dc095e9ca8
           persist-credentials: false
 
       - uses: actions/setup-node@v4
@@ -132,9 +133,10 @@ jobs:
           mkdir "$RESQ_CI_SCRATCH"
           export RESQ_CI_SCRATCH="$(realpath "$RESQ_CI_SCRATCH")"
           export RESQ_EMULATOR_CONFIG="$RESQ_CI_SCRATCH/emulators.json"
-          printf 'RESQ_CI_SCRATCH=%s\nTMPDIR=%s\nRESQ_EMULATOR_CONFIG=%s\n' "$RESQ_CI_SCRATCH" "$RESQ_CI_SCRATCH" "$RESQ_EMULATOR_CONFIG" >> "$GITHUB_ENV"
+          export RESQ_RULES_EMULATOR_CONFIG="$RESQ_CI_SCRATCH/rules-emulators.json"
+          printf 'RESQ_CI_SCRATCH=%s\nTMPDIR=%s\nRESQ_EMULATOR_CONFIG=%s\nRESQ_RULES_EMULATOR_CONFIG=%s\n' "$RESQ_CI_SCRATCH" "$RESQ_CI_SCRATCH" "$RESQ_EMULATOR_CONFIG" "$RESQ_RULES_EMULATOR_CONFIG" >> "$GITHUB_ENV"
           printf 'scratch=%s\n' "$RESQ_CI_SCRATCH" >> "$GITHUB_OUTPUT"
-          test "$(git rev-parse HEAD)" = 192d322a2c660668ea1a1198ff8ab96fb1bd160e
+          test "$(git rev-parse HEAD)" = 7dc9c1ff5579db529b49dcfe6c3b57dc095e9ca8
           test -z "$(git status --porcelain)"
           test -s storage.rules
           test "$(git hash-object storage.rules)" = 768db12457025ee5b72cc5e8db692dfecf40ddbe
@@ -145,9 +147,12 @@ jobs:
           const config = {
             firestore: { rules:path.resolve(original.firestore.rules), indexes:path.resolve(original.firestore.indexes) },
             storage: { rules:path.resolve('storage.rules') },
-            emulators: { firestore:{host:'127.0.0.1',port:8199}, storage:{host:'127.0.0.1',port:9199}, ui:{enabled:false}, singleProjectMode:true }
+            emulators: { firestore:{host:'127.0.0.1',port:8080}, storage:{host:'127.0.0.1',port:9199}, ui:{enabled:false}, singleProjectMode:true }
           };
           fs.writeFileSync(process.env.RESQ_EMULATOR_CONFIG, JSON.stringify(config), {flag:'wx'});
+          const rulesConfig = structuredClone(config);
+          rulesConfig.emulators.firestore.port = 8199;
+          fs.writeFileSync(process.env.RESQ_RULES_EMULATOR_CONFIG, JSON.stringify(rulesConfig), {flag:'wx'});
           NODE
 
       # אמולטור Firestore הוא תוכנית Java. בלעדיה הכללים
@@ -170,7 +175,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: כללי האבטחה מול Firestore מקומי
-        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd rules-test && npm test" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
+        run: firebase emulators:exec --config "$RESQ_RULES_EMULATOR_CONFIG" --only firestore --project demo-resq "cd rules-test && npm test" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: פונקציות לוח המודעות מול Firestore מקומי
         run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
@@ -260,7 +265,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hours47-rules-192d322-${{ github.run_id }}
+          name: hours47-rules-7dc9c1f-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 7
           path: |
