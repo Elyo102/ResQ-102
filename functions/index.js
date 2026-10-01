@@ -1531,22 +1531,8 @@ function callerStation(req, auth) {
 // מחזיר את המשתמש המחובר ואת התקרה שלו. מנהל-על מקבל Infinity;
 // כל תפקיד שאינו בטבלה מקבל 0, כלומר נדחה. ברירת מחדל אוסרת —
 // תפקיד חדש שיתווסף למערכת לא יקבל סמכות שיבוץ בהיסח הדעת.
-function requireRoleSetter(req) {
-  const auth = requireAuth(req);
-  if (isSuperAdmin(auth)) return { auth: auth, cap: Infinity, sid: '', did: '' };
-
-  const cap = ASSIGN_MAX_RANK[String(auth.token.role || '')] || 0;
-  if (!cap) {
-    throw new HttpsError('permission-denied',
-      'שיבוץ תפקידים מותר למנהל המערכת ולרכז/ת כוח אדם בלבד.');
-  }
-  const sid = String(auth.token.stationId || '');
-  const did = String(auth.token.districtId || '');
-  if (!sid || !did || KNOWN_DISTRICTS.indexOf(did) === -1) {
-    throw new HttpsError('permission-denied',
-      'לחשבון המשבץ חסר שיוך תחנה או מחוז תקין. פנה למנהל המערכת.');
-  }
-  return { auth: auth, cap: cap, sid: sid, did: did };
+async function requireRoleSetter(req) {
+  return freshAdmin.requireFreshRoleSetter(req, { ASSIGN_MAX_RANK, KNOWN_DISTRICTS });
 }
 
 // שלוש בדיקות, ולכל אחת יש תרחיש שהיא מונעת.
@@ -1960,7 +1946,7 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   // במסך**: הבורר ב-admin.html מציג רק את מה שמותר, אבל מסך
   // שמסתיר אפשרות אינו הרשאה, והקריאה הזאת פתוחה לכל מי שיש לו
   // טוקן.
-  const gate = requireRoleSetter(req);
+  const gate = await requireRoleSetter(req);
   const auth = gate.auth;
   const d = req.data || {};
 

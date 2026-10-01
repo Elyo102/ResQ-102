@@ -50,10 +50,12 @@ function createFreshAdmin(deps) {
     const p = policy || {};
     const signed = requireSigned(req);
     const user = await liveUser(signed.uid);
+    if (user.disabled !== false) deny('החשבון אינו פעיל.');
     const live = user.customClaims || {};
     const token = signed.token || {};
+    const effectiveAuth = { uid: signed.uid, token: Object.assign({}, live, { email: user.email || '' }) };
     if (live.super === true && token.super === true) {
-      return { auth: Object.assign({}, signed, { token: Object.assign({}, token, live) }),
+      return { auth: effectiveAuth,
         cap: Infinity, sid: '', did: '' };
     }
     const role = String(live.role || '');
@@ -67,7 +69,7 @@ function createFreshAdmin(deps) {
         || (Array.isArray(p.KNOWN_DISTRICTS) && p.KNOWN_DISTRICTS.indexOf(did) === -1)) {
       deny('לחשבון המשבץ חסר שיוך תחנה או מחוז תקין. פנה למנהל המערכת.');
     }
-    return { auth: Object.assign({}, signed, { token: Object.assign({}, token, live) }), cap, sid, did };
+    return { auth: effectiveAuth, cap, sid, did };
   }
 
   return Object.freeze({ requireFreshSuper, requireFreshRoleSetter, liveUser });
