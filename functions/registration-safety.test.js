@@ -138,8 +138,30 @@ async function rejectsWith(label, promise, code) {
     'the initial role check must include the desired station scope');
   assert.ok(setRole[0].includes('planned.super === true, planned'),
     'the post-acquisition check must revalidate the immutable plan scope');
-  assert.ok(indexSource.includes('if (!sid || !did || KNOWN_DISTRICTS.indexOf(did) === -1)'),
-    'a non-super role setter with partial scope claims must fail closed');
+  assert.match(indexSource, /async function requireRoleSetter\(req\)\s*\{\s*return freshAdmin\.requireFreshRoleSetter\(req, \{ ASSIGN_MAX_RANK, KNOWN_DISTRICTS \}\);\s*\}/);
+  assert.ok(setRole[0].includes('const gate = await requireRoleSetter(req);'),
+    'role authority must be awaited before continuing');
+  const { createFreshAdmin } = require('./fresh-admin');
+  const rolePolicy = { ASSIGN_MAX_RANK: { hr: 2 }, KNOWN_DISTRICTS: ['south'] };
+  const validClaims = { role: 'hr', stationId: 'test_station', districtId: 'south' };
+  for (const [label, live, token, disabled] of [
+    ['missing station', { ...validClaims, stationId: '' }, { ...validClaims, stationId: '' }, false],
+    ['missing district', { ...validClaims, districtId: '' }, { ...validClaims, districtId: '' }, false],
+    ['unknown district', { ...validClaims, districtId: 'unknown' }, { ...validClaims, districtId: 'unknown' }, false],
+    ['stale station', validClaims, { ...validClaims, stationId: 'old_station' }, false],
+    ['disabled actor', validClaims, validClaims, true]
+  ]) {
+    const gate = createFreshAdmin({ HttpsError: TestHttpsError,
+      auth: { getUser: async () => ({ uid: 'test_hr', disabled, customClaims: live }) } });
+    await rejectsWith('live role gate rejects ' + label,
+      gate.requireFreshRoleSetter({ auth: { uid: 'test_hr', token } }, rolePolicy), 'permission-denied');
+  }
+  const validGate = createFreshAdmin({ HttpsError: TestHttpsError,
+    auth: { getUser: async () => ({ uid: 'test_hr', disabled: false, customClaims: validClaims }) } });
+  const accepted = await validGate.requireFreshRoleSetter(
+    { auth: { uid: 'test_hr', token: validClaims } }, rolePolicy);
+  assert.deepEqual({ sid: accepted.sid, did: accepted.did, cap: accepted.cap },
+    { sid: 'test_station', did: 'south', cap: 2 });
   console.log('✓ role assignment and removal use the same durable per-uid coordinator');
 
   const boot = indexSource.match(

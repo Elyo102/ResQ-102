@@ -14,7 +14,7 @@ const marker = { uid, consent_key: '1.3|2026-09-24', terms_version: '1.3', priva
 
 async function main() {
   const indexSource = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
-  assert.match(indexSource, /exports\.whoAmI\s*=\s*preApprovalOnCall\(\{\},\s*async/);
+  assert.match(indexSource, /exports\.whoAmI\s*=\s*preApprovalOnCall\(\{\s*enforceAppCheck:\s*true\s*\},\s*async/);
   assert.match(indexSource, /exports\.inspectJoinCampaign\s*=\s*firebaseOnCall\(\{\s*enforceAppCheck:\s*true\s*\}/);
   assert.match(indexSource, /exports\.redeemJoinCampaign\s*=\s*preApprovalOnCall\(/);
   assert.match(indexSource, /exports\.getMyJoinStatus\s*=\s*preApprovalOnCall\(/);

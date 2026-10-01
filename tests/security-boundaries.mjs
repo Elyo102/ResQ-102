@@ -44,21 +44,10 @@ function check(name, value) {
 /* ============================================================
    1 · App Check על כל callable
    ============================================================
-   31 קריאות ישנות אינן אוכפות App Check. הדלקתן משנה התנהגות ייצור
-   (כניסה, פוש, לוח מודעות) ולכן היא הכרעה של בעל המוצר, לא תיקון
-   אגב. עד שתתקבל — הרשימה קפואה כאן בשוויון מדויק: callable חדש
-   בלי App Check מפיל את הבדיקה, וגם הסרת שם מהרשימה בלי לתקן את
-   הקוד מפילה אותה. כך החוב אינו גדל בשקט ואינו נמחק בשקט. */
+   All callable declarations must enforce App Check, including pre-auth.
+   This source contract is not proof of deployed provider/token readiness. */
 
-const APPCHECK_EXEMPT = Object.freeze([
-  'approveRegistration', 'backupToSheetNow', 'bootstrapSuperAdmin', 'broadcastBulletinMessage',
-  'bulkImport', 'checkTestMail', 'claimPushToken', 'getAttendanceShadowStatus', 'getJoinCode',
-  'hideBulletinMessage', 'hideBulletinReply', 'joinWithCode',
-  'listUsersWithClaims', 'loginWithEmployeeNumber', 'postBulletinMessage', 'reindexDirectory',
-  'rejectRegistration', 'replyToBulletinMessage', 'requestPasswordReset', 'resumeIdentityOperation',
-  'runAttendanceShadowNow', 'runReportNow', 'sendBroadcast', 'sendTestMail',
-  'setAttendanceShadowMode', 'setJoinCode', 'setUserRole', 'unlockAccount', 'whoAmI'
-]);
+const APPCHECK_EXEMPT = Object.freeze([]);
 
 const indexSrc = read('functions/index.js');
 
@@ -76,7 +65,7 @@ function callableOptions(src) {
       else if (c === '}' || c === ')' || c === ']') { if (depth === 0) break; depth--; }
       else if (c === ',' && depth === 0) break;
     }
-    out.push({ name: m[1], options: src.slice(start, i).trim() });
+    out.push({ name: m[1], options: src.slice(start, i).trim(), start, end: i });
   }
   return out;
 }
@@ -86,16 +75,28 @@ for (const m of indexSrc.matchAll(/^const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Object\
   frozenOptionConsts.set(m[1], /enforceAppCheck:\s*true/.test(m[2]));
 }
 const callables = callableOptions(indexSrc);
-check('functions/index.js exposes a plausible number of callables (>140)', callables.length > 140);
+check('functions/index.js exposes the reviewed inventory of 194 callables', callables.length === 194);
 
 function enforcesAppCheck(options) {
+  // A literal override must not inherit enforcement from a spread constant.
+  if (/enforceAppCheck:\s*false/.test(options)) return false;
   if (/enforceAppCheck:\s*true/.test(options)) return true;
   for (const [name, ok] of frozenOptionConsts) {
     if (ok && new RegExp('(^|[^A-Za-z0-9_])' + name + '([^A-Za-z0-9_]|$)').test(options)) return true;
   }
   return false;
 }
+check('an explicit false cannot inherit true from shared options',
+  !enforcesAppCheck('{ ...AUTH_CALLABLE_OPTIONS, enforceAppCheck: false }'));
 const withoutAppCheck = callables.filter((c) => !enforcesAppCheck(c.options)).map((c) => c.name).sort();
+// Mutate each actual declaration independently in memory: detection must not
+// accidentally reuse another callable's options or overlook either wrapper.
+// This verifies the source contract, not Firebase's remote token verifier.
+for (const c of callables) {
+  const mutated = indexSrc.slice(0, c.start) + '{ enforceAppCheck: false }' + indexSrc.slice(c.end);
+  const actual = callableOptions(mutated).find(candidate => candidate.name === c.name);
+  check('App Check source mutation rejected: ' + c.name, !!actual && !enforcesAppCheck(actual.options));
+}
 check('App Check exemptions are exactly the frozen legacy list (' + withoutAppCheck.length + ' callables)',
   withoutAppCheck.join(',') === [...APPCHECK_EXEMPT].sort().join(','));
 if (withoutAppCheck.join(',') !== [...APPCHECK_EXEMPT].sort().join(',')) {

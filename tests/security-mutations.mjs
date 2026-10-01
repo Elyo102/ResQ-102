@@ -97,8 +97,8 @@ mustFail('a new callable without App Check slips in',
     "exports.listOrganizations = onCall({}, req => saasService.listOrganizations(req));"),
   SEC);
 
-mustFail('an exempt legacy callable is quietly dropped from the frozen list',
-  mutate('tests/security-boundaries.mjs', "  'listUsersWithClaims', 'loginWithEmployeeNumber',", "  'listUsersWithClaims',"),
+mustFail('pre-auth App Check enforcement is disabled for shared auth options',
+  mutate('functions/index.js', "  enforceAppCheck: true,\n  maxInstances: 5, concurrency: 40, timeoutSeconds: 30", "  enforceAppCheck: false,\n  maxInstances: 5, concurrency: 40, timeoutSeconds: 30"),
   SEC);
 
 /* ---------- 2 · סמכות מהלקוח ---------- */

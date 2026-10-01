@@ -217,7 +217,8 @@ function isPolicySuppressedPush(value) {
     && (!Object.hasOwn(value, 'failed') || value.failed === false);
 }
 const FV = admin.firestore.FieldValue;
-// App Check runtime gate: MONITOR default. H2 stays OPEN (owner console). Auth callables keep enforceAppCheck:false.
+// Diagnostic gate stays MONITOR; callable SDK options enforce App Check.
+// Deployment additionally requires verified pre-auth client token readiness (H2).
 const appCheckGate = appCheckGateModule.createAppCheckGate({
   db, HttpsError, FV,
   log: (event, fields) => structuredLog.info(event, fields || {})
@@ -227,9 +228,9 @@ const authHardening = authHardeningModule.createAuthHardening({
   log: (event, fields) => structuredLog.warn('auth_guard', Object.assign({ event }, fields || {}))
 });
 const AUTH_CALLABLE_OPTIONS = Object.freeze({
-  // Monitor regular client tokens. Replay protection needs a separate
+  // Verify regular client tokens. Replay protection needs a separate
   // limited-use-token client rollout before it can be enabled safely.
-  enforceAppCheck: false,
+  enforceAppCheck: true,
   maxInstances: 5, concurrency: 40, timeoutSeconds: 30
 });
 const runtimeModeService = runtimeModeModule.createRuntimeModeService({
@@ -1696,7 +1697,7 @@ async function resolveUser(data) {
 //  1. אתחול מנהל-על — פעם אחת
 // ---------------------------------------------------------------------
 
-exports.bootstrapSuperAdmin = preApprovalOnCall({ timeoutSeconds: 120 }, async (req) => {
+exports.bootstrapSuperAdmin = preApprovalOnCall({ enforceAppCheck: true, timeoutSeconds: 120 }, async (req) => {
   const auth = requireAuth(req);
   const email = String(auth.token.email || '').toLowerCase();
 
@@ -1738,7 +1739,7 @@ exports.bootstrapSuperAdmin = preApprovalOnCall({ timeoutSeconds: 120 }, async (
 //     כאן מוקצה מספר העובד. הכבאי לא מזין אותו ולא בוחר אותו.
 // ---------------------------------------------------------------------
 
-exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
+exports.approveRegistration = onCall({ enforceAppCheck: true, timeoutSeconds: 120 }, async (req) => {
   let d = req.data || {};
 
   const uid = String(d.uid || '');
@@ -1910,7 +1911,7 @@ exports.approvalMailStatus = onCall({ enforceAppCheck:true }, async req => {
 
 // דחייה עוברת בשרת ונקשרת למזהה הבקשה שהמנהל ראה. מחיקה
 // ישירה מהדפדפן הייתה יכולה למחוק בקשה חדשה מכרטיס ישן.
-exports.rejectRegistration = onCall({ timeoutSeconds: 60 }, async (req) => {
+exports.rejectRegistration = onCall({ enforceAppCheck: true, timeoutSeconds: 60 }, async (req) => {
   const d = req.data || {};
   const uid = String(d.uid || '');
   const requestId = String(d.request_id || '');
@@ -1940,7 +1941,7 @@ exports.rejectRegistration = onCall({ timeoutSeconds: 60 }, async (req) => {
 //     לא מקצה מספר עובד חדש — מספר עובד נשאר עם האדם.
 // ---------------------------------------------------------------------
 
-exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
+exports.setUserRole = onCall({ enforceAppCheck: true, timeoutSeconds: 120 }, async (req) => {
   // עד 25.8.2026 היה כאן requireSuperAdmin. נפתח לרכז/ת כוח אדם
   // עם תקרת דרגה — ראה assertMayAssign. **התקרה נאכפת כאן ולא
   // במסך**: הבורר ב-admin.html מציג רק את מה שמותר, אבל מסך
@@ -2209,7 +2210,7 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
 // ממשיך רק תוכנית זהות שכבר ננעלה בשרת. הלקוח אינו שולח כאן
 // תפקיד, תחנה, מספר עובד או תוצאה חדשה — ולכן רענון מסך לא יכול
 // להחליף בשקט את מה שהמנהל אישר קודם.
-exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) => {
+exports.resumeIdentityOperation = onCall({ enforceAppCheck: true, timeoutSeconds: 120 }, async (req) => {
   const auth = await requireFreshOnboardingSuper(req);
   const d = req.data || {};
   const uid = String(d.uid || '');
@@ -2584,6 +2585,7 @@ exports.unlockAccount = onCall(AUTH_CALLABLE_OPTIONS, appCheckGate.gated('unlock
 
 const JOIN_DOC = 'config/join';
 exports.joinWithCode = onCall(
+  { enforceAppCheck: true },
   registrationSafety.createDisabledJoinHandler({
     requireAuth: requireAuth,
     HttpsError: HttpsError
@@ -2591,7 +2593,7 @@ exports.joinWithCode = onCall(
 );
 
 // קביעת הקוד — מנהל-על בלבד.
-exports.setJoinCode = onCall(async (req) => {
+exports.setJoinCode = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
   const d = req.data || {};
   const code = String(d.code || '').trim();
@@ -2611,7 +2613,7 @@ exports.setJoinCode = onCall(async (req) => {
   return { ok: true, active: active };
 });
 
-exports.getJoinCode = onCall(async (req) => {
+exports.getJoinCode = onCall({ enforceAppCheck: true }, async (req) => {
   requireSuperAdmin(req);
   const snap = await db.doc(JOIN_DOC).get().catch(function () { return null; });
   const v = (snap && snap.exists ? snap.data() : {}) || {};
@@ -2729,7 +2731,7 @@ exports.listBulletinMessageViewers = onCall(BULLETIN_RECEIPT_OPTIONS,
 exports.getAlertsFeed = onCall(BULLETIN_RECEIPT_OPTIONS,
   async req => bulletinReceipts.alertsFeed(req));
 
-exports.postBulletinMessage = onCall(async (req) => {
+exports.postBulletinMessage = onCall({ enforceAppCheck: true }, async (req) => {
   const parsed = parseBulletinPost(req);
   const identity = parsed.identity;
   const input = parsed.input;
@@ -2856,7 +2858,7 @@ exports.postBulletinMessage = onCall(async (req) => {
 // פרסום רחב הוא פעולה נפרדת בכוונה. הלקוח אינו שולח sid או
 // רשימת יעדים; השרת גוזר את התחנה מהטוקן וקורא בעצמו את כל
 // תחנות-המשנה הפעילות. הטרנזקציה כותבת את כולן או אף אחת.
-exports.broadcastBulletinMessage = onCall(async (req) => {
+exports.broadcastBulletinMessage = onCall({ enforceAppCheck: true }, async (req) => {
   const identity = bulletinIdentityFor(req);
   requireShiftCommand(identity);
   let input;
@@ -3007,7 +3009,7 @@ exports.broadcastBulletinMessage = onCall(async (req) => {
   }
 });
 
-exports.replyToBulletinMessage = onCall(async (req) => {
+exports.replyToBulletinMessage = onCall({ enforceAppCheck: true }, async (req) => {
   const identity = bulletinIdentityFor(req);
   requireShiftCommand(identity);
   let input;
@@ -3149,7 +3151,7 @@ exports.replyToBulletinMessage = onCall(async (req) => {
   }
 });
 
-exports.hideBulletinMessage = onCall(async (req) => {
+exports.hideBulletinMessage = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
   let input;
   try {
@@ -3275,7 +3277,7 @@ exports.hideBulletinMessage = onCall(async (req) => {
   }
 });
 
-exports.hideBulletinReply = onCall(async (req) => {
+exports.hideBulletinReply = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
   let input;
   try {
@@ -3353,7 +3355,7 @@ exports.hideBulletinReply = onCall(async (req) => {
 // הפונקציה קיים כדי שגם לקוח ישן יקבל חסימה מפורשת, במקום
 // להמשיך להגיע למימוש ישן או לקבל שגיאת "פונקציה לא קיימת".
 exports.bulkImport = onCall(
-  { timeoutSeconds: 540 },
+  { enforceAppCheck: true, timeoutSeconds: 540 },
   bulkImportDisabled.createHandler({
     requireSuperAdmin: requireSuperAdmin,
     HttpsError: HttpsError
@@ -3431,7 +3433,7 @@ exports.getSilentMode = onCall(RUNTIME_MODE_OPTIONS, async (req) => {
 //  6. רשימת משתמשים למסך הניהול
 // ---------------------------------------------------------------------
 
-exports.listUsersWithClaims = onCall(async (req) => {
+exports.listUsersWithClaims = onCall({ enforceAppCheck: true }, async (req) => {
   requireSuperAdmin(req);
 
   const result = [];
@@ -3494,7 +3496,7 @@ exports.listUsersWithClaims = onCall(async (req) => {
 
 // Pending applicants may inspect live claims for safe resubmission; approved
 // accounts cannot use diagnostics to bypass the current Terms marker.
-exports.whoAmI = preApprovalOnCall({}, async (req) => {
+exports.whoAmI = preApprovalOnCall({ enforceAppCheck: true }, async (req) => {
   if (!req.auth) return { signedIn: false };
 
   const user = await admin.auth().getUser(req.auth.uid);
@@ -3524,7 +3526,7 @@ exports.whoAmI = preApprovalOnCall({}, async (req) => {
 //  אותה שוב ושוב — היא כותבת את אותו ערך ולא משנה שום נתון אחר.
 // ---------------------------------------------------------------------
 
-exports.reindexDirectory = onCall(async (req) => {
+exports.reindexDirectory = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
 
   const snaps = await db.collection('directory').get();
@@ -3668,7 +3670,7 @@ function translateAttendanceShadowError(error) {
     'ריצת הצל נעצרה בבטחה. לא בוצע שינוי בשעות הקיימות.');
 }
 
-exports.getAttendanceShadowStatus = onCall(async (req) => {
+exports.getAttendanceShadowStatus = onCall({ enforceAppCheck: true }, async (req) => {
   const gate = await requireAttendanceShadowAuditor(req);
   try {
     return await attendanceShadowService.status(gate.sid);
@@ -3680,7 +3682,7 @@ exports.getAttendanceShadowStatus = onCall(async (req) => {
   }
 });
 
-exports.setAttendanceShadowMode = onCall(async (req) => {
+exports.setAttendanceShadowMode = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
   const sid = attendanceShadowStation(req, auth);
   const mode = String((req.data || {}).mode || '');
@@ -3717,6 +3719,7 @@ exports.setAttendanceShadowMode = onCall(async (req) => {
 });
 
 exports.runAttendanceShadowNow = onCall({
+  enforceAppCheck: true,
   timeoutSeconds: 540,
   memory: '512MiB'
 }, async (req) => {
@@ -4379,7 +4382,7 @@ exports.monthlyHrReport = onSchedule({
 // הרצה ידנית של אחת מהשתיים, למנהל-על. בלי זה אי אפשר לבדוק
 // אותן בלי לחכות לחצות או לראשון בחודש.
 exports.runReportNow = onCall(
-  { timeoutSeconds: 540, memory: '1GiB' },
+  { enforceAppCheck: true, timeoutSeconds: 540, memory: '1GiB' },
   async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
@@ -5230,7 +5233,7 @@ exports.hoursReminder = onSchedule({
 // רואה את ההיסטוריה.
 
 exports.sendBroadcast = onCall(
-  { timeoutSeconds: 300 },
+  { enforceAppCheck: true, timeoutSeconds: 300 },
   async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
@@ -6045,7 +6048,7 @@ exports.onFaultBlocking = onDocumentWritten(
 //  ו-array-contains דורש התאמה מדויקת של האובייקט כולו —
 //  כולל התווית והשעה, שנבדלות בין משתמשים. בתחנה יש כחמישים
 //  רשומות, וזה רץ רק כשמפעילים התראות.
-exports.claimPushToken = onCall(async (req) => {
+exports.claimPushToken = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = req.auth;
   if (!auth) throw new HttpsError('unauthenticated', 'צריך להיות מחובר.');
 
@@ -6092,7 +6095,7 @@ exports.claimPushToken = onCall(async (req) => {
 //  ERROR). אם השדה לא קיים אחרי כמה שניות — התוסף לא מותקן, או
 //  שהוא מאזין לאוסף אחר.
 
-exports.sendTestMail = onCall(async (req) => {
+exports.sendTestMail = onCall({ enforceAppCheck: true }, async (req) => {
   const auth = requireSuperAdmin(req);
   const to = String((req.data && req.data.to) || '').trim();
   if (!to || to.indexOf('@') === -1) {
@@ -6122,7 +6125,7 @@ exports.sendTestMail = onCall(async (req) => {
   };
 });
 
-exports.checkTestMail = onCall(async (req) => {
+exports.checkTestMail = onCall({ enforceAppCheck: true }, async (req) => {
   requireSuperAdmin(req);
   const id = String((req.data && req.data.id) || '').trim();
   if (!id) throw new HttpsError('invalid-argument', 'צריך מזהה מסמך.');
@@ -6498,7 +6501,7 @@ exports.nightlySheetBackup = onSchedule({
 });
 
 // הרצה ידנית מתוך check.html, לבדיקה אחרי ההקמה.
-exports.backupToSheetNow = onCall({ timeoutSeconds: 540 }, async (req) => {
+exports.backupToSheetNow = onCall({ enforceAppCheck: true, timeoutSeconds: 540 }, async (req) => {
   requireSuperAdmin(req);
   return await runSheetBackup_();
 });
