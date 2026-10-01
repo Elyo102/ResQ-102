@@ -2543,7 +2543,7 @@ function createScheduleRuntime(deps) {
         if (data.activate === true) {
           tx.set(runtimeRef(ctx.sid), { active_source_id: sourceId }, { merge: true });
         }
-        tx.set(sourceAuditRef(ctx.sid, requestId), Object.assign({
+        tx.create(sourceAuditRef(ctx.sid, requestId), Object.assign({
           station_id: ctx.sid, request_id: requestId, source_id: sourceId,
           version: plan.version, revision: plan.revision,
           supersedes: previous ? previous.id : null,
@@ -3057,7 +3057,7 @@ function createScheduleRuntime(deps) {
       if (data.activate === true) {
         tx.set(runtimeRef(ctx.sid), { active_policy_id: plan.policy_id }, { merge: true });
       }
-      tx.set(policyAuditRef(ctx.sid, requestId), {
+      tx.create(policyAuditRef(ctx.sid, requestId), {
         station_id: ctx.sid,
         actor_uid: ctx.uid,
         at: clock(),
@@ -3580,7 +3580,7 @@ function createScheduleRuntime(deps) {
         transition: plan.transition, reason_code: plan.audit.reason_code
       };
       tx.set(runtimeRef(ctx.sid), { mode: plan.to }, { merge: true });
-      tx.set(modeAuditRef(ctx.sid, requestId), Object.assign({
+      tx.create(modeAuditRef(ctx.sid, requestId), Object.assign({
         station_id: ctx.sid, at: clock(), request_id: requestId
       }, plan.audit));
       tx.set(opRef, {
@@ -6476,7 +6476,7 @@ function createScheduleRuntime(deps) {
         activated_at: FV.serverTimestamp(), activated_by: ctx.uid
       });
       tx.set(runtimeRef(ctx.sid), { mode: MODE.NEW }, { merge: true });
-      tx.set(modeAuditRef(ctx.sid, requestId), {
+      tx.create(modeAuditRef(ctx.sid, requestId), {
         station_id: ctx.sid, request_id: requestId,
         action: 'cutover', from: decision.from, to: decision.to,
         publication_id: candidateId, revision,
