@@ -11,10 +11,9 @@ const {
   createIdentityCoordinator, stableHash, registrationFingerprint, profileMatches
 } = require('./identity-coordinator');
 
-if (!process.env.FIRESTORE_EMULATOR_HOST) {
-  console.error('FIRESTORE_EMULATOR_HOST is required; refusing to run against a real project.');
-  process.exit(2);
-}
+assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/);
+assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq');
+assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
 
 if (!admin.apps.length) admin.initializeApp({ projectId: 'demo-resq' });
 const db = admin.firestore();
@@ -22,6 +21,7 @@ const FV = admin.firestore.FieldValue;
 const Timestamp = admin.firestore.Timestamp;
 let ids = 0;
 let passed = 0;
+const ownedConsentReceipts = new Map();
 const transferRunId = Date.now().toString(36);
 const transferEmpBase = 720000 + (Date.now() % 100000);
 
@@ -97,7 +97,7 @@ function requestData(uid, requestId) {
   };
 }
 
-async function seedRequest(uid, requestId) {
+async function seedRequest(uid, requestId, withConsent = true) {
   const data = requestData(uid, requestId);
   if (!requestId) delete data.request_id;
   const ref = db.doc('registration_requests/' + uid);
@@ -109,6 +109,13 @@ async function seedRequest(uid, requestId) {
       request_fingerprint: registrationFingerprint(uid, saved),
       fingerprint_version: 1
     }, { merge: true });
+    if (withConsent) {
+      const receipt = db.doc('registration_consents/' + uid + '/events/' + requestId);
+      await receipt.create({ uid, request_id: requestId, terms_version: '1.3',
+        privacy_version: '2026-09-24', marketing_opt_in: false,
+        accepted_at: FV.serverTimestamp() });
+      ownedConsentReceipts.set(receipt.path, uid);
+    }
   }
 }
 
@@ -323,6 +330,25 @@ async function clearEmulator() {
   // The suite is intentionally rerunnable. Durable identity documents from a
   // previous emulator run must not turn fresh acquisition checks into replays.
   await clearEmulator();
+  await test('missing registration consent denies approval without identity writes', async function () {
+    const uid = 'missing_consent'; const requestId = 'request-no-consent-0001';
+    const fake = new FakeAuth(); fake.seed(uid, {});
+    await seedRequest(uid, requestId, false);
+    const before = (await db.doc('registration_requests/' + uid).get()).data();
+    const authBefore = await fake.getUser(uid);
+    await assert.rejects(coordinator(fake).acquireAssignment(
+      approvalParams(uid, requestId, 'missing-consent-operation', {}, '5999')),
+    error => error.code === 'failed-precondition' && error.details.registration_consent_required === true);
+    assert.deepEqual((await db.doc('registration_requests/' + uid).get()).data(), before);
+    for (const path of ['identity_operations/' + uid, 'emp_reservations/5999', 'emp_index/5999',
+      'directory/' + uid, 'stations/eilat_102/users/' + uid, 'stations/eilat_102/roster/' + uid,
+      'registration_terms_active/' + uid, 'meta/emp_counter']) {
+      assert.equal((await db.doc(path).get()).exists, false, path);
+    }
+    assert.equal((await db.collection('admin_audit').get()).size, 0);
+    assert.deepEqual(await fake.getUser(uid), authBefore);
+    assert.equal(fake.setCalls, 0); assert.equal(fake.revokeCalls, 0);
+  });
   await test('every planned profile and index field participates in final verification', async function () {
     const op = {
       uid:'profile-check', desired_emp:'6001',
@@ -1034,7 +1060,18 @@ async function clearEmulator() {
   });
 
   console.log('\n' + passed + ' identity coordinator integration checks passed.');
-})().catch(function (error) {
+})().finally(async function () {
+  try {
+    for (const [path, uid] of ownedConsentReceipts) {
+      const marker = db.doc('registration_terms_active/' + uid);
+      const value = (await marker.get()).data();
+      if (value && value.uid === uid && value.receipt_path === path) await marker.delete();
+      await db.doc(path).delete();
+    }
+  } finally {
+    await Promise.all(admin.apps.map(app => app.delete()));
+  }
+}).catch(function (error) {
   console.error(error);
   process.exit(1);
 });
