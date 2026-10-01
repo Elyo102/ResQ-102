@@ -1,4 +1,4 @@
-// Full original application graph, with exactly two real Git/ZIP suites run in
+// Full original application graph, with exactly three native Git/ZIP/archive suites run in
 // a sanitized native process. This is not an OS-level native egress sandbox.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,7 +25,7 @@ if(process.argv.length===3&&process.argv[2]==='--contained'){
   console.log('HOURS46_CONTAINED_PLAN',JSON.stringify({steps:plan.steps.length,separateNative:plan.native}));
   for(const step of plan.steps){
     console.log('HOURS46_STEP',step.kind,step.name||step.file);
-    assertSuccessful(launch(step.kind==='npm'?[npm,'run',step.name]:[path.resolve(here,step.file),...step.args],process.env),step.name||step.file);
+    assertSuccessful(launch(step.kind==='npm'?[npm,'run',step.name]:[...(step.execArgv||[]),path.resolve(here,step.file),...step.args],process.env),step.name||step.file);
     guard.assertClean();
   }
   guard.assertClean();

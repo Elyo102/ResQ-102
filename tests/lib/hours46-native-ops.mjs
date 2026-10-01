@@ -1,11 +1,11 @@
-// Separate trusted-native integration, NOT an OS network sandbox. Both original
-// suites remain unchanged and exercise real Git bundles and native ZIP restore.
+// Separate trusted-native integration, NOT an OS network sandbox. Three original
+// suites remain unchanged: Git/ZIP restore and the PowerShell archive fixture.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-const NATIVE_OPS_SUITES=Object.freeze(['ops-backup-test.mjs','ops-restore-drill-test.mjs']);
+export const NATIVE_OPS_SUITES=Object.freeze(['ops-backup-test.mjs','ops-restore-drill-test.mjs','ops-backup-archive.test.mjs']);
 
 export function assertNativeOpsResult(result,suite){
  if(result.error||result.signal||result.status!==0)throw Error('NATIVE_OPS_SUITE_FAILED '+suite);
@@ -51,12 +51,12 @@ try{
 }finally{
  // Preserve evidence on failure: a timed-out child can still have native
  // descendants. Never race recursive cleanup against uncertain child state.
- if(passed===2){
+ if(passed===NATIVE_OPS_SUITES.length){
   if(path.dirname(owned)!==base||fs.realpathSync(owned)!==owned||fs.lstatSync(owned).isSymbolicLink())throw Error('NATIVE_OPS_CLEANUP');
   fs.rmSync(owned,{recursive:true});
   if(fs.existsSync(owned))throw Error('NATIVE_OPS_CLEANUP_INCOMPLETE');
  }else console.error('Native ops did not complete; owned temporary evidence retained: '+owned);
 }
-console.log('Native ops separate gate: '+passed+'/2 suites PASS; cleanup verified; real Git/ZIP, sanitized environment, NOT OS-egress-isolated.');
+console.log('Native ops separate gate: '+passed+'/'+NATIVE_OPS_SUITES.length+' suites PASS; cleanup verified; archive live PowerShell coverage is reported by that suite; sanitized environment, NOT OS-egress-isolated.');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))runNativeOps();

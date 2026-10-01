@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {test} from 'node:test';
 import {buildHours46Plan,WRAPPER,NATIVE_COMMANDS,runHours46Sequence} from './lib/hours46-gate-contract.mjs';
-import {nativeOpsEnvironment,assertNativeOpsResult} from './lib/hours46-native-ops.mjs';
+import {nativeOpsEnvironment,assertNativeOpsResult,NATIVE_OPS_SUITES} from './lib/hours46-native-ops.mjs';
 const frozen=JSON.parse(fs.readFileSync(new URL('./lib/hours46-original-scripts.json',import.meta.url),'utf8'));
 const current=JSON.parse(fs.readFileSync(new URL('./package.json',import.meta.url),'utf8')).scripts;
 test('actual original graph retained except explicit release supervisor',()=>{
  const plan=buildHours46Plan(current);
  assert.equal(current.all,frozen.all);assert.equal(current.static,frozen.static);
  assert.equal(current['release:validate'],WRAPPER);
- const actual=plan.steps.map(s=>s.kind==='npm'?'npm run '+s.name:'node '+s.file+(s.args.length?' '+s.args.join(' '):''));
- const expected=frozen.all.split(' && ').flatMap(c=>c==='npm run static'?frozen.static.split(' && ').filter(x=>!NATIVE_COMMANDS.includes(x)):[c]);
- assert.deepEqual(actual,expected);assert.equal(plan.native.length,2);
+ const actual=plan.steps.map(s=>s.kind==='npm'?'npm run '+s.name:'node '+(s.execArgv?.length?s.execArgv.join(' ')+' ':'')+s.file+(s.args.length?' '+s.args.join(' '):''));
+ const expected=frozen.all.split(' && ').flatMap(c=>['npm run static','npm run dr:test'].includes(c)?frozen[c.slice(8)].split(' && ').filter(x=>!NATIVE_COMMANDS.includes(x)):[c]);
+ assert.deepEqual(actual,expected);assert.equal(plan.native.length,3);assert.deepEqual(NATIVE_OPS_SUITES.map(s=>'node '+s),plan.native);
+ assert.deepEqual(plan.steps.filter(s=>s.execArgv),[{kind:'node',file:'../functions/backup-monitoring.test.js',args:[],execArgv:['--test']}]);
+ assert.equal(actual.filter(s=>s==='node --test ../functions/backup-monitoring.test.js').length,1);
  assert.ok(Object.isFrozen(plan)&&Object.isFrozen(plan.steps)&&plan.steps.every(Object.isFrozen));
 });
 test('every script alteration, omission and addition is rejected',()=>{
@@ -23,9 +25,11 @@ test('every script alteration, omission and addition is rejected',()=>{
 });
 test('native omission duplication and unknown syntax cannot change denominator',()=>{
  for(const command of NATIVE_COMMANDS){
-  assert.throws(()=>buildHours46Plan({...current,static:current.static.replace(command,'node missing.mjs')}));
-  assert.throws(()=>buildHours46Plan({...current,static:current.static+' && '+command}));
+  const group=command.endsWith('ops-backup-archive.test.mjs')?'dr:test':'static';
+  assert.throws(()=>buildHours46Plan({...current,[group]:current[group].replace(command,'node missing.mjs')}));
+  assert.throws(()=>buildHours46Plan({...current,[group]:current[group]+' && '+command}));
  }
+ for(const replacement of ['node ../functions/backup-monitoring.test.js','node --inspect ../functions/backup-monitoring.test.js','node --test ../functions/other.test.js'])assert.throws(()=>buildHours46Plan({...current,'dr:test':current['dr:test'].replace('node --test ../functions/backup-monitoring.test.js',replacement)}));
  for(const all of ['npm run unknown',current.all+'; exit 0',current.all+'\n',current.all+'\u2028'])assert.throws(()=>buildHours46Plan({...current,all}));
 });
 function ports(){
