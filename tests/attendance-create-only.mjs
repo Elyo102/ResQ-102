@@ -14,6 +14,11 @@ const end = 'async function refreshAfterCreation(';
 assert.equal(source.split(start).length, 2);
 assert.equal(source.split(end).length, 2);
 const actual = source.slice(source.indexOf(start), source.indexOf(end));
+const wrapperStart = source.indexOf('async function callCorrection(');
+const wrapperEnd = source.indexOf('function correctionErrorText(', wrapperStart);
+assert.ok(wrapperStart >= 0 && wrapperEnd > wrapperStart);
+assert.match(source.slice(wrapperStart, wrapperEnd), /return \{ data, fence \};/,
+  'the real callCorrection wrapper returns its verified data inside an envelope');
 const target = { sid:'test-station', emp:'101', uid:'worker', month:'2026-09' };
 const entries = [
   { date:'2026-09-02', day_type:'regular', start:'08:00', end:'16:00', hours:999, uid:'spoof' },
@@ -29,7 +34,7 @@ const context = vm.createContext({
     .filter(key => Object.prototype.hasOwnProperty.call(value, key)).map(key => [key, value[key]])),
   callCorrection: async (callable, intent, kind) => {
     calls++; assert.equal(kind, 'self-month'); captured = intent;
-    return { changed_count: 1 };
+    return { data:{ changed_count: 1 }, fence:target };
   }
 });
 const createMissingDays = vm.runInContext(actual + ';createMissingDays', context);
@@ -83,10 +88,12 @@ assert.match(source, /start: bt\.start, end: bt\.end, end_day:bt\.end_day/,
   'suggested rows display the same calculated roster interval');
 console.log('Attendance configured day offsets: regular, commander, custom and fail-closed cases PASS.');
 assert.match(source, /aria-label="שלבי דיווח השעות"/);
-for (const title of ['1 · הכנת טיוטה','2 · בדיקה ותיקון','3 · אישור ושליחה']) assert.ok(source.includes(title));
+for (const title of ['בדיקה ועריכה','אישור ושליחה']) assert.ok(source.includes('<h3>'+title+'</h3>'));
+assert.ok(!source.includes('<h3>1 · הכנת טיוטה</h3>'), 'no separate preparation step');
+assert.match(source, /id="btnFill" hidden/, 'legacy fill control stays hidden; confirmation owns the fill');
 for (const id of ['btnFill','btnView','btnSubmit','btnSync','btnRecalc','btnUnsubmit','btnApprove','btnReopen']) {
   assert.equal((source.match(new RegExp('id="'+id+'"','g'))||[]).length,1,'existing control remains unique: '+id);
 }
-assert.ok(source.includes('סידור מתוכנן אינו אישור שעבדת'));
+assert.ok(source.includes('ימים מהסידור שטרם דיווחת מסומנים בנפרד ואינם אישור שעבדת'));
 assert.ok(source.includes('href="#attendanceDays"') && source.includes('id="attendanceDays"'));
-console.log('Attendance three-step labels retain unique actions and planned-versus-actual warning PASS.');
+console.log('Attendance ready-report labels retain unique actions and planned-versus-actual warning PASS.');

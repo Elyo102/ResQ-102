@@ -1,7 +1,7 @@
 import {getApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {getAuth,onAuthStateChanged} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import {getFunctions,httpsCallable} from './monitored-functions.js?v=42h46';
-import {createNotificationReminder,clearPushConfiguration} from './notification-reminder.js?v=42h46';
+import {getFunctions,httpsCallable} from './monitored-functions.js?v=42h47';
+import {createNotificationReminder,clearPushConfiguration} from './notification-reminder.js?v=42h47';
 let controller=null,auth=null,epoch=0,context=null,lastUid='',session='',authReady=false;
 function sessionFor(uid){try{const prior=JSON.parse(sessionStorage.getItem('resq.push-entry')||'null');if(prior?.uid===uid)return prior.session;
   const value=crypto.randomUUID();sessionStorage.setItem('resq.push-entry',JSON.stringify({uid,session:value}));return value;}catch(_){return crypto.randomUUID();}}

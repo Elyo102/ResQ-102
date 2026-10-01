@@ -26,8 +26,13 @@ const registration = one(/let attendanceCorrections;[\s\S]*?exports\.correctAtte
   'one correction registration block');
 const supportRegistration = one(/function getAttendanceCorrectionSupport\(\) \{[\s\S]*?exports\.getAttendanceCorrectionAudit = onCall\([\s\S]*?getAudit\(req\)\);/g,
   'one correction support registration block');
-one(/^const courseCredits = courseCreditModule\.createCourseCreditService\(\{ db, auth: admin\.auth\(\), HttpsError \}\);$/gm,
+one(/^const courseCredits = courseCreditModule\.createCourseCreditService\(\{ db, auth: admin\.auth\(\), HttpsError,\n  readAssignmentBasis: require\('\.\/attendance-course-assignment'\)\.createCourseAssignmentReader\(\{ db \}\) \}\);$/gm,
   'one trusted course service initializer');
+const courseSource = fs.readFileSync(path.join(root, 'functions/attendance-course-credit.js'), 'utf8').replace(/\r\n/g, '\n');
+assert.ok(courseSource.includes('function createCourseCreditService({db,auth,HttpsError,clock=Date.now,rolloutPolicy,readAssignmentBasis=createCourseAssignmentReader({db})}){'),
+  'production course factory retains rollout policy and authoritative reader injection');
+assert.ok(courseSource.includes("    if(decision==='approved') {\n      try { require('./hours-rollout-policy').assertAdmission('courseApprovalAdmission',rolloutPolicy); }\n      catch(e) { fail('failed-precondition',e.message); }\n    }"),
+  'only course admissions use the production rollback gate with structured failure');
 
 class HttpsError extends Error {}
 const db = Object.freeze({ id: 'db' });

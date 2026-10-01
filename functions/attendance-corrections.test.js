@@ -226,6 +226,14 @@ test('factory requires explicit trusted calculator, config and server-month port
   const f = fixture();
   for (const key of ['calculate', 'readConfig', 'monthAt', 'serverTimestamp', 'auth', 'db']) assert.throws(() => createAttendanceCorrections({ ...f.ports, [key]: undefined }), TypeError);
 });
+
+test('HR audit justification cannot substitute for a swap business reason', async () => {
+  const f = fixture();
+  await rejectsWithoutWrites(f, f.req({ patch:{ day_type:'swap', overtime_reason:' ' } }), 'invalid-argument');
+  await f.api().correctOneDay(f.req({ patch:{ day_type:'swap', overtime_reason:'כיסוי חוסר בצוות' } }));
+  assert.equal(f.db.value(f.path(f.month + '-01')).day_type, 'swap');
+  await rejectsWithoutWrites(f, f.req({ request_id:'clear_swap_reason_001', patch:{ overtime_reason:'' } }), 'invalid-argument');
+});
 test('actual calculator update, complete evidence, server attribution, legacy and report preservation', async () => {
   const f = fixture(), before = f.db.value(f.path(f.month + '-01')), report = f.db.value(f.reportPath);
   const result = await f.api().correctOneDay(f.req());

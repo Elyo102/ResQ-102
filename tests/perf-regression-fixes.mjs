@@ -25,7 +25,7 @@ assert.ok(/minePromise\s*\|\|\s*loadMine\s*\(\s*generation\s*\)/.test(schedule) 
   /if \(await loadMine\s*\(/.test(schedule),
   'loadMineRange must still call loadMine for non-displayOnly');
 
-assert.ok(faults.includes("from './monitored-functions.js?v=42h46'"),
+assert.ok(faults.includes("from './monitored-functions.js?v=42h47'"),
   'faults.html must route httpsCallable through monitored-functions');
 assert.ok(!/from "https:\/\/www\.gstatic\.com\/firebasejs\/[^"]+\/firebase-functions\.js"/.test(faults),
   'faults.html must not import raw gstatic firebase-functions');

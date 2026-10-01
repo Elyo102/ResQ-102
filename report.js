@@ -100,7 +100,7 @@ export function reportHtml(head, rows) {
     // בימים שדורשים אותו, ולכן יום כזה לא יכול להגיע לדוח —
     // וכיתוב שלא יופיע לעולם הוא רעש.
     const note = esc(r.reason || r.notes || '') + (r.course_overlay === true
-      ? ' · קורס מאושר לפי הסבב המקורי; זיכוי תקן פעם אחת' + (r.base_day_type ? ' · הדיווח המקורי נשמר' : '') : '');
+      ? ' · קורס מאושר; זיכוי תקן פעם אחת' + (r.base_day_type ? ' · הדיווח המקורי נשמר' : '') : '');
 
     const colorClass = ['reserve','reserve_shift'].includes(r.day_type) ? 'day-reserve'
       : ['sick','vacation','course'].includes(r.day_type) ? 'day-' + r.day_type : '';

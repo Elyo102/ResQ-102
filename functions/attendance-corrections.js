@@ -21,7 +21,7 @@ const { createOpsMemberIdentity, MEMBER_ROLES } = require('./ops-member-identity
 const { monthKey } = require('./hr-hours-model');
 const { assertReserveShiftNoOverlap } = require('./attendance-reserve-overlap');
 const { assertReserveShiftTransition } = require('./reserve-shift-policy');
-const { validateAttendanceEdit, stampReserveCalculationVersion, assertCourseDayCompatible } = require('./attendance-hours-calculator');
+const { validateAttendanceEdit, validateAttendanceWriteReason, stampReserveCalculationVersion, assertCourseDayCompatible } = require('./attendance-hours-calculator');
 const COLLECTIONS = Object.freeze({
   events: 'attendance_correction_events', receipts: 'attendance_correction_receipts',
   jobs: 'attendance_correction_notification_jobs'
@@ -286,6 +286,8 @@ function createAttendanceCorrections({ db, auth, HttpsError, serverTimestamp,
         try { prepared.forEach((v,i) => { validateAttendanceEdit(v,before[i]); stampReserveCalculationVersion(v,before[i]); }); }
         catch (e) { fail(e.code === 'failed-precondition' ? 'failed-precondition' : 'invalid-argument',
           e.code === 'failed-precondition' ? e.message : 'שעות זהות דורשות יום סיום מאוחר מפורש.'); }
+        try { prepared.forEach((value,i) => validateAttendanceWriteReason(value,before[i])); }
+        catch (error) { fail('invalid-argument', error.message); }
       }
       const outputs = prepared.map(v => v === null ? null : derived(structuredClone(v), structuredClone(config)));
       if (r.intent.operation === 'create' || r.intent.operation === 'update') {

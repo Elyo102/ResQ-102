@@ -1,4 +1,4 @@
-import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h46';
+import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h47';
 
 const METHODS = Object.freeze({ reserve:'reserveHrAttachment', upload:'uploadHrAttachment',
   resume:'resumeHrAttachment', list:'listHrAttachments', download:'downloadHrAttachment' });

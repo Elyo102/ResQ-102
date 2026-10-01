@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h46">
-<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h46">
+<link rel="stylesheet" href="./theme.css?v=42h47">
+<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h47">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -340,20 +340,19 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
       </div>
 
       <div class="tot">
-        <div><div class="v" id="tHours">0</div><div class="k">שעות שנשמרו</div></div>
-        <div><div class="v" id="tDays">0</div><div class="k">ימים שדווחו</div></div>
+        <div><div class="v" id="tHours">0</div><div class="k">שעות בדוח המוצג · כולל ימים שטרם אושרו</div></div>
+        <div><div class="v" id="tDays">0</div><div class="k">ימים בדוח המוצג</div></div>
         <div><div class="v soft" id="tSug">0</div><div class="k">ימים לפי הסידור שטרם נשמרו</div></div>
       </div>
 
       <section aria-label="שלבי דיווח השעות" class="hours-steps">
-        <div><h3>1 · הכנת טיוטה</h3><p class="hint">שמירת ימים חסרים לפי הסידור כטיוטה בלבד. דיווחים קיימים לא יוחלפו; יש לבדוק מה עבדת בפועל.</p>
-          <button type="button" class="btn go hide" id="btnFill">הכן ושמור טיוטה מהסידור</button></div>
-        <div><h3>2 · בדיקה ותיקון</h3><p class="hint">בדוק את ימי החודש, השעות וההיעדרויות. סידור מתוכנן אינו אישור שעבדת.</p>
+        <div><h3>בדיקה ועריכה</h3><p class="hint">הדוח מוצג אוטומטית. ימים מהסידור שטרם דיווחת מסומנים בנפרד ואינם אישור שעבדת.</p>
           <a class="btn" href="#attendanceDays">בדיקת ימי החודש</a>
           <button type="button" class="btn" id="btnView">הצג סיכום חודשי</button></div>
-        <div><h3>3 · אישור ושליחה</h3><p class="hint">לאחר הבדיקה, פתח את הסיכום ואשר במפורש. משאבי אנוש יכולה לעיין גם בטיוטה שנשמרה.</p>
+        <div><h3>אישור ושליחה</h3><p class="hint">בדוק ואשר במפורש את הימים והשעות. משאבי אנוש יכולה לעיין גם בדיווחים שטרם נשלחו.</p>
           <button type="button" class="btn go hide" id="btnSubmit">בדקתי ואישרתי את הדיווחים שלי</button></div>
       </section>
+      <button type="button" id="btnFill" hidden>שמירת ימים חסרים מהסידור</button>
       <p class="hint">פעולות נוספות בהתאם להרשאה ולמצב הדוח</p>
       <div class="row">
         <button type="button" class="btn hide" id="btnSync">תקן לפי הסידור</button>
@@ -428,26 +427,28 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h46';
-import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h46';
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h46';
-import { subStationAvailable } from './stations.js?v=42h46';
-import { renderNav, renderStuckNav } from './nav.js?v=42h46';
-import { MEMBER_ROLES } from './roles.js?v=42h46';
-import { initPWA } from './pwa.js?v=42h46';
-import { watchCallouts } from './callout.js?v=42h46';
-import { errorText, logError } from './error-text.js?v=42h46';
+import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h47';
+import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h47';
+import { createCourseEntry, mountManualDateChooser } from './attendance-course-entry.js?v=42h47';
+import { reportPage } from './report.js?v=42h47';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h47';
+import { subStationAvailable } from './stations.js?v=42h47';
+import { renderNav, renderStuckNav } from './nav.js?v=42h47';
+import { MEMBER_ROLES } from './roles.js?v=42h47';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h47';
+import { watchCallouts } from './callout.js?v=42h47';
+import { errorText, logError } from './error-text.js?v=42h47';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h46';
+  from './rotation.js?v=42h47';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h46';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h47';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, configuredDayOffset, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe,
          reportedAtMs, retroDays, retroLabel }
-  from './hours.js?v=42h46';
+  from './hours.js?v=42h47';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -455,11 +456,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDo
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h46';
+  from './monitored-functions.js?v=42h47';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h46';
+import { initAppCheck } from './appcheck.js?v=42h47';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -478,6 +479,17 @@ const callGetMyAttendanceMonth = httpsCallable(fns, 'getMyAttendanceMonth');
 const callMutateMyAttendanceMonth = httpsCallable(fns, 'mutateMyAttendanceMonth');
 const callListCorrectionAudit = httpsCallable(fns, 'listAttendanceCorrectionAudit');
 const callGetCorrectionAudit = httpsCallable(fns, 'getAttendanceCorrectionAudit');
+const callCreateCourseRequest = httpsCallable(fns, 'createHrRequest');
+const mountCourseEntry = createCourseEntry({ capture: captureMonthWrite, current: target =>
+  !!target && !!ME && !!SUBJ && auth.currentUser?.uid === ME.uid && target.viewer === ME.uid &&
+  target.uid === SUBJ.uid && target.sid === SID && target.auth === authGeneration && target.lifecycle === lifecycleGeneration,
+  currentView: sameMonthWrite,
+  send: async payload => (await callCreateCourseRequest(payload)).data });
+registerPwaUpdateGuard(() => mountCourseEntry.updateGuard());
+function openCourseRequest(key){
+  if (onOther() || locked()) return;
+  mountCourseEntry($('dlg'), key, closeOv); openOv();
+}
 
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
@@ -534,6 +546,9 @@ let guardLoadGeneration = 0;
 let correctionContext = null;
 let courseMonth = null;
 let pendingCorrectionOperation = null;
+let pendingReadyFill = null, pendingReadySubmit = null, readyConfirmBusy = false;
+registerPwaUpdateGuard(() => pendingCorrectionOperation || pendingReadyFill || pendingReadySubmit || readyConfirmBusy
+  ? { safe:false, reason:'פעולת דיווח שעות ממתינה להשלמה.' } : { safe:true });
 const pendingMonthApprovals = new Map();
 let correctionAuditCursor = null;
 let correctionAuditItems = [];
@@ -800,7 +815,7 @@ onAuthStateChanged(auth, async user => {
   lifecycleGeneration++;
   SID = ''; ME = null; SUBJ = null; PEOPLE = []; records = {}; report = null;
   clearAttendanceStaticCache();
-  correctionContext = null; pendingCorrectionOperation = null;
+  correctionContext = null; pendingCorrectionOperation = null; pendingReadyFill = null; pendingReadySubmit = null;
   correctionAuditCursor = null; correctionAuditItems = [];
   monthDataReady = false; subjectGeneration++; monthLoadGeneration++;
   setSubjectWorkspaceVisible(false);
@@ -1299,6 +1314,38 @@ function correctedMonthHours(rows){
   return Number.isFinite(total) ? Math.round(total * 100) / 100 : null;
 }
 
+// View-only union: opening a report never creates attendance or confirms work.
+function readyReportRows(){
+  const rows = projectCourseRows(Object.keys(records).sort().map(key => records[key]), courseMonth);
+  const bt = baseTimes();
+  if (!report || report.status === 'draft') {
+    for (const date of suggestedDays()) rows.push(Object.assign(newRecord(date, {
+      day_type:'regular', shape:'regular', start:bt.start, end:bt.end,
+      end_day:bt.end_day, sub_station:mySite
+    }), { _unconfirmed:true, _invalidConfiguredTime:bt.end_day === null }));
+  }
+  return rows.sort((a,b) => a.date.localeCompare(b.date)).map(row => Object.assign({}, row, {
+    hours: row._invalidConfiguredTime ? null : row.course_overlay === true ? row.hours
+      : onOther() && !row._unconfirmed ? reportedHours(row) : calcHours(row, siteHoursOf(row.sub_station))
+  }));
+}
+function attendanceVersionKey(value){
+  if (value === 'absent') return value;
+  if (!value || Object.keys(value).sort().join(',') !== 'nanoseconds,seconds' ||
+      !Number.isSafeInteger(value.seconds) || !Number.isInteger(value.nanoseconds) ||
+      value.nanoseconds < 0 || value.nanoseconds >= 1e9) throw new Error('גרסת דיווח אינה תקינה. יש לרענן.');
+  return value.seconds + ':' + value.nanoseconds;
+}
+function readyReportBasis(rows){
+  return JSON.stringify({ course_revision:courseMonth.revision,
+    rows:rows.map(row => ({ date:row.date, day_type:row.day_type, shape:shapeOf(row),
+      start:row.start || '', end:row.end || '', end_day:row.end_day ?? null,
+      start2:row.start2 || '', end2:row.end2 || '', end_day2:row.end_day2 ?? 0,
+      sub_station:row.sub_station || '', notes:row.notes || '',
+      overtime_reason:row.overtime_reason || '', reason:row.reason || '', hours:row.hours,
+      course_overlay:row.course_overlay === true })) });
+}
+
 function render(){
   const unknownDays = unknownDaysThisMonth();
   $('moLabel').textContent = MONTHS[viewMonth] + ' ' + viewYear +
@@ -1309,11 +1356,12 @@ function render(){
 
   const list = Object.keys(records).sort();
   const saved = projectCourseRows(list.map(k => records[k]), courseMonth);
-  const total = onOther() ? correctedMonthHours(saved) : monthTotal(saved, siteHoursOf);
+  const ready = readyReportRows();
+  const total = correctedMonthHours(ready);
   const sug = suggestedDays();
 
   $('tHours').textContent = total == null ? '— · נתון שעות פגום' : total;
-  $('tDays').textContent  = saved.length;
+  $('tDays').textContent  = ready.length;
   $('tSug').textContent   = sug.length;
   const timelines = $('courseTimelines'); timelines.replaceChildren();
   for (const snapshot of Object.values(courseMonth.periods)) timelines.append(renderCourseTimeline(snapshot, monthKey(viewYear,viewMonth)));
@@ -1322,7 +1370,7 @@ function render(){
   const st = (report && report.status) || 'draft';
   $('state').className = 'state ' + st;
   $('state').textContent = st === 'approved' ? 'מאושר'
-                        : st === 'submitted' ? 'ממתין לאישור' : 'טיוטה';
+                        : st === 'submitted' ? 'ממתין לאישור' : 'טרם אושר';
 
   $('btnFill').classList.toggle('hide', onOther() || !sug.length || locked() || st === 'submitted');
   $('btnSync').classList.toggle('hide', onOther() || locked());
@@ -1332,7 +1380,7 @@ function render(){
   // רכזת שעורכת עבור מישהו אחר יכולה לתקן לו שעות, אבל
   // לא להצהיר בשמו שהוא בדק אותן.
   $('btnSubmit').classList.toggle('hide',
-    onOther() || st !== 'draft' || !saved.length);
+    onOther() || st !== 'draft' || !ready.length);
   $('btnUnsubmit').classList.toggle('hide', onOther() || st !== 'submitted');
   $('btnApprove').classList.toggle('hide', !(CAN_APPROVE && st === 'submitted'));
   $('btnReopen').classList.toggle('hide', !(CAN_APPROVE && onOther() &&
@@ -1468,6 +1516,14 @@ function renderRows(sug){
         ' דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
       b.onclick = () => void editDay(key, rec);
       td.appendChild(b);
+      if (isSug) {
+        const edit = document.createElement('button');
+        edit.type = 'button'; edit.className = 'btn sm'; edit.dataset.date = key;
+        edit.textContent = 'ערוך';
+        edit.setAttribute('aria-label', 'עריכת דיווח ליום ' + DOWS[date.getDay()] + ', ' + Number(p[2]) + '.' + Number(p[1]));
+        edit.onclick = () => void editDay(key, rec);
+        td.appendChild(edit);
+      }
     }
     if (rec && ['reserve','reserve_shift'].includes(rec.day_type)) {
       const order = document.createElement('button');
@@ -1489,7 +1545,7 @@ async function showAttendanceOrder(date) {
   attendanceOrderOpen = true;
   try {
     const target = captureMonthWrite();
-    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h46');
+    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h47');
     if (!sameMonthWrite(target)) return;
     await openAttendanceOrder({ auth, fns, httpsCallable, onIdTokenChanged,
       target_uid:target.uid, date, isCurrent:()=>sameMonthWrite(target) });
@@ -1593,7 +1649,7 @@ async function createMissingDays(target, entries){
     entries: entries.slice().sort((a, b) => a.date.localeCompare(b.date))
       .map(entry => ({ date: entry.date, patch: correctionPatch(entry) })) }, 'self-month');
   requireMonthWrite(target);
-  return { created: response.changed_count, skipped: entries.length - response.changed_count };
+  return { created: response.data.changed_count, skipped: entries.length - response.data.changed_count };
 }
 async function refreshAfterCreation(target, result){
   if (!sameMonthWrite(target)) return false;
@@ -1682,9 +1738,12 @@ $('btnStop').onclick = async () => {
 
 $('btnManual').onclick = () => {
   if (onOther()) { msg('דיווח ידני יש לפתוח דרך שורת היום המתועדת.', 'err'); return; }
-  const now = new Date();
-  void editDay(dateKey(now.getFullYear(), now.getMonth(), now.getDate()),
-          records[dateKey(now.getFullYear(), now.getMonth(), now.getDate())]);
+  if (locked() || !monthDataReady) return;
+  const target = captureMonthWrite();
+  mountManualDateChooser($('dlg'), { month: target.month, today: localToday(),
+    current: () => sameMonthWrite(target), choose: key => void editDay(key, records[key]),
+    course: openCourseRequest, cancel: closeOv });
+  openOv();
 };
 
 // ---------- תיקון וחישוב מחדש ----------
@@ -1903,7 +1962,7 @@ async function editDay(key, rec){
   const types = DAY_TYPES.filter(t => t.id !== 'reserve_shift' || canSelectReserveShift(rec?.day_type)).map(t =>
     '<option value="' + t.id + '"' + (t.id === v.day_type ? ' selected' : '') +
     '>' + t.he + (REASON_TYPES.indexOf(t.id) !== -1 ? reasonMark : '') +
-    '</option>').join('');
+    '</option>').join('') + (!onOther() ? '<option value="course">קורס · בקשה לתקופה באישור HR</option>' : '');
   const shapes = SHAPES.map(s =>
     '<option value="' + s.id + '"' + (s.id === shape0 ? ' selected' : '') +
     '>' + s.he + (s.id === 'continued' ? reasonMark : '') +
@@ -1921,6 +1980,7 @@ async function editDay(key, rec){
       : (key < localToday() ? '<p class="retro retro-note">היום הזה כבר עבר. הדיווח יסומן כרטרואקטיבי.</p>' : '')) +
     '<div class="hint" id="dHint"></div>' +
     '<label for="dType">סוג היום</label><select id="dType">' + types + '</select>' +
+    (!onOther() ? '<button type="button" class="btn" id="dCourseRequest">קורס · בקשה לתקופה באישור HR</button>' : '') +
 
     '<div id="dTimes">' +
       '<label for="dShape">צורת המשמרת</label><select id="dShape">' + shapes + '</select>' +
@@ -1971,6 +2031,10 @@ async function editDay(key, rec){
       '<button type="button" class="btn" id="dCancel">ביטול</button>' +
     '</div>';
   openOv();
+
+  if ($('dCourseRequest')) $('dCourseRequest').onclick = () => {
+    if (sameMonthWrite(editTarget)) openCourseRequest(key);
+  };
 
   // הצורה קובעת את חישוב היממות. שעות זהות דורשות בחירה מפורשת,
   // ולא ניחוש שעלול להפוך לחיצה כפולה למשמרת של 24 שעות.
@@ -2070,6 +2134,7 @@ async function editDay(key, rec){
   ['dShape','dSite','dFullDay','dReserveEndDay'].forEach(id => { $(id).onchange = sync; });
   $('dType').onchange = () => {
     $('dFullDay').checked = false;
+    if ($('dType').value === 'course') { if (sameMonthWrite(editTarget)) openCourseRequest(key); return; }
     if ($('dType').value === 'reserve_shift') {
       $('dShape').value = 'regular';
       $('dStart').value = '07:00'; $('dEnd').value = '07:00';
@@ -2084,6 +2149,7 @@ async function editDay(key, rec){
 
   $('dSave').onclick = async () => {
     if (!sameMonthWrite(editTarget)) return;
+    if ($('dType').value === 'course') { openCourseRequest(key); return; }
     const cur = current();
     const t   = cur.day_type;
     const sh  = cur.shape;
@@ -2227,7 +2293,19 @@ async function writeReport(status){
     expected_version: records[key]._expected_version }));
   if (operation === 'submit') intent.expected_course_revision = courseMonth.revision;
   requireMonthWrite(target);
-  await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
+  if (operation === 'submit') {
+    const frozen = JSON.parse(JSON.stringify(intent));
+    frozen.days.forEach(day => { Object.freeze(day.expected_version); Object.freeze(day); });
+    Object.freeze(frozen.days); Object.freeze(frozen.expected_report_version); Object.freeze(frozen);
+    pendingReadySubmit = Object.freeze({ target:Object.freeze({...target}), intent:frozen });
+  }
+  try {
+    await callCorrection(callMutateMyAttendanceMonth, intent, 'self-month');
+    if (operation === 'submit') pendingReadySubmit = null;
+  } catch (error) {
+    if (!pendingCorrectionOperation && operation === 'submit') pendingReadySubmit = null;
+    throw error;
+  }
   requireMonthWrite(target);
   clearAttendanceStaticCache();
   await loadMonth();
@@ -2241,10 +2319,14 @@ function submitPreview(){
   if (!monthDataReady) return;
   const previewTarget = captureMonthWrite();
   const st = (report && report.status) || 'draft';
-  const saved = projectCourseRows(Object.keys(records).sort().map(k => records[k]),courseMonth);
+  const saved = readyReportRows();
   const s = monthSummary(saved, siteHoursOf, shiftHoursFor);
-  if (onOther()) s.hours = correctedMonthHours(saved);
-  const sug = suggestedDays();
+  s.hours = correctedMonthHours(saved);
+  const proposed = saved.filter(row => row._unconfirmed);
+  const sug = proposed.map(row => row.date);
+  const basis = readyReportBasis(saved);
+  const originalVersions = Object.fromEntries(Object.entries(records).map(([key,row]) => [key,attendanceVersionKey(row._expected_version)]));
+  const reportVersion = attendanceVersionKey(report ? (report._expected_version || report.expected_version) : 'absent');
 
   const typeLines = DAY_TYPES.concat([{id:'course',he:'קורס'}])
     .filter(t => s.byType[t.id])
@@ -2269,7 +2351,7 @@ function submitPreview(){
     '<div class="sum-big">' + (s.hours == null ? '— · נתון שעות פגום' : s.hours) + '</div>' +
     '<div class="hint" style="text-align:center;margin-bottom:14px">שעות בסך הכל</div>' +
 
-    '<div class="sum-line"><span>ימים שדווחו</span><b>' + s.days + '</b></div>' +
+    '<div class="sum-line"><span>ימים בדוח המוצג</span><b>' + s.days + '</b></div>' +
     typeLines +
     (s.split ? '<div class="sum-line"><span>משמרות מפוצלות</span><b>' +
                 s.split + '</b></div>' : '') +
@@ -2277,8 +2359,12 @@ function submitPreview(){
                 s.overtime.length + '</b></div>' : '') +
     (s.overtimeHours ? '<div class="sum-line"><span>שעות נוספות</span><b>' +
                 s.overtimeHours + '</b></div>' : '') +
-    (sug.length ? '<div class="sum-line sum-bad"><span>ימים בסידור שלא דיווחת</span><b>' +
+    (sug.length ? '<div class="sum-line sum-bad"><span>ימים מהסידור שטרם אושרו</span><b>' +
                 sug.length + '</b></div>' : '') +
+    (sug.length ? '<div class="note">' + (onOther() ? 'תכנון שטרם אושר על ידי העובד:' : 'אישור ושליחה ישמרו רק את הימים החסרים הבאים, ללא שינוי דיווחים קיימים:') + '</div><ul>' + proposed.map(row =>
+      '<li>' + esc(row.date) + ' · ' + esc(row.start || 'חסרה כניסה') + '–' + esc(row.end || 'חסרה יציאה') +
+      (row.end_day === 1 ? ' למחרת' : row.end_day === 2 ? ' מחרתיים' : '') +
+      ' · ' + esc(row.hours == null ? 'חסרות שעות תקינות' : row.hours) + ' שעות</li>').join('') + '</ul>' : '') +
     otLines +
 
     (s.unexplained.length
@@ -2287,9 +2373,8 @@ function submitPreview(){
         'צריך להשלים אותם לפני שליחה.</div></div>'
       : '') +
 
-    (sug.length && !s.unexplained.length
-      ? '<div class="hint" style="margin-top:14px">יש ' + sug.length +
-        ' ימים שהסידור אומר שעבדת בהם ולא דיווחת. אפשר לשלוח בכל זאת.</div>'
+    (sug.length && !onOther() && !s.unexplained.length
+      ? '<div class="hint" style="margin-top:14px">הסידור הוא תכנון בלבד. בלחיצה על אישור ושליחה אני מאשר שהימים והשעות המוצגים משקפים את עבודתי בפועל.</div>'
       : '') +
 
     (st === 'approved'
@@ -2299,27 +2384,131 @@ function submitPreview(){
       : '') +
 
     '<div class="acts">' +
-      ((st === 'draft' && !onOther() && !s.unexplained.length)
+      ((st === 'draft' && !onOther() && saved.length && s.hours !== null && !s.unexplained.length)
         ? '<button type="button" class="btn go" id="pSend">אישור ושליחה</button>' : '') +
+      (pendingReadyFill && sameCorrectionOrigin(pendingReadyFill.target) && !onOther()
+        ? '<button type="button" class="btn" id="pRecover">בדיקה חוזרת של אותה שמירה</button>' : '') +
+      (pendingReadySubmit && sameCorrectionOrigin(pendingReadySubmit.target) && !onOther()
+        ? '<button type="button" class="btn" id="pRecoverSubmit">בדיקה חוזרת של אותה שליחה</button>' : '') +
+      '<button type="button" class="btn" id="pDownload"' + (s.hours === null ? ' disabled' : '') + '>שמירה במכשיר</button>' +
+      '<button type="button" class="btn" id="pShare"' + (s.hours === null ? ' disabled' : '') + '>שיתוף · WhatsApp / מייל</button>' +
       '<button type="button" class="btn" id="pBack">חזרה לדוח</button>' +
-    '</div>';
+    '</div><p class="hint">השיתוף פותח את אפשרויות המכשיר, אם נתמכות. בחר בעצמך נמען. קובץ שנשמר או שותף אינו נמחק ביציאה מהמערכת.</p>';
   openOv();
 
   if ($('pSend')) $('pSend').onclick = async () => {
     if (onOther()) { msg('רק העובד עצמו רשאי לשלוח את הצהרת הדוח.', 'err'); return; }
     if (!sameMonthWrite(previewTarget)) return;
+    if (readyConfirmBusy) return;
+    readyConfirmBusy = true;
     $('pSend').disabled = true;
     try {
-      await writeReport('submitted');
+      if (pendingCorrectionOperation) throw new Error('פעולה קודמת ממתינה לאישור השרת. יש להשלים את אותה פעולה לפני אישור הדוח.');
+      if (!(await ensureFreshAttendanceForWrite()) || !sameMonthWrite(previewTarget)) return;
+      if (basis !== readyReportBasis(readyReportRows())) {
+        submitPreview(); msg('נתוני הדוח השתנו. בדוק ואשר את הסיכום העדכני.', 'info'); return;
+      }
+      if (proposed.length) {
+        pendingReadyFill = Object.freeze({ target:Object.freeze({...previewTarget}),
+          entries:Object.freeze(proposed.map(row => Object.freeze(JSON.parse(JSON.stringify(row))))) });
+        await createMissingDays(previewTarget, pendingReadyFill.entries);
+        pendingReadyFill = null;
+      }
       if (!sameMonthWrite(previewTarget)) return;
+      const expectedGeneration = monthLoadGeneration + 1;
+      const loaded = await loadMonth();
+      if (!loaded || monthLoadGeneration !== expectedGeneration || !sameCorrectionOrigin(previewTarget)) return;
+      const refreshed = captureMonthWrite();
+      const unchanged = basis === readyReportBasis(readyReportRows()) &&
+        attendanceVersionKey(report ? report._expected_version : 'absent') === reportVersion &&
+        Object.entries(originalVersions).every(([key,version]) => records[key] && attendanceVersionKey(records[key]._expected_version) === version) &&
+        proposed.every(row => !!records[row.date]) && !suggestedDays().length;
+      if (!unchanged) {
+        submitPreview(); msg('הימים שנשמרו זמינים בדוח, אך הנתונים השתנו. נדרש אישור מחדש לפני שליחה.', 'info'); return;
+      }
+      requireMonthWrite(refreshed);
+      await writeReport('submitted');
+      if (!sameCorrectionOrigin(previewTarget)) return;
       closeOv(false);
       msg('הדוח נשלח לאישור. עד שיאושר עוד אפשר לתקן.', 'ok');
       render(); focusAfterRender();
     } catch (e) {
-      if (!sameMonthWrite(previewTarget)) return;
-      msg(userError('attendance.submitReport', e, 'השליחה נכשלה.'), 'err');
-      if (sameMonthWrite(previewTarget) && $('pSend')) $('pSend').disabled = false;
+      if (!sameCorrectionOrigin(previewTarget)) return;
+      if (!pendingCorrectionOperation) pendingReadyFill = null;
+      if (pendingReadyFill || pendingReadySubmit) submitPreview();
+      msg(e.uncertain || pendingCorrectionOperation
+        ? 'לא התקבל אישור סופי מהשרת. ייתכן שנשמרו ימים, אך הדוח לא אושר אוטומטית. אין ליצור פעולה חדשה לפני בירור הפעולה הממתינה.'
+        : userError('attendance.submitReport', e, 'השליחה נכשלה. דיווחים שנשמרו נשארו בדוח.'), 'err');
+      if (!pendingCorrectionOperation && sameMonthWrite(previewTarget) && $('pSend')) $('pSend').disabled = false;
+    } finally { readyConfirmBusy = false; }
+  };
+  if ($('pRecover')) $('pRecover').onclick = async () => {
+    const pending = pendingReadyFill;
+    if (!pending || readyConfirmBusy || onOther() || !sameCorrectionOrigin(pending.target) || !sameMonthWrite(previewTarget)) return;
+    readyConfirmBusy = true; $('pRecover').disabled = true;
+    try {
+      const target = captureMonthWrite();
+      await createMissingDays(target, pending.entries); // Same frozen payload; callCorrection retains the original request ID.
+      pendingReadyFill = null;
+      if (!sameMonthWrite(target)) return;
+      const expected = monthLoadGeneration + 1;
+      if (!(await loadMonth()) || monthLoadGeneration !== expected || !sameCorrectionOrigin(target)) return;
+      submitPreview(); msg('תוצאת אותה שמירה התקבלה. בדוק את הדוח המעודכן ואשר מחדש; הדוח לא נשלח אוטומטית.', 'info');
+    } catch (error) {
+      if (!sameCorrectionOrigin(pending.target)) return;
+      if (!pendingCorrectionOperation) pendingReadyFill = null;
+      msg('עדיין לא הושלמה בדיקת אותה פעולה. לא נשלח דוח ולא נוצרה שמירה חדשה.', 'info');
+      if ($('pRecover')) $('pRecover').disabled = false;
+    } finally { readyConfirmBusy = false; }
+  };
+  if ($('pRecoverSubmit')) $('pRecoverSubmit').onclick = async () => {
+    const pending = pendingReadySubmit;
+    if (!pending || readyConfirmBusy || onOther() || !sameCorrectionOrigin(pending.target) || !sameMonthWrite(previewTarget)) return;
+    readyConfirmBusy = true; $('pRecoverSubmit').disabled = true;
+    try {
+      const target = captureMonthWrite();
+      await callCorrection(callMutateMyAttendanceMonth, pending.intent, 'self-month');
+      pendingReadySubmit = null;
+      if (!sameMonthWrite(target)) return;
+      const expected = monthLoadGeneration + 1;
+      if (!(await loadMonth()) || monthLoadGeneration !== expected || !sameCorrectionOrigin(target)) return;
+      submitPreview(); msg(report?.status === 'submitted' ? 'השליחה התקבלה. הדוח ממתין לאישור.'
+        : report?.status === 'approved' ? 'הדוח כבר אושר.' : 'תוצאת הפעולה התקבלה. מוצג מצב הדוח העדכני.', 'info');
+    } catch (error) {
+      if (!sameCorrectionOrigin(pending.target)) return;
+      if (!pendingCorrectionOperation) pendingReadySubmit = null;
+      msg('עדיין לא התקבל אישור סופי לאותה שליחה. לא נוצרה פעולה חדשה.', 'info');
+      if ($('pRecoverSubmit')) $('pRecoverSubmit').disabled = false;
+    } finally { readyConfirmBusy = false; }
+  };
+  const exportFile = () => {
+    requireMonthWrite(previewTarget);
+    const preview = st !== 'approved' || proposed.length > 0;
+    const rows = saved.map(row => Object.assign({}, row, {
+      day_type_he:row.course_overlay === true ? 'קורס' : dayTypeHe(row.day_type),
+      site_name:(sites.find(site => site.id === row.sub_station) || {}).name || '',
+      notes:(row._unconfirmed ? 'לפי הסידור בלבד · טרם אושר · ' : '') + (row.notes || ''),
+      reason:row._unconfirmed ? 'לפי הסידור בלבד · טרם אושר' : row.overtime_reason || row.reason || ''
+    }));
+    const page = reportPage({ full_name:SUBJ.full_name || '', month:previewTarget.month,
+      station_name:SID, status:preview ? 'draft' : st, total:s.hours }, rows);
+    const banner = preview ? '<p style="border:2px solid #b45b00;padding:12px">תצוגה מקדימה · טרם אושר. ימים המסומנים לפי הסידור אינם אישור נוכחות.</p>' : '';
+    return new File([page.replace('<body>', '<body>' + banner)],
+      'ResQ-hours-' + previewTarget.month + (preview ? '-PREVIEW' : '') + '.html', { type:'text/html' });
+  };
+  $('pDownload').onclick = () => {
+    if (!sameMonthWrite(previewTarget)) return;
+    const file = exportFile(), url = URL.createObjectURL(file), link = document.createElement('a');
+    link.href = url; link.download = file.name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+  };
+  $('pShare').onclick = async () => {
+    if (!sameMonthWrite(previewTarget)) return;
+    const file = exportFile();
+    if (!navigator.share || !navigator.canShare?.({ files:[file] })) {
+      msg('המכשיר אינו תומך בשיתוף קובץ זה. שמור אותו במכשיר וצרף ידנית ל־WhatsApp או למייל.', 'info'); return;
     }
+    try { await navigator.share({ files:[file], title:'דוח שעות ResQ' }); }
+    catch (error) { if (error.name !== 'AbortError' && sameMonthWrite(previewTarget)) msg('השיתוף לא הושלם. ניתן לשמור את הקובץ ולצרף ידנית.', 'info'); }
   };
   $('pBack').onclick = closeOv;
 }

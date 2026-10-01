@@ -1,6 +1,6 @@
 'use strict';
 const {createHash}=require('node:crypto');
-const {createOperationalProjection,SOURCE}=require('./schedule-operational-projection');
+const {createCourseAssignmentReader,LABEL}=require('./attendance-course-assignment');
 const {createOpsMemberIdentity,MEMBER_ROLES}=require('./ops-member-identity');
 const access=require('./schedule-access');
 const plain=v=>!!v&&typeof v==='object'&&!Array.isArray(v)&&[Object.prototype,null].includes(Object.getPrototypeOf(v));
@@ -15,7 +15,7 @@ const validMonth=v=>typeof v==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(v);
 const validEmp=v=>typeof v==='string'&&v.length>0&&v.length<=64&&!/[\u0000-\u001f\u007f/]/.test(v);
 const KEY=/^[a-f0-9]{64}$/;
 const MAX_PERIODS=32;
-function createCourseCreditService({db,auth,HttpsError,clock=Date.now,rolloutPolicy}){
+function createCourseCreditService({db,auth,HttpsError,clock=Date.now,rolloutPolicy,readAssignmentBasis=createCourseAssignmentReader({db})}){
   const fail=(code,message)=>{throw new HttpsError(code,message);};
   const identity=createOpsMemberIdentity({db,HttpsError});
   const root=sid=>db.collection('stations').doc(sid);
@@ -55,7 +55,7 @@ function createCourseCreditService({db,auth,HttpsError,clock=Date.now,rolloutPol
   function validateSnapshot(s,uid,emp){
     if(!plain(s)||s.schema!=='course-credit-v1'||s.owner_uid!==uid||s.employee_number!==emp
       ||!Number.isSafeInteger(s.approval_revision)||s.approval_revision<1||!KEY.test(s.source_digest||'')
-      ||s.source_label!=='original-crew-cycle-at-hr-approval'||!Array.isArray(s.days)||s.days.length>400
+      ||!['original-crew-cycle-at-hr-approval',LABEL].includes(s.source_label)||!Array.isArray(s.days)||s.days.length>400
       ||typeof s.crew!=='string'||typeof s.role!=='string'||!plain(s.source)||hash(s.source)!==s.source_digest)fail('failed-precondition','Course approval snapshot unavailable.');
     const dates=range(s.from_date,s.to_date),seen=new Set();let total=0;
     for(const item of s.days){
@@ -93,31 +93,21 @@ function createCourseCreditService({db,auth,HttpsError,clock=Date.now,rolloutPol
     return d;
   }
   async function buildSnapshot(tx,{sid,owner_uid,from_date,to_date,nextRevision},person){
-    const dates=range(from_date,to_date),query=await tx.get(root(sid).collection('rotations').limit(21));
-    if(!query||!Array.isArray(query.docs)||query.docs.length>20)fail('resource-exhausted','Course rotation coverage unavailable.');
-    const rows=query.docs.map(s=>({id:s.id,value:s.data(),version:stamp(s.updateTime)})).sort((a,b)=>a.id.localeCompare(b.id));
-    if(rows.some(r=>!plain(r.value)||!r.version))fail('failed-precondition','Versioned course cycle unavailable.');
+    const dates=range(from_date,to_date);
     const crew=typeof person.profile.crew==='string'?person.profile.crew:person.profile.shift;
     const role=person.profile.role;
     if(typeof crew!=='string'||!crew||typeof role!=='string')fail('failed-precondition','Original employee crew unavailable.');
-    let projection;
-    try{projection=createOperationalProjection({source:SOURCE.LEGACY,station_id:sid,
-      roster:[{uid:owner_uid,crew,active:true}],legacy:{rotations:rows.map(r=>({id:r.id,...r.value})),overrides:[],approved_swaps:[]}});}
-    catch(_){fail('failed-precondition','Original course cycle is incomplete or ambiguous.');}
-    const active=rows.filter(r=>r.value.is_active!==false),anchor=active[0].value.anchor_date,cycle=active[0].value.cycle_days;
-    const days=[];
-    for(const day of dates){
-      if(!projection.isPersonWorking(owner_uid,day))continue;
-      const ordinal=Math.round((Date.parse(day+'T00:00Z')-Date.parse(anchor+'T00:00Z'))/86400000),position=((ordinal%cycle)+cycle)%cycle;
-      const selected=active.find(r=>r.value.position_in_cycle===position);
-      if(!selected||selected.value.crew!==crew)fail('failed-precondition','Original course day cannot be resolved.');
-      days.push({date:day,credit_hours:hours(selected.value[role==='commander'?'commander_shift_hours':'shift_hours'])});
-    }
-    const source=canonical({employee_version:person.version,crew,role,rotations:rows.map(r=>({id:r.id,version:r.version,
-      crew:r.value.crew,anchor_date:r.value.anchor_date,cycle_days:r.value.cycle_days,position_in_cycle:r.value.position_in_cycle,
-      is_active:r.value.is_active!==false,shift_hours:r.value.shift_hours,commander_shift_hours:r.value.commander_shift_hours}))});
+    let basis;
+    try{basis=await readAssignmentBasis(tx,{sid,uid:owner_uid,from:from_date,to:to_date,crew,role});}
+    catch(_){fail('failed-precondition','Authoritative assigned shifts or official standards are unavailable.');}
+    if(!plain(basis)||basis.source_label!==LABEL||!plain(basis.source)||!Array.isArray(basis.days)||basis.days.length>400)fail('failed-precondition','Invalid course assignment basis.');
+    const seen=new Set(),days=basis.days.map(item=>{
+      if(!plain(item)||!dates.includes(item.date)||seen.has(item.date))fail('failed-precondition','Invalid assigned course dates.');
+      seen.add(item.date);return {date:item.date,credit_hours:hours(item.credit_hours)};
+    }).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+    const source=canonical({employee_version:person.version,crew,role,assignment_basis:basis.source});
     return {schema:'course-credit-v1',approval_revision:nextRevision,from_date,to_date,owner_uid,employee_number:person.emp,crew,role,days,
-      total_hours:Math.round(days.reduce((n,d)=>n+d.credit_hours,0)*100)/100,source_label:'original-crew-cycle-at-hr-approval',source_digest:hash(source),source};
+      total_hours:Math.round(days.reduce((n,d)=>n+d.credit_hours,0)*100)/100,source_label:LABEL,source_digest:hash(source),source};
   }
   async function prepareDecision(tx,{ctx,caseBefore,decision,nextRevision}){
     if(!ctx||(!ctx.super&&ctx.role!=='hr_coordinator')||!plain(caseBefore)||caseBefore.kind!=='course'

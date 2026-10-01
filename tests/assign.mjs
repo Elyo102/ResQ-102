@@ -252,6 +252,7 @@ const allowed = [
   'reopened_by: ME.uid'            // מי פתח מחדש
 ];
 const exactViewerGuards = new Set([
+  '!!target && !!ME && !!SUBJ && auth.currentUser?.uid === ME.uid && target.viewer === ME.uid &&',
   'return { sid: SID, uid: SUBJ.uid, emp: String(SUBJ.emp), viewer: ME.uid,',
   'target.uid === SUBJ.uid && target.emp === String(SUBJ.emp) && target.viewer === ME.uid &&',
   'SUBJ.uid === target.uid && String(SUBJ.emp) === target.emp && ME.uid === target.viewer &&'
@@ -263,6 +264,24 @@ strays.forEach(function (o) {
   console.log('  ✗ שורה ' + o.n + ' עדיין על ME: ' + o.t.trim().slice(0, 70));
 });
 is('אין נתיב נתונים שנשאר על ME', strays.length, 0);
+// The new course callback compares the authenticated viewer separately from
+// the payroll subject. An exact callback proof cannot allow ME as data owner.
+const courseFence = `const mountCourseEntry = createCourseEntry({ capture: captureMonthWrite, current: target =>
+  !!target && !!ME && !!SUBJ && auth.currentUser?.uid === ME.uid && target.viewer === ME.uid &&
+  target.uid === SUBJ.uid && target.sid === SID && target.auth === authGeneration && target.lifecycle === lifecycleGeneration,
+  currentView: sameMonthWrite,`;
+const courseFenceValid = source => source.split(courseFence).length === 2;
+ok('course viewer and subject fence is exact and unique', courseFenceValid(att));
+for (const [name, before, after] of [
+  ['viewer', 'target.viewer === ME.uid', 'target.viewer === SUBJ.uid'],
+  ['subject', 'target.uid === SUBJ.uid', 'target.uid === ME.uid'],
+  ['data appended', 'target.viewer === ME.uid &&', 'target.viewer === ME.uid && uid: ME.uid,'],
+  ['auth generation', 'target.auth === authGeneration', 'true'],
+  ['view generation', 'currentView: sameMonthWrite', 'currentView: () => true']
+]) {
+  const mutated = att.replace(courseFence, courseFence.replace(before, after));
+  ok('course fence mutation rejected: ' + name, !courseFenceValid(mutated));
+}
 
 console.log('חתימת התיעוד');
 ok('stamp מוגדרת',            /function stamp\(body\)/.test(att));

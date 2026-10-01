@@ -281,6 +281,8 @@ for (const date of guardRace.manualDates.slice(0, 4)) {
     }
   }, date);
   await page.locator('#ov').waitFor({ state:'visible', timeout:3000 });
+  await page.locator('#manualDate').fill(date);
+  await page.locator('#manualChoose').click();
   const type = await page.locator('#dType').inputValue();
   const notes = await page.locator('#dNotes').inputValue();
   await page.locator('#dCancel').click({ force:true });

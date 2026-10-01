@@ -38,6 +38,7 @@ try{
   for(const actor of [uid,hr,'super_'+suffix])await db.doc('registration_terms_active/'+actor).set({consent_key:'1.3|2026-09-24'});
   for(const [actor,role,number]of [[uid,'firefighter',emp],[hr,'hr_coordinator','hr_'+emp]]){
     await root.collection('users').doc(actor).set({uid:actor,stationId:sid,role,employee_number:number,crew:'A',active:true});
+    await root.collection('roster').doc(actor).set({station_id:sid,full_name:'Synthetic '+role,crew:'A',active:true});
     await db.doc('emp_index/'+number).set({uid:actor,stationId:sid,active:true});
     await db.doc('directory/'+actor).set({uid:actor,stationId:sid,role,employee_number:number,active:true});
   }
@@ -50,7 +51,11 @@ try{
     approved=await decide(created,'approved','approve_course_native');
     const value=(await root.collection('hr_requests').doc(created.case_id).get()).data().course_snapshot;
     assert.equal(value.total_hours,24);assert.deepEqual(value.days.map(x=>x.date),[day,month+'-04']);
-    assert.equal(Object.hasOwn(value.source.rotations[0],'commander_shift_hours'),false);
+    assert.equal(value.source_label,'assigned-schedule-at-hr-approval-v2');
+    assert.equal(value.source.assignment_basis.schema,'course-assignment-basis-v2');
+    assert.ok(value.source.assignment_basis.documents.some(x=>x.path===root.path+'/roster/'+uid&&x.version&&x.digest));
+    assert.ok(value.source.assignment_basis.documents.some(x=>x.path===root.path+'/rotations/r0'&&x.version&&x.digest));
+    assert.doesNotThrow(()=>JSON.stringify(value));
     for(const original of rotations.docs)assert.ok(original.updateTime.isEqual((await original.ref.get()).updateTime));
   });
   await check('both legacy create routes deny credited days and retain unaffected days',async()=>{

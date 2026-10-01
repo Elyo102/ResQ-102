@@ -68,6 +68,8 @@ try {
     await page.waitForFunction(() => document.querySelector('#btnManual') && !document.querySelector('#btnManual').disabled);
     await page.addStyleTag({content:'#coWrap{display:none!important}'});
     await page.locator('#btnManual').click();
+    await page.locator('#manualDate').waitFor({state:'visible'});
+    await page.locator('#manualChoose').click();
     await page.locator('#dSave').waitFor({state:'visible'});
     await page.evaluate(fail => {
       window.__retainedSave = document.querySelector('#dSave').onclick;
@@ -189,7 +191,7 @@ try {
       for (let d = 1; d <= last; d += 1) dates.push(key(d));
       if (mode === 'unknown-dates') window.__STUB_UNKNOWN_DATES = dates;
       else window.__STUB_CREW_OF = { 'stub-uid': undefined, u1:'C', u2:'A', u3:'A', u4:'B', u5:'B' };
-      // the guard is TODAY — #btnManual opens today's edit dialog
+      // The guard is TODAY; the manual date chooser explicitly selects it below.
       window.__ATTENDANCE_TEST_GUARD_DATE = key(now.getDate());
       const plan = window.__CALLABLE_PLAN && window.__CALLABLE_PLAN.getMyGuardAttendance;
       if (plan && plan[0]) plan[0].data.guards[0].date = key(now.getDate());
@@ -212,6 +214,8 @@ try {
     const guardDate = await page.evaluate(() => window.__ATTENDANCE_TEST_GUARD_DATE);
     assert.equal(await page.evaluate((key) => typeof key === 'string' && key.length === 10, guardDate), true);
     await page.evaluate(() => document.querySelector('#btnManual').click());
+    await page.locator('#manualDate').fill(guardDate);
+    await page.locator('#manualChoose').click();
     await page.locator('#dType').waitFor();
     assert.equal(await page.locator('#dType').inputValue(), 'regular',
       variant + ': an unknown day must not default to an off-duty guard');

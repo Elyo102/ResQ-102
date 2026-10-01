@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ResQ — רכבים מבצעיים</title>
-  <link rel="stylesheet" href="./theme.css?v=42h46">
+  <link rel="stylesheet" href="./theme.css?v=42h47">
   <link rel="manifest" href="./manifest.json">
   <style>
     *{box-sizing:border-box}
@@ -146,20 +146,20 @@
   </div>
 </main>
 <script type="module">
-  import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h46';
-  import { renderNav, renderStuckNav } from './nav.js?v=42h46';
-  import { MEMBER_ROLES } from './roles.js?v=42h46';
-  import { managesFleet } from './fleet.js?v=42h46';
-  import { shrinkImage } from './faults.js?v=42h46';
-  import { initPWA } from './pwa.js?v=42h46';
-  import { COMPARTMENTS, operationalFleet } from './operational-vehicles-model.js?v=42h46';
+  import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h47';
+  import { renderNav, renderStuckNav } from './nav.js?v=42h47';
+  import { MEMBER_ROLES } from './roles.js?v=42h47';
+  import { managesFleet } from './fleet.js?v=42h47';
+  import { shrinkImage } from './faults.js?v=42h47';
+  import { initPWA } from './pwa.js?v=42h47';
+  import { COMPARTMENTS, operationalFleet } from './operational-vehicles-model.js?v=42h47';
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
   import { getAuth, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
   import { getFirestore, collection, doc, getDoc, getDocs, query, where,
     orderBy, limit, startAfter, runTransaction, serverTimestamp }
     from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-  import { initAppCheck } from './appcheck.js?v=42h46';
-  import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h46';
+  import { initAppCheck } from './appcheck.js?v=42h47';
+  import { getFunctions, httpsCallable } from './monitored-functions.js?v=42h47';
 
   const $ = id => document.getElementById(id);
   const app = initializeApp(firebaseConfig);
