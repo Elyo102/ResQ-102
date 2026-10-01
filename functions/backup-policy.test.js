@@ -11,13 +11,26 @@ test('policy manifest is internally valid and path-unique', () => {
     backupPolicy.DATA_POLICIES.length);
 });
 
+test('worker traversal cursor is rebuildable and never restored as a delivery receipt', () => {
+  const entries=backupPolicy.DATA_POLICIES.filter(item=>item.path==='schedule_runtime_workers/{workerId}');
+  assert.equal(entries.length,1);
+  assert.deepEqual(entries[0], {
+    path:'schedule_runtime_workers/{workerId}',scope:'root',classification:'temporary',
+    monitorPolicy:'none',backupPolicy:'exclude',restorePolicy:'do_not_restore',
+    sensitivity:'operational',retention:'while_station_exists',
+    reason:'Rebuildable traversal cursor, not a delivery receipt. Reset rescans pending work; no TTL or deletion enabled.',
+    humanReadable:'forbidden'
+  });
+  assert.equal(backupPolicy.getRetentionDecision(entries[0].path).automaticDeletionAuthorized,false);
+});
+
 test('missing or empty policy manifests fail closed', () => {
   assert.deepEqual(backupPolicy.validatePolicies(null), ['invalid_manifest']);
   assert.deepEqual(backupPolicy.validatePolicies([]), ['empty_manifest']);
 });
 
 test('retention decisions cover all policies without changing the restore catalogue', () => {
-  const legacy = backupPolicy.DATA_POLICIES.filter(item => item.path !== 'security_audit_events/{eventId}');
+  const legacy = backupPolicy.DATA_POLICIES.filter(item => !['security_audit_events/{eventId}', 'schedule_runtime_workers/{workerId}'].includes(item.path));
   assert.equal(legacy.length, 182);
   assert.equal(require('node:crypto').createHash('sha256')
     .update(JSON.stringify(legacy)).digest('hex'),

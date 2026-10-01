@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test:attendance-orders": "node attendance-order.integration.test.mjs",
-    "pretest": "node ../functions/schedule-audit-collision.integration.test.js && node security-audit.test.mjs && node ../functions/schedule-control-reuse.integration.test.js && node ../functions/hr-summary-consistency.integration.test.js",
+    "pretest": "node ../functions/outbox-scan.integration.test.js && node ../functions/outbox-runtime-scan.integration.test.js && node outbox-scan.test.mjs && node ../functions/schedule-audit-collision.integration.test.js && node security-audit.test.mjs && node ../functions/schedule-control-reuse.integration.test.js && node ../functions/hr-summary-consistency.integration.test.js",
     "test": "node swap-resilience.test.mjs && node onboarding-private-isolation.test.mjs && node registration-terms-isolation.test.mjs && node rules.test.mjs && node callout-privacy.test.mjs && node ../functions/callout-delivery.integration.test.js && node schedule-access-isolation.test.mjs && node station-transfer.test.mjs && node fleet.test.mjs && node operational-vehicle-isolation.test.mjs && node hr-private-isolation.test.mjs && node join-campaign-isolation.test.mjs && node system-health-firestore.integration.test.cjs && node saas-isolation.test.mjs && node cost-usage-isolation.test.mjs && node attendance-retro.test.mjs && node reserve-shift.integration.test.mjs && node attendance-order.integration.test.mjs && node attendance-course.integration.test.mjs && node attendance-import-budget.test.mjs"
   },
   "dependencies": {

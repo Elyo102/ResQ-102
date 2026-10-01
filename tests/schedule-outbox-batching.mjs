@@ -145,17 +145,20 @@ function addCollectionGroup(db) {
   db.collectionGroup = function collectionGroup(name) {
     const filters = [];
     let cap = Infinity;
+    let after = '';
     const query = {
       where(field, op, value) {
         assert.equal(op, '==');
         filters.push({ field, value });
         return query;
       },
-      orderBy() { return query; },
+      orderBy(field) { assert.equal(field, '__name__'); return query; },
+      startAfter(ref) { after = ref.path; return query; },
       limit(value) { cap = Number(value); return query; },
       async get() {
         const docs = [];
         for (const path of db._paths('')) {
+          if (path <= after) continue;
           const parts = path.split('/');
           if (parts[parts.length - 2] !== name) continue;
           const value = db._get(path) || {};

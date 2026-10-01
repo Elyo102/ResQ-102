@@ -1,4 +1,5 @@
 'use strict';
+const outboxFairScan = require('./schedule-outbox-fair-scan');
 
 const scheduleAccess = require('./schedule-access');
 const effectiveReaderModule = require('./schedule-effective-reader');
@@ -9726,8 +9727,7 @@ function createScheduleRuntime(deps) {
     // not starve an active retry or a previously queued delivery.
     const collected = new Map();
     for (const status of ['retry', 'sending', 'queued', 'blocked']) {
-      const snap = await db.collectionGroup('schedule_outbox')
-        .where('status', '==', status).limit(100).get();
+      const snap = await outboxFairScan.takeFairPage({ db, FieldPath, collection:'schedule_outbox', status });
       snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     let queued = 0;
@@ -9907,8 +9907,7 @@ function createScheduleRuntime(deps) {
   async function resumeGuardNotificationJobs() {
     const collected = new Map();
     for (const status of ['queued', 'sending']) {
-      const snap = await db.collectionGroup('guard_notification_jobs')
-        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
+      const snap = await outboxFairScan.takeFairPage({ db, FieldPath, collection:'guard_notification_jobs', status });
       snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     const now = Date.parse(clock());
@@ -10244,8 +10243,7 @@ function createScheduleRuntime(deps) {
     const jobs = await resumeGuardNotificationJobs();
     const collected = new Map();
     for (const status of ['retry', 'sending', 'queued']) {
-      const snap = await db.collectionGroup('guard_outbox')
-        .where('status', '==', status).orderBy('created_at', 'asc').limit(100).get();
+      const snap = await outboxFairScan.takeFairPage({ db, FieldPath, collection:'guard_outbox', status });
       snap.docs.forEach((doc) => collected.set(doc.ref.path, doc));
     }
     const now = Date.parse(clock());

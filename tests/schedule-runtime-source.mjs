@@ -29,7 +29,14 @@ const indexes = JSON.parse(read('firestore.indexes.json'));
 const manifest = JSON.parse(read('manifest.json'));
 
 let passed = 0;
-function check(name, fn) { fn(); passed += 1; console.log('✓ ' + name); }
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 || (args.length === 2 && args[0] === '--check-exact' && args[1].trim()),
+  'Usage: node schedule-runtime-source.mjs [--check-exact "exact check name"]');
+const selectedCheck = args.length ? args[1] : null;
+function check(name, fn) {
+  if (selectedCheck !== null && name !== selectedCheck) return;
+  fn(); passed += 1; console.log('✓ ' + name);
+}
 /* קוד בלי הערות — כדי שטענה על קוד לא תסופק על ידי הערה. */
 function stripComments(text) {
   return String(text)
@@ -898,8 +905,8 @@ check('a verified super claim receives every schedule capability without a legac
   assert.ok(runtime.includes('if (ctx.super) return { uid: ctx.uid, role: ctx.role, super: true };'));
 });
 check('guard notification outbox is independent from the monthly publication outbox', () => {
-  assert.ok(runtime.includes("collectionGroup('guard_outbox')"));
-  assert.ok(runtime.includes("collectionGroup('guard_notification_jobs')"));
+  assert.ok(runtime.includes("outboxFairScan.takeFairPage({ db, FieldPath, collection:'guard_outbox', status })"));
+  assert.ok(runtime.includes("outboxFairScan.takeFairPage({ db, FieldPath, collection:'guard_notification_jobs', status })"));
   assert.ok(runtime.includes('async function fanoutGuardOutbox(ref)'));
   assert.ok(runtime.includes('async function deliverGuardOutbox(ref)'));
   assert.ok(runtime.includes('async function resumeGuardOutbox()'));
@@ -928,7 +935,10 @@ check('guard notification outbox is independent from the monthly publication out
   assert.ok(guardFanoutStart > -1 && guardFanoutEnd > guardFanoutStart);
   assert.ok(guardFanout.includes('tx.create(childRefs[index], child)'));
   assert.equal(guardFanout.includes('await batch.commit()'), false);
-  assert.ok(runtime.includes("orderBy('created_at', 'asc')"));
+  const scan = read('functions/schedule-outbox-fair-scan.js');
+  assert.ok(scan.includes('orderBy(FieldPath.documentId()).limit(100)'));
+  assert.ok(scan.includes('startAfter(db.doc(cursor))'));
+  assert.ok(scan.includes('db.runTransaction(async tx=>'));
   assert.ok(runtime.includes('async function enqueueGuardOpenNotifications(input)'));
   assert.ok(runtime.includes('MAX_GUARD_OPEN_AUDIENCE = 5000'));
   assert.ok(runtime.includes("collection('users')\n        .limit(MAX_GUARD_OPEN_AUDIENCE + 1)"));
@@ -2195,5 +2205,6 @@ check('release blocker: rollback fingerprints the acknowledgement and duplicate 
   assert.ok(integration.includes('direct publish replay must return the complete original receipt'));
 });
 
-assert.equal(passed, 131);
-console.log('\n131 schedule runtime source checks passed.');
+assert.equal(passed, selectedCheck === null ? 131 : 1, 'required check count; exact selection must match once');
+console.log(selectedCheck === null ? '\n131 schedule runtime source checks passed.'
+  : '\n1 differential schedule runtime source check passed; full suite not run.');

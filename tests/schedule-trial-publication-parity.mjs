@@ -36,13 +36,15 @@ function addCollectionGroup(db) {
   db.collectionGroup = function collectionGroup(name) {
     const filters = [];
     let cap = Infinity;
+    let after = '';
     const query = {
       where(field, op, value) {
         assert.equal(op, '==', 'the parity harness only supports equality filters');
         filters.push({ field, value });
         return query;
       },
-      orderBy() { return query; },
+      orderBy(field) { assert.equal(field, '__name__'); return query; },
+      startAfter(ref) { after = ref.path; return query; },
       limit(value) { cap = Number(value); return query; },
       async get() {
         const candidates = db._paths('').filter((path) => {
@@ -51,6 +53,7 @@ function addCollectionGroup(db) {
         });
         const docs = [];
         for (const path of candidates) {
+          if (path <= after) continue;
           const value = db._get(path) || {};
           if (!filters.every((item) => value[item.field] === item.value)) continue;
           docs.push(await db.doc(path).get());

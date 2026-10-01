@@ -1,4 +1,5 @@
 'use strict';
+const outboxFairScan=require('./schedule-outbox-fair-scan');
 const C=require('./schedule-month-authority');
 const SELECTED=Object.freeze(['getStatus','getManagerSetup','getModeOptions','setRuntimeMode','previewCutover','promoteToNew',
   'previewPolicy','savePolicy','previewSource','saveSource','runPlanner','previewScheduleImport','importScheduleSheet',
@@ -57,7 +58,7 @@ function createControlledRuntime({deps,api,createRuntime,resolveContext,verifySi
     // for every job and transaction fences remain bound to its exact digest.
     const runtimes=new Map();
     for(const status of ['retry','sending','queued','blocked']){
-      const found=await raw.collectionGroup('schedule_outbox').where('status','==',status).limit(100).get();
+      const found=await outboxFairScan.takeFairPage({db:raw,FieldPath:deps.FieldPath,collection:'schedule_outbox',status});
       found.docs.forEach(doc=>jobs.set(doc.ref.path,doc));
     }
     let queued=0;

@@ -12,6 +12,7 @@ const app=admin.initializeApp({projectId:'demo-resq'},'reuse-'+randomBytes(8).to
 const db=app.firestore(),sid='it_reuse_'+randomBytes(12).toString('hex');
 const statuses=['retry','sending','queued','blocked'],owned=new Map();
 const control=db.doc('stations/'+sid+'/schedule_state/publication_authority_control');
+const cursor=db.doc('schedule_runtime_workers/outbox_resume');
 let allocations=0,reconciliations=0,mutate=false;
 async function noForeignJobs(){
   for(const status of statuses){
@@ -20,7 +21,7 @@ async function noForeignJobs(){
   }
 }
 const runtime=createControlledRuntime({
-  deps:{db,clock:()=> '2026-10-01T00:00:00.000Z',monthAuthorityReleaseId:'test-reuse'},
+  deps:{db,FieldPath:admin.firestore.FieldPath,clock:()=> '2026-10-01T00:00:00.000Z',monthAuthorityReleaseId:'test-reuse'},
   api:{},resolveContext:async()=>{throw Error('request forbidden');},translateError:error=>error,
   createRuntime:deps=>{
     allocations++;
@@ -44,9 +45,11 @@ const runtime=createControlledRuntime({
 (async()=>{
   try{
     await noForeignJobs();
+    assert.equal((await cursor.get()).exists,false,'exclusive emulator cursor required');
+    owned.set(cursor.path,cursor);
     assert.equal((await control.get()).exists,false);
-    for(let i=0;i<100;i++){
-      const ref=db.doc('stations/'+sid+'/schedule_publications/p/schedule_outbox/job'+i);
+    for(let i=0;i<101;i++){
+      const ref=db.doc('stations/'+sid+'/schedule_publications/p/schedule_outbox/job'+String(i).padStart(3,'0'));
       assert.equal((await ref.get()).exists,false);
       await ref.create({station_id:sid,publication_id:'p',status:'queued'});
       owned.set(ref.path,ref);
@@ -56,13 +59,13 @@ const runtime=createControlledRuntime({
     assert.equal(allocations,1);assert.equal(reconciliations,100);
     console.log('PASS native 100 jobs use one runtime with real control transactions');
     await noForeignJobs();
-    await runtime.resumeOutbox();
-    assert.equal(allocations,2);assert.equal(reconciliations,200);
-    console.log('PASS native next invocation constructs a fresh runtime');
+    assert.deepEqual(await runtime.resumeOutbox(),{scanned:1,queued:0});
+    assert.equal(allocations,2);assert.equal(reconciliations,101);
+    console.log('PASS native 101st unchanged-status job progresses with a fresh runtime');
     mutate=true;
     await noForeignJobs();
     await assert.rejects(()=>runtime.resumeOutbox(),/authority-selection-changed/);
-    assert.equal(allocations,3);assert.equal(reconciliations,200);
+    assert.equal(allocations,3);assert.equal(reconciliations,101);
     console.log('PASS native same-mode control digest change rejects stale transaction');
     console.log('3 native runtime-allocation checks passed; no provider delivery claim.');
   }finally{

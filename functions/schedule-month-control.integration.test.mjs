@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import controlledModule from './schedule-month-control-runtime.js';
 import {createFakeDb,buildRuntime,seed,req,ST,SHEET} from '../tests/_schedule-fake.mjs';
 const SID=ST.split('/')[1],RELEASE='42H.19.1';
+function installScanQueries(db){
+  db.collectionGroup=name=>({where(field,op,status){
+    assert.equal(name,'schedule_outbox');assert.equal(field,'status');assert.equal(op,'==');
+    const query=(max=100,after='')=>({
+      orderBy(value){assert.equal(value,'__name__');return this;},
+      limit(n){return query(n,after);},
+      startAfter(ref){return query(max,ref.path);},
+      async get(){
+        const paths=db._paths('stations/').filter(p=>p.includes('/schedule_outbox/')&&p>after&&db._get(p).status===status).slice(0,max);
+        const docs=await Promise.all(paths.map(p=>db.doc(p).get()));
+        return {docs,empty:docs.length===0,size:docs.length};
+      }
+    });
+    return query();
+  }});
+}
 // Real control selector/transaction proxy with synthetic storage and counted
 // runtime allocation. This does not simulate provider delivery or Firestore races.
 function allocationFixture(stations, beforeReconcile=()=>{}){
@@ -21,15 +37,9 @@ function allocationFixture(stations, beforeReconcile=()=>{}){
   };
   stations.forEach((sid,i)=>db._put('stations/'+sid+'/schedule_publications/p/schedule_outbox/j'+String(i).padStart(3,'0'),
     {station_id:sid,publication_id:'p',status:'queued'}));
-  db.collectionGroup=name=>({where(field,op,status){
-    assert.equal(name,'schedule_outbox');assert.equal(field,'status');assert.equal(op,'==');
-    return {limit(max){return {async get(){
-      const paths=db._paths('stations/').filter(p=>p.includes('/schedule_outbox/') && db._get(p).status===status).slice(0,max);
-      return {docs:await Promise.all(paths.map(p=>db.doc(p).get()))};
-    }};}};
-  }});
+  installScanQueries(db);
   const rt=controlledModule.createControlledRuntime({
-    deps:{db,clock:()=> '2026-10-01T00:00:00.000Z',monthAuthorityReleaseId:RELEASE},
+    deps:{db,FieldPath:{documentId:()=> '__name__'},clock:()=> '2026-10-01T00:00:00.000Z',monthAuthorityReleaseId:RELEASE},
     api:{},resolveContext:async()=>{throw Error('not a request');},
     translateError:e=>e,
     createRuntime:deps=>{
@@ -57,7 +67,9 @@ test('100 identical selections reuse one runtime but read selection and transact
   const f=allocationFixture(Array(100).fill('one'));
   assert.deepEqual(await f.rt.resumeOutbox(),{scanned:100,queued:0});
   assert.equal(f.built.length,1);assert.equal(f.seen.length,100);
-  assert.equal(f.selections.length,200);assert.ok(f.selections.every(n=>n===1));
+  assert.equal(f.selections.length,204);
+  assert.equal(f.selections.filter(n=>n===1).length,200);
+  assert.equal(f.selections.filter(n=>n===0).length,4,'four independent cursor transactions');
   await f.rt.resumeOutbox();assert.equal(f.built.length,2);
   assert.ok(f.seen.slice(100).every(row=>row.id===1),'next invocation has fresh runtime');
 });
@@ -72,7 +84,7 @@ test('a changed selection mode creates a fresh runtime within the same invocatio
   const original=f.db.runTransaction;let transactions=0;
   f.db.runTransaction=async fn=>{
     const result=await original(fn);
-    if(++transactions===2)monthlyState(f.db,'one','b');
+    if(f.selections.at(-1)===1 && ++transactions===2)monthlyState(f.db,'one','b');
     return result;
   };
   await f.rt.resumeOutbox();assert.equal(f.built.length,2);
@@ -90,7 +102,7 @@ test('same station and mode with changed control digest constructs a fresh runti
   const original=f.db.runTransaction;let transactions=0;
   f.db.runTransaction=async fn=>{
     const result=await original(fn);
-    if(++transactions===2)monthlyState(f.db,'one','b');
+    if(f.selections.at(-1)===1 && ++transactions===2)monthlyState(f.db,'one','b');
     return result;
   };
   await f.rt.resumeOutbox();assert.equal(f.built.length,2);
@@ -155,13 +167,7 @@ test('mixed-station worker chooses each authority independently and rejects forg
   f.db._put(other+'/users/'+value.person,{...f.db._get(ST+'/users/'+value.person),station_id:'other',station:'other'});
   const otherPath=source.replace(ST,other);f.db._put(otherPath,{...value,station_id:'other'});
   await f.rt.activateMonthAuthority(activation());
-  f.db.collectionGroup=name=>({where(field,op,status){
-    assert.equal(name,'schedule_outbox');assert.equal(field,'status');assert.equal(op,'==');
-    return {limit(max){return {async get(){
-      const paths=f.db._paths('stations/').filter(p=>p.includes('/schedule_outbox/') && f.db._get(p).status===status).slice(0,max);
-      const docs=await Promise.all(paths.map(p=>f.db.doc(p).get()));return {docs};
-    }};}};
-  }});
+  installScanQueries(f.db);
   await f.rt.resumeOutbox();assert.ok(sent.includes(SID));assert.ok(sent.includes('other'));
   f.db._put(otherPath,{...value,station_id:SID});await assert.rejects(()=>f.rt.deliverOutbox(f.db.doc(otherPath)),/physical-scope/);
 });
