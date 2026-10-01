@@ -4464,7 +4464,7 @@ exports.getHrMonthlySummary = onCall(HR_MONTHLY_OPTIONS, async (req) => {
   const ctx = hrMonthlyContext(req);
   const data = hrMonthlyFields(req, ['month', 'cursor']);
   return hrMonthly.read({ station_id: ctx.sid, month: hrMonthlyMonth(data.month),
-    ...(data.cursor === undefined ? {} : { cursor: String(data.cursor).slice(0, 200) }) });
+    ...(data.cursor === undefined ? {} : { cursor: data.cursor }) });
 });
 
 // שלושת המצבים של חריגת השעות. „אין דוח" אינו „אין חורגים".

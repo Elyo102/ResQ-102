@@ -86,7 +86,7 @@ const SCHEMA_ROW = 'hr-monthly-row-v1';
 const SCHEMA_BACKFILL = 'hr-months-backfill-v1';
 const BACKFILL_DOC = 'hr-months-backfill-v1';
 
-const USER_PAGE = 100;          // עמוד בנייה. לא בתוך עסקה.
+const USER_PAGE = 100;          // Bounded atomic page: at most 100 rows + checkpoint.
 const READ_PAGE = 25;           // עמוד קריאה ל-callable.
 const ABSENCE_CAP = 5000;       // תקרה קשיחה. חריגה היא שגיאה, לא קיצור.
 const WORKFORCE_CAP = 2000;
@@ -376,39 +376,43 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
   async function runSlice(input, context) {
     const { sid, month } = scope(input && input.station_id, input && input.month);
     const id = String(input.generation_id || '');
-    const snap = await generationRef(sid, month, id).get();
+    return db.runTransaction(async tx => {
+    const snap = await tx.get(generationRef(sid, month, id));
     const generation = snap.exists ? snap.data() : null;
     if (!plain(generation) || generation.schema !== SCHEMA_GENERATION
       || generation.station_id !== sid || generation.month !== month) throw error('not-found', 'Generation not found.');
-    if (generation.state === 'ready') return { done: true, written: 0, rows: generation.rows };
+    if (!context || typeof context.digest !== 'string' || generation.source_digest !== context.digest) {
+      throw error('failed-precondition', 'מקור הדוח השתנה. יש לבנות דוח חדש.');
+    }
+    if (generation.state === 'ready' || generation.state === 'complete') return { done: true, written: 0, rows: generation.rows };
     let query = root(sid).collection('users').orderBy('__name__').limit(USER_PAGE);
     if (typeof generation.cursor === 'string' && generation.cursor) query = query.startAfter(generation.cursor);
-    const page = await query.get();
+    const page = await tx.get(query);
     if (page.empty) {
-      await generationRef(sid, month, id).set({ state: 'complete', completed_at_ms: now() }, { merge: true });
+      tx.set(generationRef(sid, month, id), { state: 'complete', completed_at_ms: now() }, { merge: true });
       return { done: true, written: 0, rows: generation.rows };
     }
     const people = page.docs.map(personOf).filter(Boolean);
     const reportRefs = people.map(person => root(sid).collection('monthly_reports')
       .doc(String(person.employee_number) + '_' + month));
     // קריאה מקובצת אחת לכל העמוד, ולא אחת לעובד.
-    const reports = reportRefs.length && typeof db.getAll === 'function'
-      ? await db.getAll(...reportRefs) : [];
+    const reports = reportRefs.length ? await tx.getAll(...reportRefs) : [];
     const batch = [];
     for (let index = 0; index < people.length; index += 1) {
       const reportSnap = reports[index];
       const value = reportSnap && reportSnap.exists ? reportSnap.data() : null;
       batch.push([people[index].uid, buildRow(context, people[index], value)]);
     }
-    for (const [uid, row] of batch) await rowRef(sid, month, id, uid).set(row);
+    for (const [uid, row] of batch) tx.set(rowRef(sid, month, id, uid), row);
     const last = page.docs[page.docs.length - 1].id;
     const done = page.docs.length < USER_PAGE;
-    await generationRef(sid, month, id).set({
+    tx.set(generationRef(sid, month, id), {
       cursor: done ? last : last,
       rows: (Number.isSafeInteger(generation.rows) ? generation.rows : 0) + batch.length,
       ...(done ? { state: 'complete', completed_at_ms: now() } : {})
     }, { merge: true });
     return { done, written: batch.length, rows: (generation.rows || 0) + batch.length };
+    });
   }
 
   /**
@@ -432,6 +436,10 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
       if (current !== null && !plain(current)) throw error('failed-precondition', 'Month data is invalid.');
       if (plain(current) && current.active_generation === id) {
         return { activated: false, generation_id: id, reason: 'already_active' };
+      }
+      if (!summary || typeof summary.source_digest !== 'string'
+          || generation.source_digest !== summary.source_digest) {
+        throw error('failed-precondition', 'מקור הדוח השתנה. יש לבנות דוח חדש.');
       }
       if (typeof hooks.beforeActivate === 'function') await hooks.beforeActivate();
       tx.set(generationRef(sid, month, id), { state: 'ready' }, { merge: true });
@@ -467,9 +475,33 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
           hour_limit: Number.isFinite(current.hour_limit) ? current.hour_limit : null };
       }
     }
-    const [limit, coverage, absences, longAbsences] = await Promise.all([
-      hourLimit(sid), coverageOf(sid), absenceIndex(sid, month), longAbsenceIndex(sid, month)]);
-    const context = { month, limit, absences, longAbsences };
+    async function captureContext() {
+      const [limit, coverage, absences, longAbsences] = await Promise.all([
+        hourLimit(sid), coverageOf(sid), absenceIndex(sid, month), longAbsenceIndex(sid, month)]);
+      const digest = hash([SCHEMA_MONTH, sid, month, limit, coverage,
+        absences.seen, absences.malformed, longAbsences.seen,
+        absenceFingerprint(absences), longAbsenceFingerprint(longAbsences)]);
+      return {month, limit, coverage, absences, longAbsences, digest};
+    }
+    const context = await captureContext();
+    const {limit, coverage, absences, longAbsences, digest} = context;
+    await db.runTransaction(async tx => {
+      const ref=generationRef(sid,month,begun.generation_id), snap=await tx.get(ref);
+      const value=snap.exists?snap.data():null;
+      if (!plain(value) || value.schema!==SCHEMA_GENERATION || value.station_id!==sid || value.month!==month) {
+        throw error('failed-precondition','Generation data is invalid.');
+      }
+      if (own(value,'source_digest')) {
+        if(value.source_digest!==digest)throw error('failed-precondition','מקור הדוח השתנה. יש לבנות דוח חדש.');
+        return;
+      }
+      // Old non-atomic writers could leave rows without advancing the cursor.
+      const rows=await tx.get(ref.collection('hr_monthly_rows').limit(1));
+      if(value.state!=='building' || value.cursor!==null || value.rows!==0 || !rows.empty) {
+        throw error('failed-precondition','דוח חלקי ישן מחייב בנייה חדשה.');
+      }
+      tx.set(ref,{source_digest:digest},{merge:true});
+    });
     let slices = 0, written = 0, done = false;
     while (!done) {
       if (now() >= deadline) {
@@ -482,9 +514,11 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
     /* ⭐ הטביעה היא מה שהדוח נבנה ממנו, ולא מה שיצא ממנו: סף השעות,
      * כיסוי הסיווג, ומספר המסמכים בשני המקורות. שינוי הכרעה מייצר
      * טביעה אחרת, ולכן אפשר לראות שהדוח אינו זהה — בלי להשוות שורות. */
-    const digest = hash([SCHEMA_MONTH, sid, month, limit, coverage,
-      absences.seen, absences.malformed, longAbsences.seen,
-      absenceFingerprint(absences), longAbsenceFingerprint(longAbsences)]);
+    // Detect observed source drift; this is not a global historical snapshot
+    // or a transaction spanning all paginated source reads.
+    if((await captureContext()).digest!==digest) {
+      throw error('failed-precondition','מקור הדוח השתנה במהלך הבנייה. יש לבנות דוח חדש.');
+    }
     const activated = await activate({ station_id: sid, month, generation_id: begun.generation_id }, {
       source_digest: digest, hour_limit: limit, coverage,
       sources: { hr_requests: absences.seen, hr_requests_malformed: absences.malformed,
@@ -499,9 +533,26 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
   /** קריאה מעומדת מהדור הפעיל בלבד. דור שאינו פעיל אינו נקרא. */
   async function read(input) {
     const { sid, month } = scope(input && input.station_id, input && input.month);
-    const cursor = input && own(input, 'cursor') ? String(input.cursor) : null;
+    let cursor=null, cursorGeneration=null;
+    if(input && own(input,'cursor')) {
+      const raw=input.cursor;
+      try {
+        if(typeof raw!=='string' || !raw.length || raw.length>1024 || !/^[A-Za-z0-9_-]+$/.test(raw))throw Error();
+        const bytes=Buffer.from(raw,'base64url');
+        if(bytes.length>768 || bytes.toString('base64url')!==raw)throw Error();
+        const token=JSON.parse(bytes.toString('utf8'));
+        if(!plain(token) || Object.keys(token).sort().join()!=='generation,uid,v' || token.v!==1
+          || typeof token.generation!=='string' || !/^[a-f0-9]{64}$/.test(token.generation)
+          || typeof token.uid!=='string' || !token.uid.length || token.uid.length>128 || /[\/\u0000-\u001f\u007f]/.test(token.uid)
+          || Buffer.from(JSON.stringify({v:1,generation:token.generation,uid:token.uid})).toString('base64url')!==raw)throw Error();
+        cursor=token.uid;cursorGeneration=token.generation;
+      }catch(_){throw error('invalid-argument','סמן הדוח אינו תקין. יש לפתוח את הדוח מחדש.');}
+    }
     const monthSnap = await monthRef(sid, month).get();
     const value = monthSnap.exists ? monthSnap.data() : null;
+    if(cursorGeneration && (!plain(value) || value.active_generation!==cursorGeneration)) {
+      throw error('failed-precondition','הדוח עודכן. יש לפתוח אותו מחדש מהעמוד הראשון.');
+    }
     if (!plain(value) || value.schema !== SCHEMA_MONTH || value.station_id !== sid
       || typeof value.active_generation !== 'string' || !value.active_generation) {
       return { month, state: 'not_built', rows: [], next_cursor: null };
@@ -527,7 +578,8 @@ function createHrMonthlySummary({ db, HttpsError, clock = Date.now, hooks = {} }
       sources: plain(value.sources) ? value.sources : null,
       total_rows: Number.isSafeInteger(value.rows) ? value.rows : null,
       delivery: value.delivery === 'in_app_only' ? 'in_app_only' : null,
-      rows, next_cursor: page.docs.length > READ_PAGE ? docs[docs.length - 1].id : null };
+      rows, next_cursor: page.docs.length > READ_PAGE
+        ? Buffer.from(JSON.stringify({v:1,generation:value.active_generation,uid:docs[docs.length-1].id})).toString('base64url') : null };
   }
 
   /**

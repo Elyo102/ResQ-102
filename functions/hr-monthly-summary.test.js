@@ -540,6 +540,60 @@ async function main() {
   });
 
   console.log('');
+  await test('changed absence context cannot resume old rows under the same intent',async()=>{
+    const w=world();for(let i=0;i<107;i++)employee(w,'u'+String(i).padStart(4,'0'),{hours:100});
+    absence(w,'changed','u0000','sick','2026-09-01','2026-09-02','pending');
+    const paused=await w.summary.build({station_id:SID,month:MONTH,intent_id:'paused',budget_ms:2500});
+    assert.equal(paused.complete,false);assert.equal(paused.written,100);
+    const path='stations/'+SID+'/hr_requests/changed';
+    w.db._put(path,{...w.db._get(path),decision:'approved'});
+    await rejects(w.summary.build({station_id:SID,month:MONTH,intent_id:'paused'}),'failed-precondition');
+    assert.equal((await w.summary.read({station_id:SID,month:MONTH})).state,'not_built');
+    assert.equal([...w.db._store.keys()].filter(p=>p.includes('/hr_monthly_rows/')).length,100);
+  });
+  await test('unchanged context resumes a bounded page without duplicating rows',async()=>{
+    const w=world();for(let i=0;i<107;i++)employee(w,'u'+String(i).padStart(4,'0'),{hours:100});
+    const paused=await w.summary.build({station_id:SID,month:MONTH,intent_id:'resume',budget_ms:2500});
+    assert.equal(paused.written,100);assert.equal(paused.complete,false);
+    const result=await w.summary.build({station_id:SID,month:MONTH,intent_id:'resume'});
+    assert.equal(result.written,7);assert.equal(result.complete,true);
+    assert.equal((await w.summary.read({station_id:SID,month:MONTH})).total_rows,107);
+  });
+  await test('legacy orphan rows with zero checkpoint are never relabeled as fresh context',async()=>{
+    const w=world();employee(w,'u1',{hours:100});
+    const begun=await w.summary.beginGeneration({station_id:SID,month:MONTH,intent_id:'orphan'});
+    const base='stations/'+SID+'/hr_monthly_summaries/'+MONTH+'/hr_monthly_generations/'+begun.generation_id;
+    w.db._put(base+'/hr_monthly_rows/u1',{schema:'hr-monthly-row-v1',month:MONTH,uid:'u1'});
+    await rejects(w.summary.build({station_id:SID,month:MONTH,intent_id:'orphan'}),'failed-precondition');
+    assert.equal(w.db._get(base).source_digest,undefined);
+  });
+  await test('pagination rejects generation changes, malformed and cross-month cursors',async()=>{
+    const w=world();for(let i=0;i<30;i++)employee(w,'u'+i,{hours:100});
+    await w.summary.build({station_id:SID,month:MONTH,intent_id:'page1'});
+    const first=await w.summary.read({station_id:SID,month:MONTH});
+    assert.equal(typeof first.next_cursor,'string');
+    for(const cursor of ['u1','!', 'a'.repeat(1025),null,12]){
+      await rejects(w.summary.read({station_id:SID,month:MONTH,cursor}),'invalid-argument');
+    }
+    await rejects(w.summary.read({station_id:SID,month:'2026-10',cursor:first.next_cursor}),'failed-precondition');
+    await w.summary.build({station_id:SID,month:MONTH,intent_id:'page2'});
+    await rejects(w.summary.read({station_id:SID,month:MONTH,cursor:first.next_cursor}),'failed-precondition');
+  });
+  await test('failed page transaction leaves neither rows nor cursor progress',async()=>{
+    const w=world();employee(w,'u1',{hours:100});employee(w,'u2',{hours:100});
+    const original=w.db.runTransaction;
+    w.db.runTransaction=fn=>original(async tx=>fn(new Proxy(tx,{get(target,key){
+      if(key==='set')return(ref,...args)=>{
+        if(ref.path.includes('/hr_monthly_rows/u2'))throw Error('synthetic-page-failure');
+        return target.set(ref,...args);
+      };
+      return target[key];
+    }})));
+    await assert.rejects(()=>w.summary.build({station_id:SID,month:MONTH,intent_id:'atomic'}),/synthetic-page-failure/);
+    assert.equal([...w.db._store.keys()].filter(p=>p.includes('/hr_monthly_rows/')).length,0);
+    const generation=[...w.db._store.entries()].find(([p])=>p.includes('/hr_monthly_generations/'))[1];
+    assert.equal(generation.cursor,null);assert.equal(generation.rows,0);
+  });
   console.log('NOT RUN here — Firestore rules enforcement (emulator) and composite-index');
   console.log('requirements. Every query in this module is a single equality or a single');
   console.log('array-contains, which the automatic single-field index serves; that is a');
