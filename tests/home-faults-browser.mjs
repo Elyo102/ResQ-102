@@ -18,6 +18,8 @@ async function check(name, run) { await run(); passed += 1; console.log('PASS ' 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   await page.setContent(`<button id="tab-op" role="tab" data-fault-group="operational"></button><button id="tab-building" role="tab" data-fault-group="building"></button><b id="oc"></b><b id="bc"></b><div id="status"></div><div id="list" role="tabpanel"></div><div id="empty" class="hide"></div>`);
   await page.addScriptTag({ content:source });
   await page.evaluate(() => {
@@ -63,6 +65,29 @@ try {
     assert.equal(await page.locator('.home-fault-card b').count(), 0);
     assert.match(await page.locator('.home-fault-title').textContent(), /<img/);
   });
+  await check('isolates non-convertible Firestore maps and preserves valid neighbours', async () => {
+    await page.evaluate(() => {
+      const bad = { toString:1, valueOf:1 };
+      window.snapshots.at(-1).ok({ docs:[
+        { id:'before', data:() => ({ status:'open', title:'before' }) },
+        ...['title','vehicle_name','date'].map(field => ({ id:field,
+          data:() => ({ status:'open', title:'bad', [field]:bad }) })),
+        { id:'after', data:() => ({ status:'in_repair', title:'after' }) },
+        { id:'legacy', data:() => ({ status:'open', title:123, vehicle_name:456, date:20261001 }) }
+      ] });
+    });
+    assert.deepEqual(await page.locator('.home-fault-title').allTextContents(), ['before','after','123']);
+    assert.equal(await page.locator('#oc').textContent(), '3');
+    assert.equal(await page.locator('.home-fault-meta').last().textContent(), '456 · 20261001');
+    assert.deepEqual(pageErrors, []);
+  });
+  await check('a later valid snapshot recovers after a malformed row', async () => {
+    await page.evaluate(() => window.snapshots.at(-1).ok({ docs:[
+      { id:'title', data:() => ({ status:'open', title:'recovered' }) }
+    ] }));
+    assert.equal(await page.locator('.home-fault-title').textContent(), 'recovered');
+    assert.equal(await page.locator('#oc').textContent(), '1');
+  });
   await check('destroy invalidates late snapshots and removes protected content', async () => {
     const prior = await page.evaluate(() => window.snapshots.length - 1);
     await page.evaluate(() => window.destroyHomeFaults());
@@ -100,5 +125,6 @@ try {
     await building.press('ArrowRight');
     assert.equal(await operational.getAttribute('aria-selected'), 'true');
   });
+  assert.deepEqual(pageErrors, []);
   console.log('home faults browser: ' + passed + ' passed');
 } finally { await browser.close(); }

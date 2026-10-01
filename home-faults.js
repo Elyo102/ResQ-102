@@ -12,35 +12,35 @@ function groupOf(row) {
 }
 
 function normalize(doc) {
-  let row = null;
   try {
-    row = doc && typeof doc.data === 'function' ? doc.data() : null;
+    const row = doc && typeof doc.data === 'function' ? doc.data() : null;
+    if (!row || !['open','in_repair'].includes(row.status)) return null;
+    const title = text(row.title).slice(0, 240);
+    if (!title) return null;
+    const severity = row.severity === 'critical' || row.severity === 'blocking'
+      ? 'blocking' : row.severity === 'major' || row.severity === 'limiting'
+        ? 'limiting' : row.severity === 'minor' ? 'minor' : 'unset';
+    return Object.freeze({
+      id: text(doc.id),
+      group: groupOf(row),
+      title,
+      subject: text(row.vehicle_name).slice(0, 80),
+      date: (() => {
+        let date = null;
+        try { date = row.created_at && row.created_at.toDate(); } catch (_) {}
+        if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return text(row.date).slice(0, 10);
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
+        }).formatToParts(date);
+        const v = Object.fromEntries(parts.map(part => [part.type, part.value]));
+        return v.year + '-' + v.month + '-' + v.day;
+      })(),
+      severity
+    });
   } catch (_) {
+    // A malformed legacy/admin-written field must not abort valid neighbours.
     return null;
   }
-  if (!row || !['open','in_repair'].includes(row.status)) return null;
-  const title = text(row.title).slice(0, 240);
-  if (!title) return null;
-  const severity = row.severity === 'critical' || row.severity === 'blocking'
-    ? 'blocking' : row.severity === 'major' || row.severity === 'limiting'
-      ? 'limiting' : row.severity === 'minor' ? 'minor' : 'unset';
-  return Object.freeze({
-    id: text(doc.id),
-    group: groupOf(row),
-    title,
-    subject: text(row.vehicle_name).slice(0, 80),
-    date: (() => {
-      let date = null;
-      try { date = row.created_at && row.created_at.toDate(); } catch (_) {}
-      if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return text(row.date).slice(0, 10);
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone:'Asia/Jerusalem', year:'numeric', month:'2-digit', day:'2-digit'
-      }).formatToParts(date);
-      const v = Object.fromEntries(parts.map(part => [part.type, part.value]));
-      return v.year + '-' + v.month + '-' + v.day;
-    })(),
-    severity
-  });
 }
 
 function make(tag, className, value) {
