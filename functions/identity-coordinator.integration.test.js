@@ -667,6 +667,44 @@ async function clearEmulator() {
     assert.equal(result.emp, '6601');
   });
 
+  await test('self role change revokes, retries failures and never skips the three public paths', async function () {
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, 'index.js'), 'utf8');
+    assert.match(source, /runAssignment\(uid, operation\.op_id, result, false,/);
+    assert.match(source, /runAssignment\(user\.uid, operation\.op_id, result,\s*false,/);
+    assert.match(source, /'שינוי התפקיד השמור הושלם\. המשתמש צריך להתחבר מחדש\.'\s*\}, false,/);
+    assert.doesNotMatch(source, /runAssignment\([\s\S]{0,600}?uid === auth\.uid/);
+    const uid = 'self_role_revoke';
+    const previous = { super:true, role:'commander', stationId:'eilat_102', shift:'A' };
+    const fake = new FakeAuth(); fake.seed(uid, previous); fake.failRevoke = 1;
+    let failFinalize = true;
+    const service = coordinator(fake, { beforeFinalize: async () => {
+      if (failFinalize) { failFinalize = false; throw new Error('self finalize outage'); }
+    } });
+    const params = roleParams(uid, 'self-role-revocation-operation', previous, '6681');
+    params.actorUid = uid; params.actorEmail = uid + '@example.com';
+    const makePlan = params.makePlan;
+    params.makePlan = emp => {
+      const plan = makePlan(emp); plan.desiredClaims.super = true; return plan;
+    };
+    const acquired = await service.acquireAssignment(params);
+    const opId = acquired.operation.op_id;
+    const actor = { uid, email: params.actorEmail };
+    const run = () => service.runAssignment(uid, opId, { ok:true, emp:'6681' }, false, actor);
+    await rejectsCode('unavailable', run());
+    assert.equal((await service.getOperation(uid)).phase, 'auth_applied');
+    assert.equal(fake.revokeCalls, 1);
+    assert.equal((await fake.getUser(uid)).customClaims.super, true);
+    assert.equal((await fake.getUser(uid)).customClaims.shift, 'B');
+    await assert.rejects(run(), /self finalize outage/);
+    assert.equal((await service.getOperation(uid)).phase, 'tokens_revoked');
+    assert.equal(fake.revokeCalls, 2);
+    assert.equal((await run()).emp, '6681');
+    assert.equal(fake.revokeCalls, 2, 'finalization retry must not revoke again');
+    assert.equal((await run()).emp, '6681');
+    assert.equal(fake.revokeCalls, 2, 'completed replay must not revoke again');
+    assert.deepEqual(fake.revokeUids, [uid, uid]);
+  });
+
   await test('Auth failure after profile preserves the plan and retries from previous claims', async function () {
     const uid = 'auth_retry'; const requestId = 'request-auth-retry-0000001';
     const fake = new FakeAuth(); fake.seed(uid, {}); fake.failSetBefore = 1;

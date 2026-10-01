@@ -1886,7 +1886,7 @@ exports.approveRegistration = onCall({ timeoutSeconds: 120 }, async (req) => {
              '. הכבאי צריך להתנתק ולהתחבר מחדש.'
   };
   if (acquired.type === 'completed') return operation.result;
-  return identityCoordinator.runAssignment(uid, operation.op_id, result, uid === auth.uid,
+  return identityCoordinator.runAssignment(uid, operation.op_id, result, false,
     { uid: auth.uid, email: auth.token.email });
 });
 
@@ -2217,7 +2217,7 @@ exports.setUserRole = onCall({ timeoutSeconds: 120 }, async (req) => {
   };
   if (acquired.type === 'completed') return operation.result;
   return identityCoordinator.runAssignment(user.uid, operation.op_id, result,
-    user.uid === auth.uid, { uid: auth.uid, email: auth.token.email });
+    false, { uid: auth.uid, email: auth.token.email });
 });
 
 // ממשיך רק תוכנית זהות שכבר ננעלה בשרת. הלקוח אינו שולח כאן
@@ -2289,7 +2289,7 @@ exports.resumeIdentityOperation = onCall({ timeoutSeconds: 120 }, async (req) =>
     message: operation.kind === 'approve' ?
       'האישור השמור הושלם. מספר העובד: ' + String(summary.emp || '') + '.' :
       'שינוי התפקיד השמור הושלם. המשתמש צריך להתחבר מחדש.'
-  }, uid === auth.uid, { uid: auth.uid, email: auth.token.email });
+  }, false, { uid: auth.uid, email: auth.token.email });
 });
 
 // ---------------------------------------------------------------------
