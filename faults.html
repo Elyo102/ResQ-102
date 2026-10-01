@@ -1437,11 +1437,14 @@ function actBtn(text, cls, fn){
 // התמונות נטענות רק כשהתקלה מצוירת, ולא בטעינה הראשונה.
 // מסך עם עשרים תקלות היה מוריד עשרים תמונות שאיש לא הסתכל בהן.
 async function loadShots(f, box){
+  let fence;
+  try { fence = writeFence(); assertFence(fence); } catch (ignore) { return; }
+  if (!box.isConnected) return;
   // Key includes SID so station A / station B never share inflight or cache.
   const reqSid = SID;
   const reqGen = AUTH_GEN;
   const key = String(reqSid || '') + ':' + String(f.id || '');
-  if (shots[key]) { paintShots(shots[key], box); moreShots(key, f, box, reqSid, reqGen); return; }
+  if (shots[key]) { paintShots(shots[key], box); moreShots(key, f, box, reqSid, reqGen, fence); return; }
   // Coalesce concurrent gets for the same station+fault (dialog can paint
   // multiple cards / re-enter before the first getDocs resolves). Preserves
   // cache, photo queue, and atomic createFaultReport writes.
@@ -1449,6 +1452,7 @@ async function loadShots(f, box){
     const request = getDocs(query(collection(db, 'stations', reqSid, 'faults', f.id, 'photos'),
       orderBy(documentId()), limit(11)))
       .then(function (s) {
+        assertFence(fence);
         const page = s.docs.slice(0, 10);
         const list = page.map(d => d.data() || {});
         // Late response after station/user switch: discard — do not poison cache.
@@ -1468,14 +1472,16 @@ async function loadShots(f, box){
   }
   try {
     const result = await shotsInflight[key];
+    assertFence(fence);
     // Guard paint: only apply if this screen's identity still matches the request.
     if (!result || result.stale || SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected ||
         result.reqSid !== SID || result.reqGen !== AUTH_GEN) {
       return;
     }
     paintShots(result.list, box);
-    moreShots(key, f, box, reqSid, reqGen);
+    moreShots(key, f, box, reqSid, reqGen, fence);
   } catch (e) {
+    try { assertFence(fence); } catch (ignore) { return; }
     if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
     box.replaceChildren();
     const retry = document.createElement('button');
@@ -1483,6 +1489,7 @@ async function loadShots(f, box){
     retry.className = 'ld';
     retry.textContent = 'התמונות לא נטענו · נסה שוב';
     retry.onclick = () => {
+      try { assertFence(fence); } catch (ignore) { return; }
       if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
       box.textContent = 'טוען תמונות…';
       void loadShots(f, box);
@@ -1491,25 +1498,29 @@ async function loadShots(f, box){
   }
 }
 
-function moreShots(key, fault, box, reqSid, reqGen) {
+function moreShots(key, fault, box, reqSid, reqGen, fence) {
+  try { assertFence(fence); } catch (ignore) { return; }
   const state = shotsPages[key];
   if (!state?.more || !state.cursor) return;
   const button = document.createElement('button');
   button.type = 'button'; button.className = 'ld';
   button.textContent = 'עוד תמונות'; box.append(button);
   button.onclick = async () => {
+    try { assertFence(fence); } catch (ignore) { return; }
     if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected) return;
     button.disabled = true;
     try {
       const snap = await getDocs(query(collection(db, 'stations', reqSid,
         'faults', fault.id, 'photos'), orderBy(documentId()),
         startAfter(state.cursor), limit(11)));
+      assertFence(fence);
       if (SID !== reqSid || AUTH_GEN !== reqGen || !box.isConnected || shotsPages[key] !== state) return;
       const page = snap.docs.slice(0, 10);
       state.cursor = page.at(-1) || null; state.more = snap.docs.length > 10;
       shots[key].push(...page.map(d => d.data() || {}));
-      paintShots(shots[key], box); moreShots(key, fault, box, reqSid, reqGen);
+      paintShots(shots[key], box); moreShots(key, fault, box, reqSid, reqGen, fence);
     } catch (error) {
+      try { assertFence(fence); } catch (ignore) { return; }
       if (SID === reqSid && AUTH_GEN === reqGen && box.isConnected) {
         button.textContent = 'לא נטען · נסו שוב'; button.disabled = false;
       }

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = name => fs.readFileSync(path.join(root, name), 'utf8');
 const functionText = (body, name) => {
-  const start = body.indexOf('async function ' + name + '(');
+  const start = body.search(new RegExp('(?:async )?function ' + name + '\\('));
   assert.ok(start >= 0, name + ' exists');
   const tail = /\r?\n}\r?\n/g;
   tail.lastIndex = start;
@@ -85,13 +85,16 @@ const deferred = () => {
   const paints = [];
   const context = {
     SID: 'station-a', AUTH_GEN: 1, shots: {}, shotsPages: {}, shotsInflight: {}, db: {},
+    ME:{ uid:'user-a' }, auth:{ currentUser:{ uid:'user-a' } }, CAN_MANAGE:false,
     collection: (...parts) => parts.join('/'),
     query: ref => ref, orderBy: () => 'id', documentId: () => 'id', limit: n => n,
     getDocs: () => (++reads === 1 ? old.promise : fresh.promise),
     paintShots: (list, box) => paints.push({ list, box }), moreShots: () => {}
   };
   vm.createContext(context);
-  vm.runInContext(functionText(body, 'loadShots'), context);
+  for (const name of ['currentUid', 'writeFence', 'assertFence', 'loadShots']) {
+    vm.runInContext(functionText(body, name), context);
+  }
   const first = context.loadShots({ id: 'fault-1' }, { isConnected:true });
   context.AUTH_GEN = 2;
   context.shots = {};
@@ -108,6 +111,74 @@ const deferred = () => {
   assert.equal(paints.length, 1);
   assert.equal(paints[0].list[0].data, 'new');
   console.log('PASS photos same-station identity race');
+}
+
+// Execute the actual identity fences and both paged loaders. Only currentUser
+// changes: the asynchronous observer has NOT yet updated ME/SID/AUTH_GEN.
+{
+  const body = source('faults.html');
+  const makeBox = () => ({ isConnected:true, children:[],
+    append(child) { this.children.push(child); }, replaceChildren() { this.children=[]; } });
+  const snapshot = count => ({ docs:Array.from({length:count}, (_, i) => ({
+    id:String(i), data:() => ({data:'synthetic-photo-' + i}) })) });
+  const fixture = () => {
+    const pending=[], paints=[], requests=[];
+    const context = { SID:'station-a', AUTH_GEN:1, ME:{uid:'a'},
+      auth:{currentUser:{uid:'a'}}, CAN_MANAGE:false,
+      shots:{}, shotsPages:{}, shotsInflight:{}, db:{},
+      collection: (...parts) => parts.slice(1).join('/'),
+      query:(ref,...constraints) => ({ref,constraints}), orderBy:() => 'order',
+      documentId:() => 'id', limit:n => ({limit:n}), startAfter:doc => ({after:doc.id}),
+      getDocs:request => { const next=deferred(); pending.push(next); requests.push(request); return next.promise; },
+      document:{createElement:() => ({textContent:'',disabled:false})},
+      paintShots:(list,box) => { paints.push(list.slice()); box.replaceChildren(); }
+    };
+    vm.createContext(context);
+    for (const name of ['currentUid','writeFence','assertFence','loadShots','moreShots']) {
+      vm.runInContext(functionText(body,name),context);
+    }
+    return {context,pending,paints,requests};
+  };
+  const fault={id:'fault-1'}, key='station-a:fault-1';
+  for (const outcome of ['success','error']) {
+    const f=fixture(), box=makeBox(), task=f.context.loadShots(fault,box);
+    f.context.auth.currentUser={uid:'b'};
+    if(outcome==='success')f.pending[0].resolve(snapshot(11));
+    else f.pending[0].reject(new Error('synthetic-network'));
+    await task;
+    assert.equal(f.paints.length,0);
+    assert.equal(Object.hasOwn(f.context.shots,key),false);
+    assert.equal(Object.hasOwn(f.context.shotsPages,key),false);
+    assert.equal(box.children.length,0,'no stale error/retry UI');
+  }
+  {
+    const f=fixture(), a=makeBox(), b=makeBox();
+    const one=f.context.loadShots(fault,a), two=f.context.loadShots(fault,b);
+    assert.equal(f.requests.length,1,'overlap coalesces');
+    f.pending[0].resolve(snapshot(11)); await Promise.all([one,two]);
+    assert.equal(f.paints.length,2); assert.equal(f.context.shots[key].length,10);
+    assert.equal(f.requests[0].constraints.at(-1).limit,11);
+    const next=a.children[0].onclick();
+    f.pending[1].resolve(snapshot(2)); await next;
+    assert.equal(f.context.shots[key].length,12,'same identity can page');
+    f.context.auth.currentUser={uid:'b'};
+    await f.context.loadShots(fault,makeBox());
+    assert.equal(f.paints.length,3,'cached response cannot paint after live UID switch');
+    assert.equal(f.requests.length,2);
+  }
+  for (const outcome of ['success','error']) {
+    const f=fixture(), box=makeBox(), task=f.context.loadShots(fault,box);
+    f.pending[0].resolve(snapshot(11)); await task;
+    const button=box.children[0], state=f.context.shotsPages[key], cursor=state.cursor;
+    const next=button.onclick(); f.context.auth.currentUser={uid:'b'};
+    if(outcome==='success')f.pending[1].resolve(snapshot(2));
+    else f.pending[1].reject(new Error('synthetic-network'));
+    await next;
+    assert.equal(f.context.shots[key].length,10); assert.equal(state.cursor,cursor);
+    assert.equal(f.paints.length,1);
+    assert.equal(button.textContent,'עוד תמונות','stale page error must not paint retry');
+  }
+  console.log('PASS photos live-UID fences: initial success/error, cached hit, page success/error and positive coalescing/paging');
 }
 
 // Schedule: imported-display in OFF mode must not invoke the operational
