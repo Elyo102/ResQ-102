@@ -307,7 +307,7 @@ const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
 // Explicitly retain the retired-route protections for 43. Unknown future
 // releases must not inherit approval of either frozen target manifest.
-if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46'].includes(releaseVersion)) {
+if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46', '42H.47'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -528,6 +528,66 @@ if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46'].includes(releaseVersion))
       ...Object.keys(policy46).flatMap(k => [{ ...policy46, [k]: false }, { ...policy46, [k]: 'true' }])])
       ok('6.46 rejects missing, malformed or disabled admission policy', !valid46(manifest46, stamp46, policy));
     ok('6.46 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h46.json') !== null);
+  }
+  if (releaseVersion === '42H.47') {
+    const manifest47 = JSON.parse(read('docs/release-targets-42h47.json'));
+    const stamp47 = JSON.parse(read('release-manifest.json'));
+    const policy47 = JSON.parse(read('functions/hours-rollout-policy.json'));
+    // Independently reviewed 12 existing targets, producer-last batches,
+    // compatible rollback and mandatory backup. This is not deployment approval.
+    const approved47 = 'd849b108e33d167baad9d0c460477aaaf2e77d9fdc1086ccde9f3321479b7b8e';
+    const valid47 = (value, stamp = stamp47, policy = policy47) => {
+      try {
+        return createHash('sha256').update(JSON.stringify(value)).digest('hex') === approved47 &&
+          stamp.scope === 'hosting' && stamp.version === '42H.47' &&
+          stamp.server_version === '42H.44' && stamp.telemetry_version === '42H.44' &&
+          stamp.asset_query === '42h47' && stamp.sw_cache_key === 'resq-v42h47-release1' &&
+          stamp.date === '1.10.2026' &&
+          JSON.stringify(Object.keys(policy).sort()) === JSON.stringify(['attendanceOrderAdmission','courseApprovalAdmission','reserveV2Admission']) &&
+          Object.values(policy).every(v => v === true);
+      } catch { return false; }
+    };
+    ok('6.47 exact approved manifest, stamp and three ON admission policies', valid47(manifest47));
+    for (const [name, mutate] of [
+      ['omitted target', x => x.targets.pop()],
+      ['extra target', x => x.targets.push('sendCallout')],
+      ['duplicate target', x => x.targets[1] = x.targets[0]],
+      ['reordered targets', x => x.targets.reverse()],
+      ['oversized batch', x => x.batches = [x.targets]],
+      ['reordered batches', x => x.batches.reverse()],
+      ['producer before readers', x => { x.batches.unshift(x.batches.pop()); }],
+      ['new service', x => x.new_targets.push('newCallable')],
+      ['scheduler', x => x.scheduled_targets.push('hrMonthlySummaryMonthly')],
+      ['project', x => x.project = 'other'],
+      ['region', x => x.region = 'us-central1'],
+      ['future version', x => x.version = '42H.48'],
+      ['server identity', x => x.server_version = '42H.47'],
+      ['telemetry identity', x => x.telemetry_version = '42H.47'],
+      ['baseline', x => x.baseline_candidate = '0'.repeat(40)],
+      ['Rules', x => x.services.push('firestore:rules')],
+      ['Storage', x => x.services.push('storage')],
+      ['indexes', x => x.services.push('firestore:indexes')],
+      ['Pages', x => x.services.push('github-pages')],
+      ['duplicate service', x => x.services.push('functions')],
+      ['missing Hosting', x => x.services.pop()],
+      ['IAM exception', x => x.new_service_invoker = { role: 'roles/run.invoker', member: 'allUsers' }],
+      ['rollback kind', x => x.rollback.kind = 'old-baseline'],
+      ['rollback policy path', x => x.rollback.policy_file = 'other.json'],
+      ...Object.keys(manifest47.rollback.disabled_policy).map(key => ['rollback admission ' + key, x => x.rollback.disabled_policy[key] = true]),
+      ...['retain_compatible_readers','retain_course_rules','retain_hosting','in_flight_requests_may_finish'].map(key => ['rollback ' + key, x => x.rollback[key] = false]),
+      ['old baseline restore', x => x.rollback.allow_old_baseline_restore_after_new_data = true],
+      ...Object.keys(manifest47.backup).map(key => ['backup ' + key, x => x.backup[key] = false]),
+      ...manifest47.excluded.map(id => ['removed exclusion ' + id, x => x.excluded = x.excluded.filter(v => v !== id)]),
+      ...Object.keys(manifest47.validation).map(key => ['validation ' + key, x => x.validation[key] = 'wrong']),
+      ['extra property', x => x.extra = true],
+      ['missing property', x => delete x.region]
+    ]) { const bad = structuredClone(manifest47); mutate(bad); ok('6.47 rejects ' + name, !valid47(bad)); }
+    for (const key of ['scope','version','date','server_version','telemetry_version','asset_query','sw_cache_key'])
+      ok('6.47 rejects stamp drift ' + key, !valid47(manifest47, { ...stamp47, [key]: 'wrong' }));
+    for (const policy of [null, {}, { ...policy47, extra: true },
+      ...Object.keys(policy47).flatMap(k => [{ ...policy47, [k]: false }, { ...policy47, [k]: 'true' }])])
+      ok('6.47 rejects missing, malformed or disabled admission policy', !valid47(manifest47, stamp47, policy));
+    ok('6.47 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h47.json') !== null);
   }
 } else {
 
@@ -854,6 +914,6 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('releasegate · ' + pass + '/' + pass + ' עברו');
-if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
+if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46', '42H.47'].includes(releaseVersion)) console.log('  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED');
 console.log('  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו');
 console.log('  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.');
