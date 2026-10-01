@@ -40,7 +40,7 @@
   "forms:submit": "node ../functions/form-submissions.test.js && node form-submission-wiring.mjs && node forms-submit-browser.mjs",
   "saas:test": "node ../functions/saas-contract.test.js && node ../functions/saas-service.test.js && node saas-source.mjs && node saas-admin-browser.mjs",
   "mode:control": "node mode-controller-browser.mjs",
-  "security:test": "node ../functions/runtime-mode-service.test.js && npm run mode:control && node security-boundaries.mjs && node security-mutations.mjs",
+  "security:test": "node ../functions/swap-trigger-resilience.test.js && node ../functions/security-audit.test.js && node ../functions/runtime-mode-service.test.js && npm run mode:control && node security-boundaries.mjs && node security-mutations.mjs",
   "dr:test": "node ops-disaster-restore.test.mjs && node ops-backup-seal.test.mjs && node ops-auth-backup.test.mjs && node ops-storage-backup.test.mjs && node --test ../functions/backup-monitoring.test.js && node ops-dr-full-drill.test.mjs && node ops-backup-archive.test.mjs && node ops-export-delete-deny.test.mjs && node nightly-sheet-backup-source.mjs && node firestore-predeploy-gate.mjs",
   "metrics:test": "node ../functions/metrics-catalog.test.js && node ../functions/metrics-service.test.js && node metrics-client.test.mjs && node metrics-source.mjs && node metrics-browser.mjs",
   "mobile:test": "node mobile-shell.mjs",
