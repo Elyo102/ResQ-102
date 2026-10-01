@@ -955,6 +955,25 @@ function getPolicy(pathPattern) {
   return POLICY_BY_PATH.get(String(pathPattern || '')) || null;
 }
 
+// Advisory only: never enables TTL, deletes data, or changes the legacy policy
+// rows/digests used by restore. Declared TTL labels are not deployment evidence.
+function getRetentionDecision(pathPattern) {
+  const path = typeof pathPattern === 'string' ? pathPattern : '';
+  const item = getPolicy(path);
+  const sourcePolicy = item ? item.retention : null;
+  const unresolved = item && (sourcePolicy.includes('required') || [
+    'account_deletion_policy_pending',
+    'target_90_days_manual_cleanup_not_configured',
+    'same_retention_as_submission'
+  ].includes(sourcePolicy));
+  const status = !item ? 'blocked' : unresolved ? 'unresolved' : 'declared';
+  return Object.freeze({
+    schema: 1, path, sourcePolicy, status,
+    defaultAction: 'retain', automaticDeletionAuthorized: false,
+    reviewRequired: status !== 'declared', durationDays: null
+  });
+}
+
 function assessSnapshot(inputValue) {
   const input = inputValue && typeof inputValue === 'object' ? inputValue : {};
   const item = getPolicy(input.path);
@@ -1091,5 +1110,6 @@ module.exports = {
   IDENTITY_POLICY_PATHS,
   assessSnapshot,
   getPolicy,
+  getRetentionDecision,
   validatePolicies
 };

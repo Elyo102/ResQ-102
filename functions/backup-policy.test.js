@@ -16,6 +16,64 @@ test('missing or empty policy manifests fail closed', () => {
   assert.deepEqual(backupPolicy.validatePolicies([]), ['empty_manifest']);
 });
 
+test('retention decisions cover all policies without changing the restore catalogue', () => {
+  assert.equal(require('node:crypto').createHash('sha256')
+    .update(JSON.stringify(backupPolicy.DATA_POLICIES)).digest('hex'),
+  '9d9a8f8cba0a65aee5e0f90fbc3c7da2dbb28afd351a05f305a241af54fa5c03');
+  for (const item of backupPolicy.DATA_POLICIES) {
+    const decision = backupPolicy.getRetentionDecision(item.path);
+    assert.deepEqual(Object.keys(decision).sort(), [
+      'schema', 'path', 'sourcePolicy', 'status', 'defaultAction',
+      'automaticDeletionAuthorized', 'reviewRequired', 'durationDays'
+    ].sort());
+    assert.equal(decision.schema, 1);
+    assert.equal(decision.path, item.path);
+    assert.equal(decision.sourcePolicy, item.retention);
+    assert.equal(decision.defaultAction, 'retain');
+    assert.equal(decision.automaticDeletionAuthorized, false);
+    assert.equal(decision.durationDays, null);
+    assert(Object.isFrozen(decision));
+    assert.throws(() => { decision.automaticDeletionAuthorized = true; }, TypeError);
+    assert.equal(decision.reviewRequired, decision.status !== 'declared');
+    assert(['declared', 'unresolved'].includes(decision.status));
+    assert.equal(Object.hasOwn(item, 'automaticDeletionAuthorized'), false);
+  }
+});
+
+test('unresolved legal and audit policies retain data without invented durations', () => {
+  for (const item of backupPolicy.DATA_POLICIES.filter(item =>
+    item.retention.includes('required') || [
+      'account_deletion_policy_pending', 'target_90_days_manual_cleanup_not_configured',
+      'same_retention_as_submission'
+    ].includes(item.retention))) {
+    const decision = backupPolicy.getRetentionDecision(item.path);
+    assert.equal(decision.status, 'unresolved', item.path);
+    assert.equal(decision.reviewRequired, true);
+    assert.equal(decision.durationDays, null);
+    assert.equal(decision.automaticDeletionAuthorized, false);
+  }
+});
+
+test('unknown retention paths block and declared TTL does not authorize deletion', () => {
+  for (const path of ['unknown/{id}', '', null, {}, 1]) {
+    const decision = backupPolicy.getRetentionDecision(path);
+    assert.equal(decision.status, 'blocked');
+    assert.equal(decision.sourcePolicy, null);
+    assert.equal(decision.defaultAction, 'retain');
+    assert.equal(decision.reviewRequired, true);
+    assert.equal(decision.automaticDeletionAuthorized, false);
+  }
+  const decision = backupPolicy.getRetentionDecision('metrics_daily/{id}');
+  assert.equal(decision.sourcePolicy, 'ttl_90_days');
+  assert.equal(decision.status, 'declared');
+  assert.equal(decision.durationDays, null);
+  assert.equal(decision.automaticDeletionAuthorized, false);
+  const { METRICS_POLICIES } = require('./metrics-backup-policies');
+  for (const item of METRICS_POLICIES) {
+    assert.equal(backupPolicy.getRetentionDecision(item.path).sourcePolicy, item.retention);
+  }
+});
+
 test('root config and station config are distinct policies', () => {
   const root = backupPolicy.getPolicy('config/{docId}');
   const station = backupPolicy.getPolicy('stations/{sid}/config/{docId}');
