@@ -11,13 +11,27 @@
 #  שגוי היה מגיע לייצור בשקט.
 # ============================================================
 
-name: בדיקות
+name: Hours47 frozen candidate validation
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:      # אפשר גם להריץ ידנית מהלשונית Actions
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hours47-validation-1263a05
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GCLOUD_PROJECT: demo-resq
+  GOOGLE_CLOUD_PROJECT: demo-resq
+  FIREBASE_CONFIG: '{"projectId":"demo-resq"}'
+  METADATA_SERVER_DETECTION: none
 
 jobs:
 
@@ -25,14 +39,34 @@ jobs:
   app:
     name: קוד ומסכים
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 90
+    env:
+      RESQ_CI_SCRATCH: ${{ github.workspace }}/../hours47-ci-app-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: 1263a05ef17440533c5f2ce11026b03fa61e4f5a
+          persist-credentials: false
+
+      - name: Prove frozen product checkout independently of the control workflow
+        run: |
+          test "$(dirname "$(realpath -m "$RESQ_CI_SCRATCH")")" = "$(dirname "$(realpath "$GITHUB_WORKSPACE")")"
+          mkdir "$RESQ_CI_SCRATCH"
+          printf 'TMPDIR=%s\n' "$(realpath "$RESQ_CI_SCRATCH")" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = 1263a05ef17440533c5f2ce11026b03fa61e4f5a
+          test -z "$(git status --porcelain)"
+          printf 'product_sha=%s\nproduct_tree=%s\ncontrol_workflow_sha=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_SHA" | tee "$RESQ_CI_SCRATCH/product-app.txt"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.21.1'
+
+      - name: Native validation prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip
+          test -x /usr/bin/git && test -x /usr/bin/zip && test -x /usr/bin/unzip
 
       - name: התקנת תלויות הבדיקה
         working-directory: tests
@@ -46,22 +80,66 @@ jobs:
         working-directory: functions
         run: npm ci --no-audit --no-fund
 
+      - name: Install locked Rules dependencies used by boundary fixtures
+        working-directory: rules-test
+        run: npm ci --no-audit --no-fund
+
       - name: שער שחרור מלא — קוד, מסכים, נייד, עומס ומלאי Hosting
         working-directory: tests
-        run: npm run all
+        run: |
+          set -o pipefail
+          npm run release:validate 2>&1 | tee "$RESQ_CI_SCRATCH/app-validation.log"
+
+      - name: Retain product-bound validation evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hours47-app-1263a05-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ env.RESQ_CI_SCRATCH }}/product-app.txt
+            ${{ env.RESQ_CI_SCRATCH }}/app-validation.log
+            ${{ env.RESQ_CI_SCRATCH }}/resq-release-attestations/*.json
+            ${{ env.RESQ_CI_SCRATCH }}/resq-hours46-gate-*/**
 
   # ---------- כללי האבטחה ----------
   rules:
     name: כללי אבטחה
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
+    env:
+      RESQ_CI_SCRATCH: ${{ github.workspace }}/../hours47-ci-rules-${{ github.run_id }}-${{ github.run_attempt }}
+      RESQ_EMULATOR_CONFIG: ${{ github.workspace }}/../hours47-ci-rules-${{ github.run_id }}-${{ github.run_attempt }}/emulators.json
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: 1263a05ef17440533c5f2ce11026b03fa61e4f5a
+          persist-credentials: false
+
+      - name: Prove frozen checkout and prepare isolated emulator configuration
+        run: |
+          test "$(dirname "$(realpath -m "$RESQ_CI_SCRATCH")")" = "$(dirname "$(realpath "$GITHUB_WORKSPACE")")"
+          mkdir "$RESQ_CI_SCRATCH"
+          printf 'TMPDIR=%s\n' "$(realpath "$RESQ_CI_SCRATCH")" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = 1263a05ef17440533c5f2ce11026b03fa61e4f5a
+          test -z "$(git status --porcelain)"
+          printf 'product_sha=%s\nproduct_tree=%s\ncontrol_workflow_sha=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_SHA" | tee "$RESQ_CI_SCRATCH/product-rules.txt"
+          node <<'NODE'
+          const fs = require('node:fs'), path = require('node:path');
+          const original = JSON.parse(fs.readFileSync('firebase.json', 'utf8'));
+          const config = {
+            firestore: { rules:path.resolve(original.firestore.rules), indexes:path.resolve(original.firestore.indexes) },
+            storage: { rules:path.resolve(original.storage.rules) },
+            emulators: { firestore:{host:'127.0.0.1',port:8199}, storage:{host:'127.0.0.1',port:9199}, ui:{enabled:false}, singleProjectMode:true }
+          };
+          fs.writeFileSync(process.env.RESQ_EMULATOR_CONFIG, JSON.stringify(config), {flag:'wx'});
+          NODE
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.21.1'
 
       # אמולטור Firestore הוא תוכנית Java. בלעדיה הכללים
       # לא מהודרים כאן, וחוזרים למצב שבו הוודאות היחידה
@@ -83,15 +161,15 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: כללי האבטחה מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd rules-test && npm test"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd rules-test && npm test" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: פונקציות לוח המודעות מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node bulletin.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR report reads and live identity fences
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-hours-service.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/hr-hours-service.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR requests actual callable registration and private telemetry
         run: node tests/hr-requests-wiring.mjs
@@ -102,69 +180,82 @@ jobs:
       - name: HR durable notifications and documents against Firestore
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-hours-nudges.integration.test.js && node functions/hr-hours-dispatch.integration.test.js && node functions/hr-hours-nudge-status.integration.test.js && node functions/hr-documents.integration.test.js && node functions/hr-domain-dispatch.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/hr-hours-nudges.integration.test.js && node functions/hr-hours-dispatch.integration.test.js && node functions/hr-hours-nudge-status.integration.test.js && node functions/hr-documents.integration.test.js && node functions/hr-domain-dispatch.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR private requests against Firestore
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-requests.integration.test.js && node functions/hr-parent-attachments.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/hr-requests.integration.test.js && node functions/hr-parent-attachments.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR attendance correction support against Firestore
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/attendance-correction-support.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/attendance-correction-support.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR attachment parents against Firestore
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/hr-attachments-parents.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/hr-attachments-parents.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: HR attachments against Firestore and Storage
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore,storage --project demo-resq "node functions/hr-attachments.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore,storage --project demo-resq "node functions/hr-attachments.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: פעולות זהות והרשמה מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && npm run test:identity"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && npm run test:identity" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: העברת עובדים בין תחנות מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node station-transfer.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node station-transfer.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: נוכחות Shadow מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node attendance-shadow.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: הזמנות חד-פעמיות מול Firestore מקומי
         env:
           GCLOUD_PROJECT: demo-resq
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node invitations.integration.test.js && npm run test:onboarding-callables"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node invitations.integration.test.js && npm run test:onboarding-callables" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: מנוע סידור חודשי מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-runtime.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-runtime.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       # ⭐ נתיבי הכתיבה החדשים של 42G — מדיניות, מקור, מצב ומעבר —
       # מול Firestore אמיתי. עד לכאן הם נבדקו מול double בלבד.
       - name: כתיבת חוקי תחנה, מקור ומעבר לחי מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-authoring.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-authoring.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       # ⭐ 42H — הדבקת הגיליון: דוח → טיוטה → פרסום → לוח עם היעדרויות,
       # והמרוצים של ביקורת v2 (ביטול מינוי בזמן קריאה; ניסיון חוזר).
       - name: הדבקת הגיליון כטיוטה מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-sheet-import.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-sheet-import.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       # ⭐ 42H.2 — עריכת סידור שפורסם: טיוטה נגזרת → revision חדש עם CAS,
       # יומן, outbox אחד לאדם, ניסיון חוזר, בסיס ישן נדחה, rollback.
       - name: עריכת סידור שפורסם מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-edit.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-edit.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       # ⭐ 42H.2 — קטלוג כשירויות ומחזיקים: CAS, יומן, מחיקה נחסמת כשבשימוש.
       - name: קטלוג כשירויות מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-qualifications.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-qualifications.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       # ⭐ 42H.2 — בקרת פערים: קריטי חוסם, אחר עם אישור חתום, מועמדים בלבד.
       - name: בקרת פערים מול Firestore מקומי
-        run: firebase emulators:exec --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "cd functions && node schedule-gaps.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
 
       - name: Monitoring and feedback transactions and deny rules
         env:
           NODE_PATH: ${{ github.workspace }}/rules-test/node_modules
-        run: firebase emulators:exec --only firestore --project demo-resq "node functions/ops.integration.test.js"
+        run: firebase emulators:exec --config "$RESQ_EMULATOR_CONFIG" --only firestore --project demo-resq "node functions/ops.integration.test.js" 2>&1 | tee -a "$RESQ_CI_SCRATCH/rules-validation.log"
+
+      - name: Retain isolated Rules evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hours47-rules-1263a05-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ env.RESQ_CI_SCRATCH }}/product-rules.txt
+            ${{ env.RESQ_CI_SCRATCH }}/rules-validation.log
+            **/firestore-debug.log
+            **/storage-debug.log
