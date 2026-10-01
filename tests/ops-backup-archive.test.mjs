@@ -62,13 +62,13 @@ if (!shell) {
   check('live archive create+verify on ' + shell, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-archive-test-'));
     try {
-      const docs = path.join(tmp, 'docs');
-      fs.mkdirSync(docs);
+      const docs = path.join(tmp, 'docs', 'nested');
+      fs.mkdirSync(docs, { recursive: true });
       fs.writeFileSync(path.join(docs, 'a.txt'), 'hello');
       fs.writeFileSync(path.join(docs, 'b.txt'), 'bye');
       const inventory = [
-        { path: 'docs/a.txt', bytes: 5, sha256: createHash('sha256').update('hello').digest('hex') },
-        { path: 'docs/b.txt', bytes: 3, sha256: createHash('sha256').update('bye').digest('hex') }
+        { path: 'docs/nested/a.txt', bytes: 5, sha256: createHash('sha256').update('hello').digest('hex') },
+        { path: 'docs/nested/b.txt', bytes: 3, sha256: createHash('sha256').update('bye').digest('hex') }
       ];
       const invPath = path.join(tmp, 'inventory.json');
       const zipPath = path.join(tmp, 'out.zip');
@@ -91,6 +91,33 @@ if (!shell) {
         '-VerifyOnly'
       ], { encoding: 'utf8' });
       assert.equal(verify.status, 0, verify.stderr || verify.stdout || '');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+  check('live archive rejects traversal and sibling prefixes', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'resq-archive-boundary-'));
+    try {
+      const root = path.join(tmp, 'Root');
+      fs.mkdirSync(root);
+      fs.mkdirSync(path.join(tmp, 'Root-sibling'));
+      const outside = ['outside.txt', 'Root-sibling/outside.txt'];
+      if (process.platform !== 'win32') {
+        fs.mkdirSync(path.join(tmp, 'root'));
+        outside.push('root/outside.txt');
+      }
+      for (const relative of outside) fs.writeFileSync(path.join(tmp, relative), 'outside');
+      for (const [index, relative] of outside.entries()) {
+        const invPath = path.join(tmp, 'inventory-' + index + '.json');
+        const zipPath = path.join(tmp, 'rejected-' + index + '.zip');
+        fs.writeFileSync(invPath, JSON.stringify([{ path: '../' + relative, bytes: 7,
+          sha256: createHash('sha256').update('outside').digest('hex') }]));
+        const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-File', PS1, '-RootPath', root, '-InventoryPath', invPath, '-ZipPath', zipPath], { encoding: 'utf8' });
+        assert.notEqual(run.status, 0);
+        assert.match((run.stderr || '') + (run.stdout || ''), /Archive path escapes root/);
+        assert.equal(fs.readFileSync(path.join(tmp, relative), 'utf8'), 'outside');
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

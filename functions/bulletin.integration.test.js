@@ -10,10 +10,10 @@
 
 const assert = require('node:assert/strict');
 
-if (!process.env.FIRESTORE_EMULATOR_HOST) {
-  console.error('FIRESTORE_EMULATOR_HOST is required; refusing to run against a real project.');
-  process.exit(2);
-}
+assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/,
+  'A loopback Firestore emulator is required before loading the real callable.');
+assert.equal(process.env.GCLOUD_PROJECT, 'demo-resq');
+assert.ok(!process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT === 'demo-resq');
 
 const functions = require('./index');
 const admin = require('firebase-admin');
@@ -24,6 +24,18 @@ const SID = 'test_station';
 const SUB = 'rashit';
 const SUPER_SID = 'eilat_102';
 let passed = 0;
+const TERMS_ACTORS = Object.freeze(['u_ff', 'u_rate', 'u_inactive', 'u_cmd', 'u_dep',
+  'u_stale', 'u_role_removed', 'u_cmd_inactive', 'u_dist', 'u_pending', 'u_outside',
+  'u_super', 'u_firefighter', 'u_team_leader', 'u_station_commander',
+  'u_hr_coordinator', 'u_district_commander']);
+const ownedTerms = [];
+async function seedTerms(uid) {
+  assert.ok(TERMS_ACTORS.includes(uid));
+  const ref = db.doc('registration_terms_active/' + uid);
+  await ref.create({ uid, consent_key:'1.3|2026-09-24', terms_version:'1.3',
+    privacy_version:'2026-09-24', receipt_path:'registration_consents/' + uid + '/events/bulletin-fixture' });
+  ownedTerms.push(ref);
+}
 
 function requestId(label) {
   return ('req-' + label + '-000000000000000000000000').slice(0, 40);
@@ -107,7 +119,13 @@ async function seed() {
 }
 
 async function main() {
+try {
+for (const uid of TERMS_ACTORS) {
+  assert.equal((await db.doc('registration_terms_active/' + uid).get()).exists, false,
+    'fixture must not overwrite an existing consent marker: ' + uid);
+}
 await seed();
+for (const uid of TERMS_ACTORS.filter(uid => uid !== 'u_ff')) await seedTerms(uid);
 
 const firstPayload = {
   subStationId: SUB,
@@ -116,6 +134,16 @@ const firstPayload = {
   requestId: requestId('first')
 };
 const firefighter = auth('u_ff', 'firefighter', SID, 'C');
+
+await test('missing Terms consent is denied before any bulletin write', async function () {
+  const messages = db.collection(`stations/${SID}/sub_stations/${SUB}/bulletin_messages`);
+  const before = await messages.get();
+  await rejectsCode('failed-precondition', functions.postBulletinMessage.run({
+    auth: firefighter, data: firstPayload
+  }));
+  assert.deepEqual((await messages.get()).docs.map(doc => doc.id), before.docs.map(doc => doc.id));
+});
+await seedTerms('u_ff');
 
 let firstResult;
 await test('firefighter posts through the callable', async function () {
@@ -593,7 +621,11 @@ await test('hiding an already-hidden message is idempotent', async function () {
 });
 
 console.log('\n' + passed + ' callable integration tests passed against Firestore emulator.');
-await admin.app().delete();
+} finally {
+  try {
+    for (const ref of ownedTerms) await ref.delete();
+  } finally { await admin.app().delete(); }
+}
 }
 
 main().catch(async function (error) {

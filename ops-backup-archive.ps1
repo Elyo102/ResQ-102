@@ -9,13 +9,15 @@ Add-Type -AssemblyName System.IO.Compression
 $parsed = Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $entries = @($parsed | ForEach-Object { $_ })
 if ($entries.Count -gt 0 -and ($entries[0] -is [System.Array])) { throw 'Inventory did not enumerate' }
-$rootPrefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\') + '\'
+$separator = [System.IO.Path]::DirectorySeparatorChar
+$rootPrefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)) + $separator
+$pathComparison = if ($separator -eq '\') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 if (!$VerifyOnly) {
 $archive = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
   foreach ($entry in $entries) {
     $source = [System.IO.Path]::GetFullPath((Join-Path $RootPath $entry.path))
-    if (!$source.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Archive path escapes root' }
+    if (!$source.StartsWith($rootPrefix, $pathComparison)) { throw 'Archive path escapes root' }
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $source, $entry.path) | Out-Null
   }
 } finally { $archive.Dispose() }
