@@ -83,6 +83,31 @@ remain in the authoritative ledger; passing these tests cannot erase them.
 
 No production deployment, employee mutation, secret payload read or paid API call.
 No blanket source freeze, no final57 acceptance and no new release receipt.
+
+## Subsequent local environment verification
+
+At pushed1142286 the executing PowerShell, Node22 parent and inherited Node child
+all reported the named seal variable unavailable. The later direct owner request
+authorized creating project-root .env.local. Before writing, its absence and
+untracked status were checked; .gitignore excludes it and Firebase Hosting has
+explicit .env.* and **/.env.* exclusions. No exclusions were changed.
+
+Node22 --env-file=.env.local then reported availability=true and minimumValid=true.
+An in-memory synthetic sealBuffer/unsealBuffer roundtrip passed. The requested
+value was disclosed in chat, so productionKeyApproved=false: it was not used for
+employee data, cloud export, a production backup or a release readiness receipt.
+The ignored file carries a synthetic-only warning and was not staged. No key value
+or secret-derived diagnostic was emitted. Production requires a distinct random,
+recoverable protected key; no new escrow/IAM/storage location was silently created.
+
+E11 local follow-up confirmed callout.js still writes client ISO seen_at and at.
+Existing Rules deliberately preserve the first seen string and accept cached
+legacy answer merges. A naive additional server answer timestamp can become stale
+when an old client changes the answer while preserving the new field; requiring
+it on every write would break that cached client. E11 therefore remains OPEN
+pending a reviewed payload-bound compatibility contract and emulator proof, not
+merely an added timestamp field. No product timestamp change was made here.
+
 The requested AGENTS reporting-section removal was denied by the permission
 reviewer even after independent verification of the human message; it was not
 bypassed and AGENTS.md remains unchanged.
