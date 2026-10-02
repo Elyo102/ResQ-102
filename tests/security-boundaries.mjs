@@ -75,7 +75,13 @@ for (const m of indexSrc.matchAll(/^const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Object\
   frozenOptionConsts.set(m[1], /enforceAppCheck:\s*true/.test(m[2]));
 }
 const callables = callableOptions(indexSrc);
-check('functions/index.js exposes the reviewed inventory of 195 callables', callables.length === 195);
+// The four driving-refresher endpoints use a shared literal options object.
+// Recognize only its exact declaration; fail closed if it is reassigned.
+const drivingOptions = indexSrc.match(/^const DRIVING_REFRESH_OPTIONS = (\{[^\n]+\});$/m);
+if (drivingOptions && !/\bDRIVING_REFRESH_OPTIONS\s*=(?!=)/.test(indexSrc.slice(drivingOptions.index + drivingOptions[0].length))) {
+  frozenOptionConsts.set('DRIVING_REFRESH_OPTIONS', /enforceAppCheck:\s*true/.test(drivingOptions[1]));
+}
+check('functions/index.js exposes the reviewed inventory of 199 callables', callables.length === 199);
 
 function enforcesAppCheck(options) {
   // A literal override must not inherit enforcement from a spread constant.
@@ -107,6 +113,13 @@ if (withoutAppCheck.join(',') !== [...APPCHECK_EXEMPT].sort().join(',')) {
 const NEW_CALLABLES = ['createOrganization', 'attachStationToOrganization', 'changeSubscriptionPlan',
   'setSubscriptionStatus', 'getOrganizationOverview', 'simulateBillingWebhook', 'listOrganizations',
   'recordMetrics', 'getMetricsDashboard'];
+const DRIVING_CALLABLES = ['getDrivingRefreshContext', 'saveDrivingRefreshReport',
+  'listDrivingRefreshReports', 'getDrivingRefreshSummary'];
+check('all driving-refresher callables enforce App Check without exemptions',
+  DRIVING_CALLABLES.every(n => {
+    const callable = callables.find(c => c.name === n);
+    return callable && enforcesAppCheck(callable.options) && !APPCHECK_EXEMPT.includes(n);
+  }));
 check('every callable added by this package enforces App Check',
   NEW_CALLABLES.every((n) => {
     const c = callables.find((x) => x.name === n);
