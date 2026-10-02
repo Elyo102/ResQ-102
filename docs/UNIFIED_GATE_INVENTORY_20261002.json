@@ -1,0 +1,311 @@
+{
+  "schema": "resq-formal-gate-inventory-v1",
+  "sourceCommit": "607a99ef95a67c93e66380a3553335d9c41f447f",
+  "requirements": "docs/UNIFIED_REQUIREMENTS_20261001.md",
+  "inventoryOnly": true,
+  "testsExecutedByInventory": 0,
+  "developmentPercent": null,
+  "formalGate": {
+    "passed": 0,
+    "failed": 0,
+    "notRun": 57
+  },
+  "note": "Historical LOCAL_TESTED evidence remains valid only for unchanged matching inputs and environment; NOT_RUN here refers only to final frozen-candidate acceptance, not absence of prior tests.",
+  "verifiedNewMilestones": [
+    "Metadata-only encrypted diagnostic completed; observed90 gaps source-classified with no omissions",
+    "893-document encrypted backup completed and content readback passed; not point-in-time or full deployment rollback",
+    "New policy78, metadata16+3, IAM planner12 and transport13 assertions passed; emulator150 denial assertions passed"
+  ],
+  "blockers": [
+    "Secret-scoped IAM change was denied twice by execution auto-review before process creation, including after direct human authorization lookup; no cloud IAM mutation occurred",
+    "Full rollback source/config/IAM archive and frozen expanded manifest are not established by document backup",
+    "Requirements still contain OPEN/PARTIAL implementation, physical-device, real Auth/App Check, DR and isolated control-plane acceptance"
+  ],
+  "items": [
+    {
+      "id": "H01",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H01"
+    },
+    {
+      "id": "H02",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H02"
+    },
+    {
+      "id": "H03",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H03"
+    },
+    {
+      "id": "H04",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H04"
+    },
+    {
+      "id": "H05",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H05"
+    },
+    {
+      "id": "H06",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H06"
+    },
+    {
+      "id": "H07",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H07"
+    },
+    {
+      "id": "H08",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H08"
+    },
+    {
+      "id": "H09",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#H09"
+    },
+    {
+      "id": "E00",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E00"
+    },
+    {
+      "id": "E01",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E01"
+    },
+    {
+      "id": "E02",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E02"
+    },
+    {
+      "id": "E03",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E03"
+    },
+    {
+      "id": "E04",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E04"
+    },
+    {
+      "id": "E05",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E05"
+    },
+    {
+      "id": "E06",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E06"
+    },
+    {
+      "id": "E07",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E07"
+    },
+    {
+      "id": "E08",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E08"
+    },
+    {
+      "id": "E09",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E09"
+    },
+    {
+      "id": "E10",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E10"
+    },
+    {
+      "id": "E11",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E11"
+    },
+    {
+      "id": "E12",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E12"
+    },
+    {
+      "id": "E13",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E13"
+    },
+    {
+      "id": "E14",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E14"
+    },
+    {
+      "id": "E15",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E15"
+    },
+    {
+      "id": "E16",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E16"
+    },
+    {
+      "id": "E17",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E17"
+    },
+    {
+      "id": "E18",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E18"
+    },
+    {
+      "id": "E19",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E19"
+    },
+    {
+      "id": "E20",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E20"
+    },
+    {
+      "id": "E21",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E21"
+    },
+    {
+      "id": "E22",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E22"
+    },
+    {
+      "id": "E23",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E23"
+    },
+    {
+      "id": "E24",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E24"
+    },
+    {
+      "id": "E25",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E25"
+    },
+    {
+      "id": "E26",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E26"
+    },
+    {
+      "id": "E27",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E27"
+    },
+    {
+      "id": "E28",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E28"
+    },
+    {
+      "id": "E29",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E29"
+    },
+    {
+      "id": "E30",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E30"
+    },
+    {
+      "id": "E31",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#E31"
+    },
+    {
+      "id": "S01",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#S01"
+    },
+    {
+      "id": "S02",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#S02"
+    },
+    {
+      "id": "S03",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#S03"
+    },
+    {
+      "id": "S04",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#S04"
+    },
+    {
+      "id": "S05",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#S05"
+    },
+    {
+      "id": "C01",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C01"
+    },
+    {
+      "id": "C02",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C02"
+    },
+    {
+      "id": "C03",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C03"
+    },
+    {
+      "id": "C04",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C04"
+    },
+    {
+      "id": "C05",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C05"
+    },
+    {
+      "id": "C06",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C06"
+    },
+    {
+      "id": "C07",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#C07"
+    },
+    {
+      "id": "U01",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#U01"
+    },
+    {
+      "id": "U02",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#U02"
+    },
+    {
+      "id": "U03",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#U03"
+    },
+    {
+      "id": "U04",
+      "finalFrozenGateStatus": "NOT_RUN",
+      "evidenceReference": "docs/UNIFIED_REQUIREMENTS_20261001.md#U04"
+    }
+  ]
+}

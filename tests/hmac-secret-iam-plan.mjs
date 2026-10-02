@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {planSecretAccessor,samePolicySemantics} from '../ops-hmac-secret-iam.mjs';
+const member='serviceAccount:123-compute@developer.gserviceaccount.com';
+const original={etag:'test-etag',version:3,bindings:[{role:'roles/viewer',members:['user:fake@example.invalid']},{role:'roles/secretmanager.secretAccessor',members:[member],condition:{title:'test',expression:'false'}}],auditConfigs:[{service:'allServices',auditLogConfigs:[{logType:'DATA_READ'}]}]};
+const next=planSecretAccessor(original,member);
+assert.equal(next.changed,true);
+assert.equal(original.bindings.length,2);
+assert.equal(next.policy.bindings.length,3);
+assert.deepEqual(next.policy.bindings.slice(0,2),original.bindings);
+assert.deepEqual(next.policy.auditConfigs,original.auditConfigs);
+assert.equal(next.policy.etag,original.etag);
+assert.equal(planSecretAccessor(next.policy,member).changed,false);
+assert.throws(()=>planSecretAccessor({...original,etag:''},member));
+assert.throws(()=>planSecretAccessor({...original,version:1},member));
+assert.throws(()=>planSecretAccessor(original,'allUsers'));
+assert.ok(samePolicySemantics(next.policy,{...next.policy,etag:'new-etag',bindings:[...next.policy.bindings].reverse()}));
+assert.equal(samePolicySemantics(next.policy,{...next.policy,bindings:next.policy.bindings.slice(1)}),false);
+console.log(JSON.stringify({synthetic:true,passed:12,cloudWrites:0}));

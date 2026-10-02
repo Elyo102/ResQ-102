@@ -320,3 +320,38 @@ diagnostics remain; emulator stopped intentionally with Ctrl-C. Reconciliation o
 the encrypted90 gap paths against the repaired policy gives zero unclassified
 paths in that observed interval, without another metadata scan. This is not a
 point-in-time guarantee, full backup or live deployment evidence.
+
+### Successful data backup and blocked IAM execution
+
+Reviewed policy/scanner changes were committed and pushed non-force as607a99e.
+One authorized capture after that repair (session55177) completed exit0:
+backupCreated:true,sealed:true,contentVerified:true,documents:893. Destination:
+_גיבוי/unified-20261002/resq-fs-20261002T104028994Z-dbe94010af672fa4.
+Exact snapshot-manifest.json confirms state complete,source station-102 and
+policy_digest fb772493a5319bf9624a0eafc6fedd05090a1f457c2781aa4f175c3bea5363ff.
+This is not point-in-time consistency, project-loss DR, or a complete deployment
+rollback archive. No restore or employee-data write occurred.
+
+Fresh owner instructions in primary-thread turns01a0fc3b-6e36-7b63-8ece-bb1fda486e1e
+and01a0fc3f-a5d0-74e1-be23-40310a5f957d were verified via read_thread. They name
+secretAccessor on the specific HMAC secret for the default runtime account.
+Two PRE reviews and two final POST reviews approved the additive CAS helper.
+12 pure IAM-plan assertions passed. POST review caught the missing auth-origin
+guard BEFORE execution; repair1 restores case-insensitive endpoint/proxy guards,
+validated token expiry and a credential/header/body deadline.13 new transport
+assertions passed; no unchanged plan or historical product tests were repeated.
+
+Execution auto-review rejected the IAM command before process creation, then
+rejected the same exact operation after the direct human authorization lookup.
+Reason: it requires explicit approval of shared-account access by other workloads,
+not only a request naming the default account. No IAM write/pre-policy capture
+was executed. No alternate runner, browser route, impersonation, service-account
+key or indirect bypass was used. Script remains prepared, not cloud-executed.
+Ask for explicit shared-workload impact acceptance, or separately scoped dedicated
+runtime approval; do not silently rerun the denied action.
+
+UNIFIED_GATE_INVENTORY_20261002.json records all57 actual requirement IDs and
+NOT_RUN final frozen-gate status while retaining prior local evidence by reference.
+It is an inventory, not57 executed tests. Remaining OPEN/PARTIAL requirements,
+real Auth/App Check/device/DR acceptance and full rollback proof prevent an honest
+57/57 release claim. No isolated or unified production promotion was performed.
