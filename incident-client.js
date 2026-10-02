@@ -27,6 +27,8 @@ export const TELEMETRY_CODES = Object.freeze([
 // Explicit public onCall names only; never accept a free-form action label.
 export const TELEMETRY_CALLABLES = Object.freeze([
   'unknown',
+  'getDrivingRefreshContext', 'saveDrivingRefreshReport',
+  'listDrivingRefreshReports', 'getDrivingRefreshSummary',
   'issueFirstAdminInvitation', 'markStationReady', 'provisionStation',
   'issueHrInvitation', 'revokeHrInvitation', 'ownerSetupMail',
   'redeemInvitation', 'resumeOnboarding', 'registrationTermsConsent',
