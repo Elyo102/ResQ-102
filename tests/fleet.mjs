@@ -386,7 +386,7 @@ check('history opt-in retains retired operational and logistics vehicles without
     await pending;
   }
   assert.deepEqual(deleted, ['resq-vold-release1']);
-  for (const file of ['board.html', 'faults.html', 'fleet.js?v=42h47']) {
+  for (const file of ['board.html', 'faults.html', 'fleet.js?v=42h49']) {
     let pending;
     const background = [];
     handlers.fetch({ request:{ method:'GET',url:origin+'/'+file,mode:file.endsWith('.html')?'navigate':'cors' },

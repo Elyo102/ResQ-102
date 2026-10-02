@@ -15,8 +15,8 @@
 if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
 }catch(e){}})();
 </script>
-<link rel="stylesheet" href="./theme.css?v=42h47">
-<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h47">
+<link rel="stylesheet" href="./theme.css?v=42h49">
+<link rel="stylesheet" href="./hr-attachments-ui.css?v=42h49">
 <link rel="manifest" href="./manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -427,28 +427,28 @@ if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)
 </div>
 
 <script type="module">
-import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h47';
-import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h47';
-import { createCourseEntry, mountManualDateChooser } from './attendance-course-entry.js?v=42h47';
-import { reportPage } from './report.js?v=42h47';
-import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h47';
-import { subStationAvailable } from './stations.js?v=42h47';
-import { renderNav, renderStuckNav } from './nav.js?v=42h47';
-import { MEMBER_ROLES } from './roles.js?v=42h47';
-import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h47';
-import { watchCallouts } from './callout.js?v=42h47';
-import { errorText, logError } from './error-text.js?v=42h47';
+import { canSelectReserveShift } from './reserve-shift-policy.js?v=42h49';
+import { validateCourseMonth, projectCourseRows, renderCourseTimeline } from './course-timeline.js?v=42h49';
+import { createCourseEntry, mountManualDateChooser } from './attendance-course-entry.js?v=42h49';
+import { reportPage } from './report.js?v=42h49';
+import { firebaseConfig, STATION_ID } from './firebase-config.js?v=42h49';
+import { subStationAvailable } from './stations.js?v=42h49';
+import { renderNav, renderStuckNav } from './nav.js?v=42h49';
+import { MEMBER_ROLES } from './roles.js?v=42h49';
+import { initPWA, registerPwaUpdateGuard } from './pwa.js?v=42h49';
+import { watchCallouts } from './callout.js?v=42h49';
+import { errorText, logError } from './error-text.js?v=42h49';
 import { crewOnDate, swapEffect, overrideOn,
          overrideKindHe, shiftTimes, CREW_HE, CREW_SHORT, toKey }
-  from './rotation.js?v=42h47';
+  from './rotation.js?v=42h49';
 import { parseEffectiveWorkdays, worksOn, unknownDaysBetween, shiftRotationShim,
-         workdaysSourceLabel } from './effective-workdays.js?v=42h47';
+         workdaysSourceLabel } from './effective-workdays.js?v=42h49';
 import { DAY_TYPES, dayTypeHe, needsTimes, calcHours, configuredDayOffset, monthTotal, monthSummary,
          recordId, monthKey, daysInMonth, dateKey, isSplit, guessDayOffset,
          overtimeHours, reasonMissing, reasonWhy, REASON_TYPES,
          SHAPES, shapeOf, shapeHe,
          reportedAtMs, retroDays, retroLabel }
-  from './hours.js?v=42h47';
+  from './hours.js?v=42h49';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, onIdTokenChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -456,11 +456,11 @@ import { getFirestore, collection, doc, getDoc, getDocs, getDocFromServer, getDo
          query, where, writeBatch, runTransaction, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
-  from './monitored-functions.js?v=42h47';
+  from './monitored-functions.js?v=42h49';
 
 const app  = initializeApp(firebaseConfig);
 // App Check. כל עוד המפתח ב-appcheck.js ריק — אינו עושה דבר.
-import { initAppCheck } from './appcheck.js?v=42h47';
+import { initAppCheck } from './appcheck.js?v=42h49';
 await initAppCheck(app);
 const auth = getAuth(app);
 const db   = getFirestore(app);
@@ -1545,7 +1545,7 @@ async function showAttendanceOrder(date) {
   attendanceOrderOpen = true;
   try {
     const target = captureMonthWrite();
-    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h47');
+    const { openAttendanceOrder } = await import('./attendance-order-ui.js?v=42h49');
     if (!sameMonthWrite(target)) return;
     await openAttendanceOrder({ auth, fns, httpsCallable, onIdTokenChanged,
       target_uid:target.uid, date, isCurrent:()=>sameMonthWrite(target) });

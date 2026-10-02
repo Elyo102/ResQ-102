@@ -1,9 +1,9 @@
-import { MEMBER_ROLES } from './roles.js?v=42h47';
-import { registerPwaUpdateGuard } from './pwa.js?v=42h47';
-import { retroLabel } from './hours.js?v=42h47';
-import { errorText as sharedErrorText, logError } from './error-text.js?v=42h47';
-import { validateCourseSnapshot, renderCourseTimeline } from './course-timeline.js?v=42h47';
-import { STATIONS } from './stations.js?v=42h47';
+import { MEMBER_ROLES } from './roles.js?v=42h49';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h49';
+import { retroLabel } from './hours.js?v=42h49';
+import { errorText as sharedErrorText, logError } from './error-text.js?v=42h49';
+import { validateCourseSnapshot, renderCourseTimeline } from './course-timeline.js?v=42h49';
+import { STATIONS } from './stations.js?v=42h49';
 
 const LABELS = { open: 'פתוחה', in_progress: 'בטיפול', waiting_employee: 'ממתינה לעובד', closed: 'סגורה' };
 /* אוצר הסוגים זהה לזה שבשרת. המסך אינו ממציא סוג משלו

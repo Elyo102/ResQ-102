@@ -12,7 +12,9 @@ import {buildHours46Plan,assertSuccessful,runHours46Sequence} from './lib/hours4
 
 const here=fileURLToPath(new URL('.',import.meta.url));
 const self=fileURLToPath(import.meta.url);
-const guardFile=path.join(here,'lib/network-guard.cjs');
+// NODE_OPTIONS is parsed again by child processes: Windows backslashes inside
+// quoted arguments can be consumed. Forward slashes preserve the exact preload.
+const guardFile=path.join(here,'lib/network-guard.cjs').replaceAll('\\','/');
 const scripts=JSON.parse(fs.readFileSync(path.join(here,'package.json'),'utf8')).scripts;
 const plan=buildHours46Plan(scripts);
 assert.equal(Number(process.versions.node.split('.')[0]),22,'NODE22_REQUIRED');

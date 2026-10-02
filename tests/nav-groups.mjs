@@ -95,6 +95,7 @@ function same(actual, expected, label) {
 }
 
 const member = [
+  'driving-refresh.html',
   'login.html', 'schedule-management.html', 'attendance.html',
   'operational-vehicles.html',
   'faults.html', 'forms.html', 'swaps.html', 'feedback.html',

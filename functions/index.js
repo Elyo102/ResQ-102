@@ -48,6 +48,7 @@ const stationTransferModule = require('./station-transfer');
 const stationDeliveryFenceModule = require('./station-delivery-fence');
 const incidentLogModule = require('./incident-log');
 const feedbackModule = require('./feedback');
+const drivingRefreshModule = require('./driving-refresh');
 const maintenanceServiceModule = require('./maintenance-service');
 const systemHealthServiceModule = require('./system-health-service');
 const systemHealthFirestoreModule = require('./system-health-firestore');
@@ -261,6 +262,12 @@ const opsDependencies = {
 };
 const incidentLog = incidentLogModule.createIncidentLog(opsDependencies);
 const feedback = feedbackModule.createFeedback(opsDependencies);
+const drivingRefresh = drivingRefreshModule.createDrivingRefresh({db, HttpsError});
+const DRIVING_REFRESH_OPTIONS = {enforceAppCheck:true, region:'europe-west1', timeoutSeconds:60, maxInstances:3};
+exports.getDrivingRefreshContext = onCall(DRIVING_REFRESH_OPTIONS, req => drivingRefresh.context(req));
+exports.saveDrivingRefreshReport = onCall(DRIVING_REFRESH_OPTIONS, req => drivingRefresh.save(req));
+exports.listDrivingRefreshReports = onCall(DRIVING_REFRESH_OPTIONS, req => drivingRefresh.list(req));
+exports.getDrivingRefreshSummary = onCall(DRIVING_REFRESH_OPTIONS, req => drivingRefresh.summary(req));
 const maintenanceService = maintenanceServiceModule.createMaintenanceService({
   db, auth:admin.auth(), HttpsError, incidentLog,
   clock:() => Date.now(), serverTimestamp:() => FV.serverTimestamp()

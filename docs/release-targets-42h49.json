@@ -1,0 +1,16 @@
+{
+  "version": "42H.49",
+  "project": "station-102",
+  "region": "europe-west1",
+  "baseline_candidate": "48b890b9f06ad37bfd689d0c64998d2341a5a1c7",
+  "scope": "driving-refresh",
+  "targets": ["getDrivingRefreshContext", "saveDrivingRefreshReport", "listDrivingRefreshReports", "getDrivingRefreshSummary"],
+  "batches": [["getDrivingRefreshContext", "saveDrivingRefreshReport"], ["listDrivingRefreshReports", "getDrivingRefreshSummary"]],
+  "new_targets": ["getDrivingRefreshContext", "saveDrivingRefreshReport", "listDrivingRefreshReports", "getDrivingRefreshSummary"],
+  "services": ["firestore:rules", "firestore:indexes", "functions:four-named-targets", "hosting"],
+  "excluded": ["employee-data-migrations", "iam-expansion", "existing-functions-redeployment", "scheduled-functions", "storage-rules", "main-merge", "deletions"],
+  "rollback": {"hosting": "previous live version clone", "rules": "captured previous ruleset", "data": "retain new reports and create-only edit receipts", "functions": "retain new compatible endpoints; hide UI on rollback", "indexes": "retain additive indexes"},
+  "backup": {"capture_previous_rules_hosting_indexes": true, "encrypted_readback_verified": true, "employee_documents_read": false},
+  "validation": {"feature_unit": "29/29", "feature_browser": "45 assertions on pre-stamp tree", "feature_native": "21 assertions", "full_gate": "PENDING", "physical_devices": "NOT_RUN", "live_authenticated_writes": "NOT_RUN"},
+  "deployment": "PENDING"
+}

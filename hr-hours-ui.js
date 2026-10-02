@@ -1,5 +1,5 @@
-import { registerPwaUpdateGuard } from './pwa.js?v=42h47';
-import { validateCourseMonth, renderCourseTimeline } from './course-timeline.js?v=42h47';
+import { registerPwaUpdateGuard } from './pwa.js?v=42h49';
+import { validateCourseMonth, renderCourseTimeline } from './course-timeline.js?v=42h49';
 
 // DOM-only controller. The injected adapter owns authenticated transport;
 // no personal data is persisted or embedded into URLs.

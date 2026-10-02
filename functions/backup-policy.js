@@ -46,6 +46,12 @@ function policy(path, scope, classification, monitorPolicy, backupPolicy,
 }
 
 const DATA_POLICIES = Object.freeze([
+  policy('stations/{sid}/driving_refresh_reports/{id}', 'station', 'source_of_truth',
+    'required_document_shape', 'managed_export', 'restore', 'restricted_identity',
+    'policy_required_before_wiring', 'Personal driving reports; retain until an explicit retention decision.', {humanReadable:'forbidden'}),
+  policy('stations/{sid}/driving_refresh_reports/{id}/edits/{eid}', 'station', 'audit_log',
+    'required_document_shape', 'managed_export', 'restore_after_parent', 'restricted_identity',
+    'policy_required_before_wiring', 'Create-only report mutation receipts and edit history; never replay as new work.', {humanReadable:'forbidden'}),
   policy('stations/{sid}/bulletin_requests/{id}', 'station', 'source_of_truth',
     'none', 'managed_export', 'specialized_restore', 'restricted_identity',
     'policy_required_before_wiring',

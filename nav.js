@@ -22,6 +22,7 @@ const ITEMS = [
   // route for existing links and native-back history, but omit its menu item.
   { href: 'board.html',    label: 'ציוות',       who: 'member', dot: '#c77dff', group: 'station', hiddenFromMenu: true },
   { href: 'attendance.html', label: 'נוכחות',     who: 'member', dot: '#ffd166', group: 'mine' },
+  { href: 'driving-refresh.html', label: 'רענון נהיגה', who: 'member', dot: '#0f766e', group: 'mine' },
   { href: 'attendance-shadow.html', label: 'בקרת שעות', who: 'attendance_audit', dot: '#00b8a9', group: 'admin' },
   { href: 'hr.html', label: 'משאבי אנוש', who: 'hr', dot: '#0099cc', group: 'admin' },
   { href: 'hr-requests.html', label: 'פנייה למשאבי אנוש', who: 'member', dot: '#0099cc', group: 'mine' },
@@ -61,10 +62,10 @@ const GROUPS = [
 // הרשימות מגיעות מ-roles.js ואינן נכתבות כאן שוב. חמישה
 // עותקים של אותה רשימה היו פירושם שתפקיד חדש נוסף בארבעה
 // מקומות ונשכח בחמישי.
-import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h47';
-import { attachModeChip } from './mode-bar.js?v=42h47';
-import { assertPresentationOnly } from './role-view.js?v=42h47';
-import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h47';
+import { STAFF_ROLES, MEMBER_ROLES } from './roles.js?v=42h49';
+import { attachModeChip } from './mode-bar.js?v=42h49';
+import { assertPresentationOnly } from './role-view.js?v=42h49';
+import { consumeActualRoleViewNavigation, isPreviewSafePage } from './role-view-page.js?v=42h49';
 
 if (typeof location !== 'undefined' && typeof sessionStorage !== 'undefined') {
   const cleanRoleViewUrl = consumeActualRoleViewNavigation(location.href, sessionStorage);
@@ -499,7 +500,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   const reminderAllowed=!assertPresentationOnly(presentation)&&!['alerts.html','device-readiness.html'].includes(current)
     &&(claims.super===true||!!(claims.emp&&claims.stationId&&claims.role));
   window.__resqReminderContext={allowed:reminderAllowed};
-  import('./notification-reminder-entry.js?v=42h47').then(module=>module.configureNotificationReminder(window.__resqReminderContext)).catch(()=>{});
+  import('./notification-reminder-entry.js?v=42h49').then(module=>module.configureNotificationReminder(window.__resqReminderContext)).catch(()=>{});
 
   const old = document.getElementById('appNav');
   if (old) old.remove();
@@ -694,7 +695,7 @@ export function renderNav(claims, current, who, presentation, unreadCount) {
   // graph. This preserves the navigation in offline/static fixtures while the
   // singleton controller attaches one authenticated mode listener in the real
   // app. A failed controller load never invents a "live" state.
-  import('./mode-controller.js?v=42h47')
+  import('./mode-controller.js?v=42h49')
     .then(module => module.startModeController(claims))
     .catch(error => console.error('mode controller unavailable', error));
 
@@ -902,7 +903,7 @@ export function clearNav() {
   if (dock) dock.remove();
   if (panel) panel.remove();
   document.body.classList.remove('has-resq-dock', 'dock-modal-open');
-  import('./mode-controller.js?v=42h47')
+  import('./mode-controller.js?v=42h49')
     .then(module => module.stopModeController())
     .catch(() => {});
 }

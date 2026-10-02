@@ -6,7 +6,7 @@ import { webcrypto, createHash } from 'node:crypto';
 // Exercise the shipped host/transport code. Only the independently tested
 // attachment component is substituted, to inspect host lifecycle deterministically.
 const source=fs.readFileSync(new URL('../attendance-order-ui.js',import.meta.url),'utf8');
-const anchor="import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h47';";
+const anchor="import { createHrAttachmentsUI } from './hr-attachments-ui.js?v=42h49';";
 assert.equal(source.split(anchor).length,2);
 const module=await import('data:text/javascript;base64,'+Buffer.from(source.replace(anchor,
   'const createHrAttachmentsUI=(...args)=>globalThis.__orderComponent(...args);')).toString('base64'));

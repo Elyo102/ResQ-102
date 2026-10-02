@@ -842,6 +842,11 @@ service cloud.firestore {
       match /feedback/{feedbackId} {
         allow read, write: if false;
       }
+      // Driving records and immutable mutation receipts are callable-only.
+      match /driving_refresh_reports/{reportId} {
+        allow read, write: if false;
+        match /edits/{editId} { allow read, write: if false; }
+      }
       match /feedback_quota/{quotaId} {
         allow read, write: if false;
       }

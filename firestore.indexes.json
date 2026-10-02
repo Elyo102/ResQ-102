@@ -1,5 +1,9 @@
 {
   "indexes": [
+    {"collectionGroup":"driving_refresh_reports","queryScope":"COLLECTION","fields":[{"fieldPath":"uid","order":"ASCENDING"},{"fieldPath":"local_date","order":"ASCENDING"}]},
+    {"collectionGroup":"driving_refresh_reports","queryScope":"COLLECTION","fields":[{"fieldPath":"uid","order":"ASCENDING"},{"fieldPath":"created_at","order":"DESCENDING"},{"fieldPath":"__name__","order":"DESCENDING"}]},
+    {"collectionGroup":"driving_refresh_reports","queryScope":"COLLECTION","fields":[{"fieldPath":"uid","order":"ASCENDING"},{"fieldPath":"crew","order":"ASCENDING"},{"fieldPath":"created_at","order":"DESCENDING"},{"fieldPath":"__name__","order":"DESCENDING"}]},
+    {"collectionGroup":"driving_refresh_reports","queryScope":"COLLECTION","fields":[{"fieldPath":"crew","order":"ASCENDING"},{"fieldPath":"local_date","order":"ASCENDING"}]},
     { "collectionGroup": "callouts", "queryScope": "COLLECTION", "fields": [{"fieldPath":"by_uid","order":"ASCENDING"},{"fieldPath":"created_key","order":"DESCENDING"}] },
     { "collectionGroup": "faults", "queryScope": "COLLECTION", "fields": [{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"created_key","order":"DESCENDING"}] },
     { "collectionGroup": "faults", "queryScope": "COLLECTION", "fields": [{"fieldPath":"status","order":"ASCENDING"},{"fieldPath":"severity","order":"ASCENDING"}] },
