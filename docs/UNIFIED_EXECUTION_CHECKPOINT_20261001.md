@@ -1,5 +1,26 @@
 # Unified execution checkpoint
 
+## Authorized push and exact scope assessment — 2026-10-02
+
+04fd2fc42d793662513bcecb4e1627d1cafe5d3d was successfully pushed, without force,
+to Elyo102/ResQ-102 branch codex/unified-enterprise-20261001 after fresh direct
+owner authorization. The previous destination-authorization blocker is resolved.
+No production deployment or main/dev merge occurred.
+
+docs/unified-readiness-04fd2fc.json preserves all five requirement tables (57 IDs)
+and the 13 supplemental subcriteria, pinned to raw committed ledger bytes. Two
+independent PRE reviews required exact ID equality, original rows, scope retention
+and separation of source evidence from release acceptance. This is an assessment,
+not execution of the final gate: fullGateExecuted=false, formalPassed=0,
+frozenCandidate=false. Historical test passes are preserved, not erased.
+
+Correction to the older progress shorthand below: 22/57 is a selected
+source-implementation evidence indicator, NOT a defensible overall development
+completion percentage. Expanded-scope completion percentage remains unavailable.
+No open row has been excluded to manufacture a frozen or fully accepted release.
+Next: complete unresolved implementation/operational prerequisites and then freeze
+the complete candidate before the required unified gate and release.
+
 ## Callout decoder continuation — 2026-10-02
 
 Base c4b587dbf67280b724ee754ff7461561fed410b3 is pushed. The E10 callout decoder

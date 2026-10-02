@@ -1,0 +1,663 @@
+{
+  "schemaVersion": 1,
+  "assessedSourceSha": "04fd2fc42d793662513bcecb4e1627d1cafe5d3d",
+  "ledgerPath": "docs/UNIFIED_REQUIREMENTS_20261001.md",
+  "ledgerCommittedBlobSha256": "55cf0c5168618d2c927799d8f3510cf2e7ea822a7decd741de55bdf7016257e9",
+  "hashProvenance": "Raw bytes from git show SHA:path, before UTF-8 decoding or newline normalization",
+  "frozenCandidate": false,
+  "fullGateExecuted": false,
+  "formalPassed": 0,
+  "formalTotal": 57,
+  "gateStatus": "BLOCKED_NOT_EXECUTED",
+  "productionDeployed": false,
+  "developmentCompletionPercent": null,
+  "sourceDevelopmentIndicator": {
+    "count": 22,
+    "ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06",
+      "H07",
+      "H08",
+      "H09",
+      "E04",
+      "E06",
+      "E07",
+      "E08",
+      "E15",
+      "E17",
+      "E26",
+      "E27",
+      "E28",
+      "E30",
+      "S01",
+      "S02",
+      "S04"
+    ],
+    "meaning": "Selected retained product or locally tested implementation, NOT completed requirements or formal passes",
+    "provenance": "docs/UNIFIED_EXECUTION_CHECKPOINT_20261001.md at assessedSourceSha; Clean-environment continuation"
+  },
+  "scopeSupplementVerbatim": "# Current scope supplement — Claude 42H48\n\nAuthoritative direct owner authorization: primary-thread message 01a0f936-2bae-7030-af5e-ba828016d34a. Candidate baseline 3a4575b; donor a2cc43ef85e646fce53d439d3fb56cbf3ac1d259 on 619e333. All original 57 rows below remain. The former53% estimate predates this expansion; current percentage unavailable until subcriteria are reconciled. Final frozen gate0/57.\n\nThe following mandatory subcriteria extend E18/E24/E25/S03/U02/U03; they are NOT extra independent passing gate items. All start OPEN.\n- HR48-01: shift_change request UI/server, server-fixed subject,250-character reason, Israel today through+92days, active sub-station within authenticated regional station, reject foreign station/date/attachments.\n- HR48-02: live schedule_access manager appointment inside transactions; manager restricted to shift_change filtered inbox/read/decision/reply, not HR counters/status or other private requests; revoked/disabled identities denied.\n- HR48-03: no self-decision; CAS/idempotency/no duplicate notification; optional250-character decision reason; reversal only before requested day passes.\n- HR48-04: approval closes request but does not edit schedule; explicit UI notice; never absence months/hours.\n- HR48-05: station_shift recipients are live HR/schedule managers; actor/recipient revalidation; setDecision notification regression for sick/reserve/vacation/course/extended absence preserved.\n- HR48-06: schedule day-card deep link opens prefilled request; returned can_handle_shift controls filtered inbox; no extra public permissions.\n- REP48-01: integrate pure replication module; same rotation, sub-station/month, server Israel today; authenticated callable using current publication, policy and people.\n- REP48-02: skip manual days by default; override explicit; skip absent/departed/other-station people and invalid roles; preserve already matching engine slots.\n- REP48-03: previewScheduleEdit/applyScheduleEdit pipeline; exact digest/CAS/live appointment, no stale-source apply; no silent partial result above400 actual changes.\n- REP48-04: approved row button, override choice, summary of changes/days/skips/gaps; reviewed preview before apply.\n- REP48-05: create-only audit origin=replicate/source_date; publication/outbox activation failure preserves active pointer and blocked unsent jobs.\n- QA48-01: full differential donor/integration verification; preserve old failures separately; investigate actual current failures without deleting features or lowering acceptance.\n- OPS48-01: scoped function/Hosting target manifest; O(N) schedule-access delivery read cost recorded; rollback after usage retains shift_change readers; no old-version invalidation of existing requests.\n\nCurrent integrated local evidence (2026-10-02): HR48-01..06 implemented with native shift-change23, requests19, attachment-parent22, dispatcher47 and mock-browser52 passes. REP48-01..05 implemented with generator20, native replication7/edit13, controlled routing3, midnight singleton/monthly5 and mobile mock-browser2 passes. QA48-01 is partial: targeted checks passed, final integrated gate/CI/device and additional identity/retry cases remain open. OPS48-01 remains OPEN for final target/rollback/cost inventory. These subcriteria do not establish completion of their parent57 rows.\n\nDonor historical pass counts are not current integrated evidence. iPhone/Safari/device push/CI/full release remain separate. Bundle imported as isolated handoff ref only; no merge/deploy at inventory time.\n",
+  "requirements": [
+    {
+      "id": "H01",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H01 | Ready own report; no visible prepare-draft step; no write on load | PRESENT/product; `attendance.html`, ready-report browser;077 full local PASS | Preserve saved versus proposed/unconfirmed distinction in integration |",
+      "cells": [
+        "H01",
+        "Ready own report; no visible prepare-draft step; no write on load",
+        "PRESENT/product; `attendance.html`, ready-report browser;077 full local PASS",
+        "Preserve saved versus proposed/unconfirmed distinction in integration"
+      ]
+    },
+    {
+      "id": "H02",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H02 | Edit days and explicitly approve fresh report | PRESENT/product; fresh timestamps, exact intent recovery, stale reconfirmation tests | Preserve partial-save/unapproved failure semantics; never imply fill+submit is atomic |",
+      "cells": [
+        "H02",
+        "Edit days and explicitly approve fresh report",
+        "PRESENT/product; fresh timestamps, exact intent recovery, stale reconfirmation tests",
+        "Preserve partial-save/unapproved failure semantics; never imply fill+submit is atomic"
+      ]
+    },
+    {
+      "id": "H03",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H03 | Responsive local export/share/download | PRESENT/product; `attendance-ready-report-browser.mjs`, `report-responsive-browser.mjs` | Preserve HTML statuses and no-write export; physical WhatsApp/mail delivery NOT_RUN |",
+      "cells": [
+        "H03",
+        "Responsive local export/share/download",
+        "PRESENT/product; `attendance-ready-report-browser.mjs`, `report-responsive-browser.mjs`",
+        "Preserve HTML statuses and no-write export; physical WhatsApp/mail delivery NOT_RUN"
+      ]
+    },
+    {
+      "id": "H04",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H04 | Course dates, red timeline, actual assigned shifts and full scheduled credit | PRESENT/product; `attendance-course-entry-browser.mjs`, course transaction suites | Preserve9/10/11-shift cases, approval snapshot and fresh assignment authority |",
+      "cells": [
+        "H04",
+        "Course dates, red timeline, actual assigned shifts and full scheduled credit",
+        "PRESENT/product; `attendance-course-entry-browser.mjs`, course transaction suites",
+        "Preserve9/10/11-shift cases, approval snapshot and fresh assignment authority"
+      ]
+    },
+    {
+      "id": "H05",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H05 | Reserve/shift-in-reserve green, illness yellow, vacation blue, course red in hours report | PRESENT/product hours fixtures | Preserve hours/report-only meaning, not an unapproved schedule redesign |",
+      "cells": [
+        "H05",
+        "Reserve/shift-in-reserve green, illness yellow, vacation blue, course red in hours report",
+        "PRESENT/product hours fixtures",
+        "Preserve hours/report-only meaning, not an unapproved schedule redesign"
+      ]
+    },
+    {
+      "id": "H06",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H06 | Actual entry/exit including next-day07:00/08:00/09:00, work duration+8.5 reserve credit | PRESENT/product; reserve/calculator regression evidence | Preserve explicit date duration and no same-minute accidental24-hour regression |",
+      "cells": [
+        "H06",
+        "Actual entry/exit including next-day07:00/08:00/09:00, work duration+8.5 reserve credit",
+        "PRESENT/product; reserve/calculator regression evidence",
+        "Preserve explicit date duration and no same-minute accidental24-hour regression"
+      ]
+    },
+    {
+      "id": "H07",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H07 | Reserve order file/image, existing attachment protections | PRESENT/product; order/HR attachment suites | Preserve size/content/identity/parent/version checks and existing-data readers |",
+      "cells": [
+        "H07",
+        "Reserve order file/image, existing attachment protections",
+        "PRESENT/product; order/HR attachment suites",
+        "Preserve size/content/identity/parent/version checks and existing-data readers"
+      ]
+    },
+    {
+      "id": "H08",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H08 | HR station-scoped report visibility; existing dropdown/form behavior | PRESENT/product;077 full gate and CI HR integration success | No new role or impersonated employee approval; retain form state/retry safety |",
+      "cells": [
+        "H08",
+        "HR station-scoped report visibility; existing dropdown/form behavior",
+        "PRESENT/product;077 full gate and CI HR integration success",
+        "No new role or impersonated employee approval; retain form state/retry safety"
+      ]
+    },
+    {
+      "id": "H09",
+      "originalHeader": "| ID | Requirement | Evidence/state | Next acceptance |",
+      "originalRow": "| H09 | Terms1.3, current authorization, rollout switches and compatible readers | PRESENT/product; consent-negative fixtures and toggle tests | Keep admission OFF behavior distinct from reading/processing existing records |",
+      "cells": [
+        "H09",
+        "Terms1.3, current authorization, rollout switches and compatible readers",
+        "PRESENT/product; consent-negative fixtures and toggle tests",
+        "Keep admission OFF behavior distinct from reading/processing existing records"
+      ]
+    },
+    {
+      "id": "E00",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E00 | Safe tracked inputs / sanitized generators (roadmap phase0.1) | PARTIAL product-only contract:13/13 unit checks and50-file working/index verification PASS; donor contract retained separately | Not complete transitive coverage or E01 clean install; no vault/provisioning/log inputs |",
+      "cells": [
+        "E00",
+        "Safe tracked inputs / sanitized generators (roadmap phase0.1)",
+        "PARTIAL product-only contract:13/13 unit checks and50-file working/index verification PASS; donor contract retained separately",
+        "Not complete transitive coverage or E01 clean install; no vault/provisioning/log inputs"
+      ]
+    },
+    {
+      "id": "E01",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E01 | Actual clean-checkout reproduction | PARTIAL: clean detached e949880 checkout, three lockfiles installed, all10 declared entrypoints/138 local scenarios PASS; E01_CLEAN_CHECKOUT_20261002.md | Full frozen-candidate application/Rules reproduction and lifecycle-script parity remain OPEN; not just an index check anymore |",
+      "cells": [
+        "E01",
+        "Actual clean-checkout reproduction",
+        "PARTIAL: clean detached e949880 checkout, three lockfiles installed, all10 declared entrypoints/138 local scenarios PASS; E01_CLEAN_CHECKOUT_20261002.md",
+        "Full frozen-candidate application/Rules reproduction and lifecycle-script parity remain OPEN; not just an index check anymore"
+      ]
+    },
+    {
+      "id": "E02",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E02 | One explicit test denominator and exclusions | PARTIAL; focused `test:all` and full `all` are distinct | Reconcile final registries without dropping existing product tests |",
+      "cells": [
+        "E02",
+        "One explicit test denominator and exclusions",
+        "PARTIAL; focused `test:all` and full `all` are distinct",
+        "Reconcile final registries without dropping existing product tests"
+      ]
+    },
+    {
+      "id": "E03",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E03 | Current status and frozen integrated SHA | OPEN; status is historical, dev dirty | Preserve history; produce fresh integrated manifest/status, then freeze once |",
+      "cells": [
+        "E03",
+        "Current status and frozen integrated SHA",
+        "OPEN; status is historical, dev dirty",
+        "Preserve history; produce fresh integrated manifest/status, then freeze once"
+      ]
+    },
+    {
+      "id": "E04",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E04 | Atomic required SW shell (phase1.1) | LOCAL_TESTED70a1522;33 browser +30 lifecycle PASS | Preserves47 assets; final release cache stamp and integrated gate OPEN |",
+      "cells": [
+        "E04",
+        "Atomic required SW shell (phase1.1)",
+        "LOCAL_TESTED70a1522;33 browser +30 lifecycle PASS",
+        "Preserves47 assets; final release cache stamp and integrated gate OPEN"
+      ]
+    },
+    {
+      "id": "E05",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E05 | Bounded network-first/cache fallback (phase1.2) | LOCAL_TESTED70a1522 header deadline5000ms | Current-cache and reserved-route guards covered; response bodies/optional install fetches remain unbounded |",
+      "cells": [
+        "E05",
+        "Bounded network-first/cache fallback (phase1.2)",
+        "LOCAL_TESTED70a1522 header deadline5000ms",
+        "Current-cache and reserved-route guards covered; response bodies/optional install fetches remain unbounded"
+      ]
+    },
+    {
+      "id": "E06",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E06 | Outbox fairness beyond first100 (phase1.3) | LOCAL_TESTED5dd2544 pushed isolated; helper7/controlled3/direct3 native, Rules24denials, synthetic10 andbackup2+184paths PASS | Fresh owner-authorized source runner1PASS and4negative CLI cases; historical VM failures retained. Finite-set fairness, crash-to-wrap delay, no bounded continuous-insertion guarantee. Final index/deployment readiness OPEN. |",
+      "cells": [
+        "E06",
+        "Outbox fairness beyond first100 (phase1.3)",
+        "LOCAL_TESTED5dd2544 pushed isolated; helper7/controlled3/direct3 native, Rules24denials, synthetic10 andbackup2+184paths PASS",
+        "Fresh owner-authorized source runner1PASS and4negative CLI cases; historical VM failures retained. Finite-set fairness, crash-to-wrap delay, no bounded continuous-insertion guarantee. Final index/deployment readiness OPEN."
+      ]
+    },
+    {
+      "id": "E07",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E07 | Durable operation/payload/attempt identities and duplicate visibility | WRITTEN / LOCAL_TESTED current working tree: native14+4 PASS, two reviews; source131 PASS | Same-lease attempt fencing, canonical payload retry conflicts and unknown/expired outcomes covered. Trial Auth/early cancellation combinations remain coverage gaps; no exactly-once/device claim |",
+      "cells": [
+        "E07",
+        "Durable operation/payload/attempt identities and duplicate visibility",
+        "WRITTEN / LOCAL_TESTED current working tree: native14+4 PASS, two reviews; source131 PASS",
+        "Same-lease attempt fencing, canonical payload retry conflicts and unknown/expired outcomes covered. Trial Auth/early cancellation combinations remain coverage gaps; no exactly-once/device claim"
+      ]
+    },
+    {
+      "id": "E08",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E08 | Provider acceptance versus durable acknowledgement | LOCAL_TESTED3a4575b preserved; affected native8 PASS on integrated E07 runtime | Provider acceptance without own durable ACK remains explicitly unacknowledged; final frozen release and real provider behavior separate |",
+      "cells": [
+        "E08",
+        "Provider acceptance versus durable acknowledgement",
+        "LOCAL_TESTED3a4575b preserved; affected native8 PASS on integrated E07 runtime",
+        "Provider acceptance without own durable ACK remains explicitly unacknowledged; final frozen release and real provider behavior separate"
+      ]
+    },
+    {
+      "id": "E09",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E09 | Planner deterministic parity/resource budget (phase1.5) | PARTIAL bea3992; local oracle/parity/adversarial measurement PASS | Production budgets/peak heap remain OPEN; no planner change or capacity reduction |",
+      "cells": [
+        "E09",
+        "Planner deterministic parity/resource budget (phase1.5)",
+        "PARTIAL bea3992; local oracle/parity/adversarial measurement PASS",
+        "Production budgets/peak heap remain OPEN; no planner change or capacity reduction"
+      ]
+    },
+    {
+      "id": "E10",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E10 | Realtime decoders/invalid-row isolation (phase2.1) | PARTIAL619e333 + bulletin timestamp27/metadata81,compatibility46 and contained recovery PASS; callout decoder50/lifecycle65 and contained recovery PASS; two POST reviews per fix | Raw records preserved; malformed callout bodies stay pending without receipts/alarm and valid siblings continue. Broader callback/DOM-failure isolation and already-shown valid same-ID refresh remain outside verified scope; no full decoder or production proof claimed |",
+      "cells": [
+        "E10",
+        "Realtime decoders/invalid-row isolation (phase2.1)",
+        "PARTIAL619e333 + bulletin timestamp27/metadata81,compatibility46 and contained recovery PASS; callout decoder50/lifecycle65 and contained recovery PASS; two POST reviews per fix",
+        "Raw records preserved; malformed callout bodies stay pending without receipts/alarm and valid siblings continue. Broader callback/DOM-failure isolation and already-shown valid same-ID refresh remain outside verified scope; no full decoder or production proof claimed"
+      ]
+    },
+    {
+      "id": "E11",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E11 | Server-authoritative operational timestamps (phase2.2) | OPEN compatibility item; legacy client times remain | Preserve legacy schema while proving server ordering, retry and seen/answer races |",
+      "cells": [
+        "E11",
+        "Server-authoritative operational timestamps (phase2.2)",
+        "OPEN compatibility item; legacy client times remain",
+        "Preserve legacy schema while proving server ordering, retry and seen/answer races"
+      ]
+    },
+    {
+      "id": "E12",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E12 | Listener/read budgets (phase2.3) | OPEN; existing cleanup, commander response fan-out remains | Measure synthetic active/history/reconnect reads; retain operational live updates, then reduce with parity |",
+      "cells": [
+        "E12",
+        "Listener/read budgets (phase2.3)",
+        "OPEN; existing cleanup, commander response fan-out remains",
+        "Measure synthetic active/history/reconnect reads; retain operational live updates, then reduce with parity"
+      ]
+    },
+    {
+      "id": "E13",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E13 | Growing fault/vehicle history pagination (phase2.4) | OPEN for main collections; photo subcollections already lazy/paged | Separate complete active data from historical cursors; legacy and export continuity; no blind limit20 |",
+      "cells": [
+        "E13",
+        "Growing fault/vehicle history pagination (phase2.4)",
+        "OPEN for main collections; photo subcollections already lazy/paged",
+        "Separate complete active data from historical cursors; legacy and export continuity; no blind limit20"
+      ]
+    },
+    {
+      "id": "E14",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E14 | Media transport/Storage migration (phase2.5) | PARTIAL: compression/lazy retrieval already exist; base64 remains | Measure bytes/heap first; preserve legacy readers/auth/rollback; Storage migration requires explicit reviewed Rules/backup scope |",
+      "cells": [
+        "E14",
+        "Media transport/Storage migration (phase2.5)",
+        "PARTIAL: compression/lazy retrieval already exist; base64 remains",
+        "Measure bytes/heap first; preserve legacy readers/auth/rollback; Storage migration requires explicit reviewed Rules/backup scope"
+      ]
+    },
+    {
+      "id": "E15",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E15 | Indexed monthly projection (phase2.6) | LOCAL_TESTEDec4fb3c;54 service +85 native PASS | Frozen independent parity oracle; synthetic element visits reduced, no production latency claim |",
+      "cells": [
+        "E15",
+        "Indexed monthly projection (phase2.6)",
+        "LOCAL_TESTEDec4fb3c;54 service +85 native PASS",
+        "Frozen independent parity oracle; synthetic element visits reduced, no production latency claim"
+      ]
+    },
+    {
+      "id": "E16",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E16 | Closed client-state schema (phase2.7) | OPEN | Inventory keys/reset paths; stale user/station/role and ambiguous mutation tests; no framework rewrite |",
+      "cells": [
+        "E16",
+        "Closed client-state schema (phase2.7)",
+        "OPEN",
+        "Inventory keys/reset paths; stale user/station/role and ambiguous mutation tests; no framework rewrite"
+      ]
+    },
+    {
+      "id": "E17",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E17 | Invocation-local runtime reuse (phase2.7) | LOCAL_TESTED7fbf4d2;17 synthetic +3 native PASS | Per-sweep full selection key,100->1 constructions; no cached authority, no E06 scan changes |",
+      "cells": [
+        "E17",
+        "Invocation-local runtime reuse (phase2.7)",
+        "LOCAL_TESTED7fbf4d2;17 synthetic +3 native PASS",
+        "Per-sweep full selection key,100->1 constructions; no cached authority, no E06 scan changes"
+      ]
+    },
+    {
+      "id": "E18",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E18 | Bulk-edit indexes/module boundaries (phase2.7) | OPEN proposal | Differential move/absence/remove/rebase tests and same digest/order before any extraction |",
+      "cells": [
+        "E18",
+        "Bulk-edit indexes/module boundaries (phase2.7)",
+        "OPEN proposal",
+        "Differential move/absence/remove/rebase tests and same digest/order before any extraction"
+      ]
+    },
+    {
+      "id": "E19",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E19 | Offline action/data classification (phase3.1) | PARTIAL: HR/hours/callout/schedule classified in OFFLINE_CLASSIFICATION_20261002.md; callout roster localStorage is a documented personal-data exception | Complete remaining modules/privacy review; callable receipts are not durable offline queues and TTL-on-read is not physical deletion |",
+      "cells": [
+        "E19",
+        "Offline action/data classification (phase3.1)",
+        "PARTIAL: HR/hours/callout/schedule classified in OFFLINE_CLASSIFICATION_20261002.md; callout roster localStorage is a documented personal-data exception",
+        "Complete remaining modules/privacy review; callable receipts are not durable offline queues and TTL-on-read is not physical deletion"
+      ]
+    },
+    {
+      "id": "E20",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E20 | Approved durable queue/reload/conflicts (phase3.2,3.4) | OPEN; default SDK cache not a durable workflow | Privacy-reviewed eligible action only; reload/termination/conflict/idempotency proof before persistent payloads |",
+      "cells": [
+        "E20",
+        "Approved durable queue/reload/conflicts (phase3.2,3.4)",
+        "OPEN; default SDK cache not a durable workflow",
+        "Privacy-reviewed eligible action only; reload/termination/conflict/idempotency proof before persistent payloads"
+      ]
+    },
+    {
+      "id": "E21",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E21 | Clear queued/sync/conflict/completed status (phase3.3) | OPEN UX proposal beyond existing messages | Visual approval where not already covered; never show success before authoritative acceptance |",
+      "cells": [
+        "E21",
+        "Clear queued/sync/conflict/completed status (phase3.3)",
+        "OPEN UX proposal beyond existing messages",
+        "Visual approval where not already covered; never show success before authoritative acceptance"
+      ]
+    },
+    {
+      "id": "E22",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E22 | Physical iPhone/Android field checks (phase4.1) | NOT_RUN in this execution | Owner/device session: login, PWA update, push/background, weak network, keyboard, identity switch |",
+      "cells": [
+        "E22",
+        "Physical iPhone/Android field checks (phase4.1)",
+        "NOT_RUN in this execution",
+        "Owner/device session: login, PWA update, push/background, weak network, keyboard, identity switch"
+      ]
+    },
+    {
+      "id": "E23",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E23 | DR exercise with RPO/RTO (phase4.2) | OPEN; deployment backup is not project-loss DR | Separate scoped drill and measured recovery evidence; never use telemetry as employee backup |",
+      "cells": [
+        "E23",
+        "DR exercise with RPO/RTO (phase4.2)",
+        "OPEN; deployment backup is not project-loss DR",
+        "Separate scoped drill and measured recovery evidence; never use telemetry as employee backup"
+      ]
+    },
+    {
+      "id": "E24",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E24 | Multi-station/role/shift isolation (phase4.3) | Existing SaaS modules/tests present in product; not missing by default | Preserve authorization and broaden only actual missing scenarios; unified emulator proof |",
+      "cells": [
+        "E24",
+        "Multi-station/role/shift isolation (phase4.3)",
+        "Existing SaaS modules/tests present in product; not missing by default",
+        "Preserve authorization and broaden only actual missing scenarios; unified emulator proof"
+      ]
+    },
+    {
+      "id": "E25",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E25 | Frozen release/rollback/postflight (phase4.4) |12-target hours tooling locally implemented/reviewed; release blocked pending expanded manifest/evidence/backup | Recompute exact affected Functions/Rules/index/Hosting/backup targets; reviewed compatible rollback; postdeploy hashes separate |",
+      "cells": [
+        "E25",
+        "Frozen release/rollback/postflight (phase4.4)",
+        "12-target hours tooling locally implemented/reviewed; release blocked pending expanded manifest/evidence/backup",
+        "Recompute exact affected Functions/Rules/index/Hosting/backup targets; reviewed compatible rollback; postdeploy hashes separate"
+      ]
+    },
+    {
+      "id": "E26",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E26 | Swap accept/cancel/revocation/stale-trigger races | LOCAL_TESTED0373281;10 unit +10 native PASS | Precise-version corrective CAS; retain pre-CAS audit and notification limitations, no stale data restore |",
+      "cells": [
+        "E26",
+        "Swap accept/cancel/revocation/stale-trigger races",
+        "LOCAL_TESTED0373281;10 unit +10 native PASS",
+        "Precise-version corrective CAS; retain pre-CAS audit and notification limitations, no stale data restore"
+      ]
+    },
+    {
+      "id": "E27",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E27 | Strict calendar/date contract (architecture P3) | LOCAL_TESTED6eedab6 service projection;69 service +85 native PASS | Impossible-date/leap/month/year/DST-calendar cases covered; broader legacy date schema/Israel-current-time remains separate |",
+      "cells": [
+        "E27",
+        "Strict calendar/date contract (architecture P3)",
+        "LOCAL_TESTED6eedab6 service projection;69 service +85 native PASS",
+        "Impossible-date/leap/month/year/DST-calendar cases covered; broader legacy date schema/Israel-current-time remains separate"
+      ]
+    },
+    {
+      "id": "E28",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E28 | HR report consistency between pages/resume | LOCAL_TESTED17bebe7;44 summary +7 scale +3 native PASS | Pinned context, atomic page checkpoint, generation-bound cursor; old naked cursors restart. Global source snapshot/ABA/final-read gap not claimed solved; extra bounded scan cost documented |",
+      "cells": [
+        "E28",
+        "HR report consistency between pages/resume",
+        "LOCAL_TESTED17bebe7;44 summary +7 scale +3 native PASS",
+        "Pinned context, atomic page checkpoint, generation-bound cursor; old naked cursors restart. Global source snapshot/ABA/final-read gap not claimed solved; extra bounded scan cost documented"
+      ]
+    },
+    {
+      "id": "E29",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E29 | Safe intent recovery after browser close | Memory retry exists; reload recovery OPEN | Non-PII identity-scoped journal only after privacy review; receipt reconciliation; preserve uncertain state |",
+      "cells": [
+        "E29",
+        "Safe intent recovery after browser close",
+        "Memory retry exists; reload recovery OPEN",
+        "Non-PII identity-scoped journal only after privacy review; receipt reconciliation; preserve uncertain state"
+      ]
+    },
+    {
+      "id": "E30",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E30 | In-flight fault photo dedupe/identity fences | LOCAL_TESTEDe93d575; focused races +5 browser scenarios PASS | Retains current lazy/paged coalescing; live UID checked before cache/paint/error, no production latency claim |",
+      "cells": [
+        "E30",
+        "In-flight fault photo dedupe/identity fences",
+        "LOCAL_TESTEDe93d575; focused races +5 browser scenarios PASS",
+        "Retains current lazy/paged coalescing; live UID checked before cache/paint/error, no production latency claim"
+      ]
+    },
+    {
+      "id": "E31",
+      "originalHeader": "| ID | Requirement/source | Verified state | Next action/evidence needed |",
+      "originalRow": "| E31 | Efficient evidence reuse (roadmaps/test-efficiency) | Advisory checks exist, no blanket gate waiver | Match source/tests/fixtures/tools/config/environment/workflow; retain failure/cancel status and mandatory final gate |",
+      "cells": [
+        "E31",
+        "Efficient evidence reuse (roadmaps/test-efficiency)",
+        "Advisory checks exist, no blanket gate waiver",
+        "Match source/tests/fixtures/tools/config/environment/workflow; retain failure/cancel status and mandatory final gate"
+      ]
+    },
+    {
+      "id": "S01",
+      "originalHeader": "| ID | Requirement | Actual state and acceptance |",
+      "originalRow": "| S01 / O1 | Enforce App Check on legacy callable paths | LOCAL_TESTED4921847/e0e326c: all194 declarations enforced;288 source checks+18 mutations PASS. Real provider/domain/token and pre-auth client readiness OPEN. No production enforcement claimed; compatible rollback required. |",
+      "cells": [
+        "S01 / O1",
+        "Enforce App Check on legacy callable paths",
+        "LOCAL_TESTED4921847/e0e326c: all194 declarations enforced;288 source checks+18 mutations PASS. Real provider/domain/token and pre-auth client readiness OPEN. No production enforcement claimed; compatible rollback required."
+      ]
+    },
+    {
+      "id": "S02",
+      "originalHeader": "| ID | Requirement | Actual state and acceptance |",
+      "originalRow": "| S02 / O3 | HMAC-SHA256 metrics with validated key | Commit51c298b, locally tested and two independent POST approvals: lazy Secret Manager binding only recordMetrics;32–4096 UTF-8 bytes, whitespace-only rejected; no new unkeyed writes, legacy reads retained.31 unit and51 source/mutation checks PASS, Node22 index syntax and diff hygiene PASS. Git emitted normal LF-to-CRLF notices; no runtime warning was observed in these checks. Existing key/version/readiness must be verified before release; no automatic rotation or quota/replay namespace reset. NOT_DEPLOYED. |",
+      "cells": [
+        "S02 / O3",
+        "HMAC-SHA256 metrics with validated key",
+        "Commit51c298b, locally tested and two independent POST approvals: lazy Secret Manager binding only recordMetrics;32–4096 UTF-8 bytes, whitespace-only rejected; no new unkeyed writes, legacy reads retained.31 unit and51 source/mutation checks PASS, Node22 index syntax and diff hygiene PASS. Git emitted normal LF-to-CRLF notices; no runtime warning was observed in these checks. Existing key/version/readiness must be verified before release; no automatic rotation or quota/replay namespace reset. NOT_DEPLOYED."
+      ]
+    },
+    {
+      "id": "S03",
+      "originalHeader": "| ID | Requirement | Actual state and acceptance |",
+      "originalRow": "| S03 | Immutable identity/role/shift audit events | PARTIALdd6f27b: five identity operation kinds with deterministic transaction-created server-only events, native identity31 and expected client-denial20 PASS;183 backup paths classified. All shift-event coverage and production proof OPEN; no Admin-SDK/WORM immutability claim. |",
+      "cells": [
+        "S03",
+        "Immutable identity/role/shift audit events",
+        "PARTIALdd6f27b: five identity operation kinds with deterministic transaction-created server-only events, native identity31 and expected client-denial20 PASS;183 backup paths classified. All shift-event coverage and production proof OPEN; no Admin-SDK/WORM immutability claim."
+      ]
+    },
+    {
+      "id": "S04",
+      "originalHeader": "| ID | Requirement | Actual state and acceptance |",
+      "originalRow": "| S04 | Revoke refresh tokens on critical role/status changes | Local self-target repair ff7070b removes three skip arguments, preserving coordinator/bootstrap/clear/transfer flows; two POST approvals and28 native Firestore integration checks PASS (simulated Auth). Log `t-hours/unified-self-revocation-20261001.log`; EXIT0, expected emulator SIGINT shutdown notice. Revocation failure/finalization failure/replay covered. Entry-gate stale authority repaired in1c69033,7 tests PASS; concurrent mid-operation authorization race not claimed closed. NOT_DEPLOYED; real Auth/client reauthentication NOT_RUN. Revocation alone is not immediate rejection of all previously issued ID tokens. |",
+      "cells": [
+        "S04",
+        "Revoke refresh tokens on critical role/status changes",
+        "Local self-target repair ff7070b removes three skip arguments, preserving coordinator/bootstrap/clear/transfer flows; two POST approvals and28 native Firestore integration checks PASS (simulated Auth). Log `t-hours/unified-self-revocation-20261001.log`; EXIT0, expected emulator SIGINT shutdown notice. Revocation failure/finalization failure/replay covered. Entry-gate stale authority repaired in1c69033,7 tests PASS; concurrent mid-operation authorization race not claimed closed. NOT_DEPLOYED; real Auth/client reauthentication NOT_RUN. Revocation alone is not immediate rejection of all previously issued ID tokens."
+      ]
+    },
+    {
+      "id": "S05",
+      "originalHeader": "| ID | Requirement | Actual state and acceptance |",
+      "originalRow": "| S05 | Explicit backup retention policy | fe2ff69 adds tested frozen advisory decisions (31PASS): declared/unresolved/blocked, default retain, automaticDeletionAuthorized:false, durationDays:null.182 legacy catalogue rows/digest unchanged. No new TTL/scheduler/deletion. Actual legal/audit durations and deployed enforcement remain unresolved; not claimed closed. |",
+      "cells": [
+        "S05",
+        "Explicit backup retention policy",
+        "fe2ff69 adds tested frozen advisory decisions (31PASS): declared/unresolved/blocked, default retain, automaticDeletionAuthorized:false, durationDays:null.182 legacy catalogue rows/digest unchanged. No new TTL/scheduler/deletion. Actual legal/audit durations and deployed enforcement remain unresolved; not claimed closed."
+      ]
+    },
+    {
+      "id": "C01",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C01 | Real PR review adapter and one-use atomic dispatch permit | Partial implementation, CLI/wiring OPEN; test expired/copied/replayed permit and exact serialized body before HTTP |",
+      "cells": [
+        "C01",
+        "Real PR review adapter and one-use atomic dispatch permit",
+        "Partial implementation, CLI/wiring OPEN; test expired/copied/replayed permit and exact serialized body before HTTP"
+      ]
+    },
+    {
+      "id": "C02",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C02 | Durable task ownership/lease/checkpoint/result-hash/ack | OPEN beyond connectivity smoke; no blind replay of uncertain paid request |",
+      "cells": [
+        "C02",
+        "Durable task ownership/lease/checkpoint/result-hash/ack",
+        "OPEN beyond connectivity smoke; no blind replay of uncertain paid request"
+      ]
+    },
+    {
+      "id": "C03",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C03 |80% quota alarm and truthful handoff | Planner-only/historical evidence; current source/unit/window required; UNKNOWN is not available quota |",
+      "cells": [
+        "C03",
+        "80% quota alarm and truthful handoff",
+        "Planner-only/historical evidence; current source/unit/window required; UNKNOWN is not available quota"
+      ]
+    },
+    {
+      "id": "C04",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C04 | Shared monthly+cycle budget transactions | Dirty implementation retained; exact integration/evidence OPEN; no provider switching to bypass shared cap |",
+      "cells": [
+        "C04",
+        "Shared monthly+cycle budget transactions",
+        "Dirty implementation retained; exact integration/evidence OPEN; no provider switching to bypass shared cap"
+      ]
+    },
+    {
+      "id": "C05",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C05 | Scheduled actual review/no-overlap/max5 fixes | OPEN activation proof; no fake ACTIVE/heartbeat and no new paid run here |",
+      "cells": [
+        "C05",
+        "Scheduled actual review/no-overlap/max5 fixes",
+        "OPEN activation proof; no fake ACTIVE/heartbeat and no new paid run here"
+      ]
+    },
+    {
+      "id": "C06",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C06 | API body/model/endpoint/secret separation | Preserve trusted-base execution and scoped identity; review Anthropic/xAI/Gemini contracts, body limits and unknown outcomes |",
+      "cells": [
+        "C06",
+        "API body/model/endpoint/secret separation",
+        "Preserve trusted-base execution and scoped identity; review Anthropic/xAI/Gemini contracts, body limits and unknown outcomes"
+      ]
+    },
+    {
+      "id": "C07",
+      "originalHeader": "| ID | Requirement | State / next acceptance |",
+      "originalRow": "| C07 | Private dashboard status/budget/handoff visuals | Existing proposals remain scoped; public code and private owner enforcement separate; no Pages deployment in hours manifest |",
+      "cells": [
+        "C07",
+        "Private dashboard status/budget/handoff visuals",
+        "Existing proposals remain scoped; public code and private owner enforcement separate; no Pages deployment in hours manifest"
+      ]
+    },
+    {
+      "id": "U01",
+      "originalHeader": "| ID | Approved area | Current comparison / next acceptance |",
+      "originalRow": "| U01 | Desktop command center | Product47 already has full-height left rail and wider layout; do not replace with olderDEV. Verify right account panel/default and role/viewport behavior rather than call whole feature missing |",
+      "cells": [
+        "U01",
+        "Desktop command center",
+        "Product47 already has full-height left rail and wider layout; do not replace with olderDEV. Verify right account panel/default and role/viewport behavior rather than call whole feature missing"
+      ]
+    },
+    {
+      "id": "U02",
+      "originalHeader": "| ID | Approved area | Current comparison / next acceptance |",
+      "originalRow": "| U02 | Schedule manager workspace | Preserve current monthly board, roster-authoritative edits and own-name highlighting; integration must not revert to olderDEV layouts |",
+      "cells": [
+        "U02",
+        "Schedule manager workspace",
+        "Preserve current monthly board, roster-authoritative edits and own-name highlighting; integration must not revert to olderDEV layouts"
+      ]
+    },
+    {
+      "id": "U03",
+      "originalHeader": "| ID | Approved area | Current comparison / next acceptance |",
+      "originalRow": "| U03 | HR station dashboard/counters | Existing counters and pending/history distinction; drift warning is not proof of live push updates. Preserve station scoping and month/range behavior |",
+      "cells": [
+        "U03",
+        "HR station dashboard/counters",
+        "Existing counters and pending/history distinction; drift warning is not proof of live push updates. Preserve station scoping and month/range behavior"
+      ]
+    },
+    {
+      "id": "U04",
+      "originalHeader": "| ID | Approved area | Current comparison / next acceptance |",
+      "originalRow": "| U04 | Operational vehicles | Compartment/photo/equipment-log/fault-link modules exist; integrated user journey still needs explicit mapping/verification. Future360capture not fabricated. No new layout invented |",
+      "cells": [
+        "U04",
+        "Operational vehicles",
+        "Compartment/photo/equipment-log/fault-link modules exist; integrated user journey still needs explicit mapping/verification. Future360capture not fabricated. No new layout invented"
+      ]
+    }
+  ],
+  "limitations": [
+    "This is a pinned source assessment, not an executed release gate or permission to deploy.",
+    "Historical passing evidence remains bound to original inputs and environment.",
+    "Subsequent code changes require a new assessment; this documentation does not freeze an incomplete release.",
+    "Open and conditional requirements remain in scope; external readiness cannot be replaced by mock passes."
+  ]
+}
