@@ -3,9 +3,10 @@
 // adapter/engine have separate tests; this suite proves ordering and recovery.
 const assert = require('node:assert/strict');
 const { createIdentityCoordinator, stableHash, registrationFingerprint } = require('./identity-coordinator');
+const { createSecurityAuditEvent } = require('./security-audit');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 class HttpsError extends Error { constructor(code, message, details) { super(message); this.code = code; this.details = details; } }
-const FV = { serverTimestamp: () => Date.now(), delete: () => ({ __delete: true }) };
+const FV = { serverTimestamp: () => ({ __serverTimestamp: true }), delete: () => ({ __delete: true }) };
 const Timestamp = { fromMillis: value => value };
 function setup({ protectedRequest = true, adapterMissing = false, unstamped = false, withoutConsent = false } = {}) {
   const uid = 'member_1', requestId = 'request_20260915_001', opId = 'approve_test_1';
@@ -21,16 +22,34 @@ function setup({ protectedRequest = true, adapterMissing = false, unstamped = fa
       const pending = [];
       const tx = { get: async ref => { assert.equal(pending.length, 0, 'Firestore reads must precede writes'); return snap(ref); },
         set: (ref, value, opts) => pending.push(['set', ref.path, clone(value), opts]),
+        create: (ref, value) => pending.push(['create', ref.path, clone(value)]),
         delete: ref => pending.push(['delete', ref.path]) };
       const result = await fn(tx);
       if (control.abortCommit && pending.length) throw new Error('commit aborted');
+      // Stage the complete commit before publishing any state or write evidence.
+      // A late create collision must roll back preceding sets and deletes too.
+      const staged = new Map(store), committedAt = Date.now();
+      const resolve = value => {
+        if (value?.__serverTimestamp === true) return {
+          seconds: Math.floor(committedAt / 1000), nanoseconds: (committedAt % 1000) * 1000000
+        };
+        if (Array.isArray(value)) return value.map(resolve);
+        if (value && typeof value === 'object') return Object.fromEntries(
+          Object.entries(value).map(([key, item]) => [key, resolve(item)]));
+        return value;
+      };
       for (const [type, path, value, opts] of pending) {
-        writes.push(path);
-        if (type === 'delete') { store.delete(path); continue; }
-        const next = opts?.merge ? { ...store.get(path), ...value } : value;
+        if (type === 'create' && staged.has(path)) {
+          const error = new Error('ALREADY_EXISTS'); error.code = 6; throw error;
+        }
+        if (type === 'delete') { staged.delete(path); continue; }
+        const next = opts?.merge ? { ...staged.get(path), ...resolve(value) } : resolve(value);
         for (const key of Object.keys(next)) if (next[key]?.__delete) delete next[key];
-        store.set(path, next);
+        staged.set(path, next);
       }
+      store.clear();
+      for (const [path, value] of staged) store.set(path, value);
+      for (const [, path] of pending) writes.push(path);
       return result;
     } };
   const live = { uid, email: 'member@example.test', disabled: false, emailVerified: true, customClaims: {} };
@@ -135,15 +154,45 @@ const denied = fn => assert.rejects(fn, error => error.onboardingAuthority === t
     assert(mail.message.text.includes('601'));
     assert(!mail.message.text.includes('password123'));
     assert.equal(f.events.includes('auth-write'), true); assert.equal(f.events.includes('finalize-write'), true);
+    const audits = [...f.store].filter(([path]) => path.startsWith('security_audit_events/'));
+    assert.equal(audits.length, 1);
+    const event = createSecurityAuditEvent(first.operation, FV.serverTimestamp());
+    assert.equal(audits[0][0], 'security_audit_events/' + event.id);
+    assert.deepEqual(audits[0][1], { ...event.data, occurred_at: audits[0][1].occurred_at });
+    assert.equal(Number.isInteger(audits[0][1].occurred_at.seconds), true);
+    assert.equal(Number.isInteger(audits[0][1].occurred_at.nanoseconds), true);
+    assert.equal(Object.hasOwn(audits[0][1].occurred_at, '__serverTimestamp'), false);
   });
   await test('completed retry works after request deletion without another Auth write', async () => {
     const f = setup(); await f.acquire(); await f.run();
+    const auditsBefore = clone([...f.store].filter(([path]) => path.startsWith('security_audit_events/')));
     assert.equal((await f.acquire()).type, 'completed'); assert.deepEqual(await f.run(), { ok: true });
     assert.equal(f.auth.setCalls, 1);
     assert.equal(f.writes.filter(path => path === 'mail/approval-' + f.opId).length, 1);
     const done = f.store.get(f.operationPath);
     assert.equal((await f.coordinator.resumeOperation({ uid: f.uid, opId: f.opId,
       planFingerprint: done.plan_fingerprint, actorUid: 'super_2' })).type, 'completed');
+    assert.equal(auditsBefore.length, 1);
+    assert.deepEqual([...f.store].filter(([path]) => path.startsWith('security_audit_events/')), auditsBefore);
+    assert.equal(f.writes.filter(path => path === auditsBefore[0][0]).length, 1);
+  });
+  await test('existing immutable audit aborts every finalize write without overwrite', async () => {
+    const f = setup(); await f.acquire();
+    let before, writeCount;
+    f.hooks.beforeFinalize = async () => {
+      const event = createSecurityAuditEvent(f.store.get(f.operationPath), FV.serverTimestamp());
+      f.store.set('security_audit_events/' + event.id, { historical: 'must remain unchanged' });
+      before = clone([...f.store]); writeCount = f.writes.length;
+    };
+    await assert.rejects(f.run, error => error.code === 6);
+    assert.deepEqual([...f.store], before);
+    assert.equal(f.writes.length, writeCount);
+    assert.equal(f.store.has(f.requestPath), true);
+    assert.equal(f.store.get(f.registryPath).stage, 'request_created');
+    assert.equal(f.store.get(f.operationPath).status, 'processing');
+    assert.equal(f.store.get(f.operationPath).phase, 'tokens_revoked');
+    assert.equal(f.store.has('mail/approval-' + f.opId), false);
+    assert.equal(f.auth.setCalls, 1); assert.equal(f.auth.revokeCalls, 1);
   });
   await test('authority errors cannot be converted to success from completed receipts', async () => {
     const f = setup(); await f.acquire(); await f.run(); f.control.invalid = true;

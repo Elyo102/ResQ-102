@@ -9,6 +9,7 @@ const contract = require('./invitation-onboarding-contract');
 const { createOnboardingApprovalAuthority } = require('./onboarding-approval-authority');
 const { createOnboardingPhaseAuthority } = require('./onboarding-phase-authority');
 const { createIdentityCoordinator, stableHash, registrationFingerprint } = require('./identity-coordinator');
+const { createSecurityAuditEvent } = require('./security-audit');
 const sdk = new Firestore({ projectId:'demo-resq-phase-authority' });
 const now = 1790000000000, uid='member_1', requestId='request_20260915_001';
 const sha = v => crypto.createHash('sha256').update(v).digest('hex');
@@ -30,7 +31,33 @@ function setup() {
       privacy_version:'2026-09-24',marketing_opt_in:false,accepted_at:Timestamp.fromMillis(now)}]]);
   const control={gateCalls:0,authWrites:0};
   let ids=0;
-  const db={doc(p){sdk.doc(p);return{path:p,async get(){return{exists:store.has(p),data:()=>store.get(p)};}};},collection(p){return{doc:n=>db.doc(p+'/'+(n||'generated_'+ ++ids))};},async runTransaction(fn){const writes=[];const tx={async get(ref){assert.equal(writes.length,0,'no reads after writes');return{exists:store.has(ref.path),data:()=>store.get(ref.path)};},set(ref,data,opts){writes.push([ref.path,data,opts]);},delete(ref){writes.push([ref.path,null]);}};const out=await fn(tx);if(control.abort)throw Error('abort');for(const[p,d,o]of writes){if(d===null)store.delete(p);else{const next=o?.merge?{...store.get(p),...d}:{...d};for(const k of Object.keys(next))if(next[k]?.__delete)delete next[k];store.set(p,next);}}return out;}};
+  const db={
+    doc(p){sdk.doc(p);return{path:p,async get(){return{exists:store.has(p),data:()=>store.get(p)};}};},
+    collection(p){return{doc:n=>db.doc(p+'/'+(n||'generated_'+ ++ids))};},
+    async runTransaction(fn){
+      const writes=[];
+      const tx={
+        async get(ref){assert.equal(writes.length,0,'no reads after writes');return{exists:store.has(ref.path),data:()=>store.get(ref.path)};},
+        set(ref,data,opts){writes.push(['set',ref.path,data,opts]);},
+        create(ref,data){writes.push(['create',ref.path,data]);},
+        delete(ref){writes.push(['delete',ref.path]);}
+      };
+      const out=await fn(tx);
+      if(control.abort)throw Error('abort');
+      // Validate/apply every pending operation off-store first. SDK Timestamp
+      // instances stay intact; a late create collision publishes no writes.
+      const staged=new Map(store);
+      for(const[type,p,d,o]of writes){
+        if(type==='create'&&staged.has(p)){const error=Error('ALREADY_EXISTS');error.code=6;throw error;}
+        if(type==='delete'){staged.delete(p);continue;}
+        const next=o?.merge?{...staged.get(p),...d}:{...d};
+        for(const k of Object.keys(next))if(next[k]?.__delete)delete next[k];
+        staged.set(p,next);
+      }
+      store.clear();for(const[p,d]of staged)store.set(p,d);
+      return out;
+    }
+  };
   const auth={async getUser(id){return id===uid?target:{...superUser,uid:id};},async setCustomUserClaims(id,claims){assert.equal(id,uid);target.customClaims=claims;control.authWrites++;},async revokeRefreshTokens(){}};
   const initialReader=createOnboardingApprovalAuthority({db,invitations:engine,contract});
   const adapter=createOnboardingPhaseAuthority({db,auth,initialReader,contract,invitations:engine,serverTimestamp:()=>Timestamp.fromMillis(now),async requireStationPerson(){control.gateCalls++;if(control.denyGate)throw Error('gate');}});
@@ -57,10 +84,38 @@ let passed=0;async function test(name,fn){await fn();passed++;console.log('PASS 
    class HttpsError extends Error{constructor(code,message){super(message);this.code=code;}}
    const coordinator=createIdentityCoordinator({db:f.db,auth:f.auth,FieldValue:{serverTimestamp:()=>Timestamp.fromMillis(now),delete:()=>({__delete:true})},Timestamp,HttpsError,randomId:()=> 'test_random',onboardingAuthority:f.adapter});
    const params={uid,opId:'approve_integrated',kind:'approve',actorUid:'super_1',actorEmail:'super@example.test',previousClaims:{},requireRequest:true,requestId,requestGeneration:'generation_1',blockIfAssigned:true,intentFingerprint:stableHash('intent'),employeeMode:'fixed',wantedEmp:'601',employeeStart:1,auditAction:'approve_registration',auditDetails:{},makePlan(emp,r,a){return{desiredClaims:{role:a.assignment.role,stationId:a.assignment.stationId,districtId:a.assignment.districtId,shift:a.assignment.shift,emp},desiredProfile:{...a.assignment,full_name:r.full_name,email:r.email,phone:r.phone,name_prefixes:[]}};}};
-   assert.equal((await coordinator.acquireAssignment(params)).type,'acquired');
+   const acquired=await coordinator.acquireAssignment(params);assert.equal(acquired.type,'acquired');
    assert.deepEqual(await coordinator.runAssignment(uid,params.opId,{ok:true},false,f.actor),{ok:true});
    assert.equal(f.control.authWrites,1);assert.equal(f.store.get(f.opPath).stage,'assignment_completed');
+   const event=createSecurityAuditEvent(acquired.operation,Timestamp.fromMillis(now));
+   const auditPath='security_audit_events/'+event.id;
+   assert.deepEqual(f.store.get(auditPath),event.data);
+   assert(f.store.get(auditPath).occurred_at instanceof Timestamp);
+   const audit=f.store.get(auditPath);
    assert.deepEqual(await coordinator.runAssignment(uid,params.opId,{ok:true},false,f.actor),{ok:true});assert.equal(f.control.authWrites,1);
+   assert.equal(f.store.get(auditPath),audit,'completed replay must not replace immutable event');
+   assert.equal([...f.store.keys()].filter(p=>p.startsWith('security_audit_events/')).length,1);
+ });
+ await test('transaction create collisions preserve all earlier pending writes and SDK timestamps',async()=>{
+   const f=setup(), existing=f.db.doc('security_audit_events/existing');
+   const historical={occurred_at:Timestamp.fromMillis(now),historical:true};
+   f.store.set(existing.path,historical);
+   const before=new Map(f.store);
+   await assert.rejects(()=>f.db.runTransaction(async tx=>{
+     await tx.get(existing);
+     tx.set(f.db.doc(f.opPath),{stage:'assignment_completed'},{merge:true});
+     tx.delete(f.db.doc('registration_requests/'+uid));
+     tx.set(f.db.doc('mail/approval-collision'),{queued:true});
+     tx.create(existing,{replacement:true});
+   }),error=>error.code===6);
+   assert.deepEqual(f.store,before);
+   assert.equal(f.store.get(existing.path),historical);
+   assert(f.store.get(existing.path).occurred_at instanceof Timestamp);
+   const duplicate=f.db.doc('security_audit_events/new');
+   await assert.rejects(()=>f.db.runTransaction(async tx=>{
+     tx.create(duplicate,{first:true});tx.create(duplicate,{second:true});
+   }),error=>error.code===6);
+   assert.deepEqual(f.store,before);
  });
  console.log('Phase authority: '+passed+' PASS (real engine + SDK references, fake transactions; emulator NOT RUN)');
 })().catch(e=>{console.error(e);process.exitCode=1;});

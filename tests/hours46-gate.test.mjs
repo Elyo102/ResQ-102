@@ -1,29 +1,38 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {test} from 'node:test';
-import {buildHours46Plan,WRAPPER,NATIVE_COMMANDS,runHours46Sequence} from './lib/hours46-gate-contract.mjs';
+import {buildHours46Plan,WRAPPER,NATIVE_COMMANDS,runHours46Sequence,approvedScripts} from './lib/hours46-gate-contract.mjs';
 import {nativeOpsEnvironment,assertNativeOpsResult,NATIVE_OPS_SUITES} from './lib/hours46-native-ops.mjs';
 const frozen=JSON.parse(fs.readFileSync(new URL('./lib/hours46-original-scripts.json',import.meta.url),'utf8'));
 const current=JSON.parse(fs.readFileSync(new URL('./package.json',import.meta.url),'utf8')).scripts;
 test('actual original graph retained except explicit release supervisor',()=>{
  const plan=buildHours46Plan(current);
- assert.equal(current.all,frozen.all);assert.equal(current.static,frozen.static);
+ assert.equal(current.all,frozen.all);assert.equal(current.static,approvedScripts.static);
  assert.equal(current['release:validate'],WRAPPER);
  const actual=plan.steps.map(s=>s.kind==='npm'?'npm run '+s.name:'node '+(s.execArgv?.length?s.execArgv.join(' ')+' ':'')+s.file+(s.args.length?' '+s.args.join(' '):''));
- const expected=frozen.all.split(' && ').flatMap(c=>['npm run static','npm run dr:test'].includes(c)?frozen[c.slice(8)].split(' && ').filter(x=>!NATIVE_COMMANDS.includes(x)):[c]);
+ const expected=approvedScripts.all.split(' && ').flatMap(c=>['npm run static','npm run dr:test'].includes(c)?approvedScripts[c.slice(8)].split(' && ').filter(x=>!NATIVE_COMMANDS.includes(x)):[c]);
  assert.deepEqual(actual,expected);assert.equal(plan.native.length,3);assert.deepEqual(NATIVE_OPS_SUITES.map(s=>'node '+s),plan.native);
- assert.deepEqual(plan.steps.filter(s=>s.execArgv),[{kind:'node',file:'../functions/backup-monitoring.test.js',args:[],execArgv:['--test']}]);
+ assert.deepEqual(plan.steps.filter(s=>s.execArgv),[{kind:'node',file:'../functions/schedule-replication-control.test.mjs',args:[],execArgv:['--test']},{kind:'node',file:'../functions/backup-monitoring.test.js',args:[],execArgv:['--test']}]);
  assert.equal(actual.filter(s=>s==='node --test ../functions/backup-monitoring.test.js').length,1);
  assert.ok(Object.isFrozen(plan)&&Object.isFrozen(plan.steps)&&plan.steps.every(Object.isFrozen));
 });
 test('every script alteration, omission and addition is rejected',()=>{
- for(const key of Object.keys(frozen)){
+ for(const key of Object.keys(approvedScripts)){
   const altered={...current,[key]:current[key]+' && node omitted.mjs'};assert.throws(()=>buildHours46Plan(altered));
   const missing={...current};delete missing[key];assert.throws(()=>buildHours46Plan(missing));
  }
  assert.throws(()=>buildHours46Plan({...current,unknown:'node fake.mjs'}));
 });
 test('native omission duplication and unknown syntax cannot change denominator',()=>{
+ for(const group of ['static','browser']){
+  const leaves=current[group].split(' && ');
+  for(let i=0;i<leaves.length;i++){
+   assert.throws(()=>buildHours46Plan({...current,[group]:leaves.filter((_,j)=>j!==i).join(' && ')}));
+   assert.throws(()=>buildHours46Plan({...current,[group]:[...leaves,leaves[i]].join(' && ')}));
+  }
+  assert.throws(()=>buildHours46Plan({...current,[group]:[...leaves].reverse().join(' && ')}));
+ }
+ for(const replacement of ['node ../functions/schedule-replication-control.test.mjs','node --inspect ../functions/schedule-replication-control.test.mjs','node --test ../functions/other.test.mjs'])assert.throws(()=>buildHours46Plan({...current,static:current.static.replace('node --test ../functions/schedule-replication-control.test.mjs',replacement)}));
  for(const command of NATIVE_COMMANDS){
   const group=command.endsWith('ops-backup-archive.test.mjs')?'dr:test':'static';
   assert.throws(()=>buildHours46Plan({...current,[group]:current[group].replace(command,'node missing.mjs')}));

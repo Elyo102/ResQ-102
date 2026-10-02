@@ -2,12 +2,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const original=JSON.parse(fs.readFileSync(new URL('./hours46-original-scripts.json',import.meta.url),'utf8'));
+const additions=JSON.parse(fs.readFileSync(new URL('./unified-approved-script-additions.json',import.meta.url),'utf8'));
+export const approvedScripts=Object.freeze({...original,...additions});
+for(const [name,command] of Object.entries(original)){
+  const retained=approvedScripts[name].split(' && ');let cursor=0;
+  for(const leaf of command.split(' && ')){
+    const found=retained.indexOf(leaf,cursor);assert.ok(found>=cursor,'ORIGINAL_COMMAND_REMOVED '+name);cursor=found+1;
+  }
+}
 export const NATIVE_COMMANDS=Object.freeze(['node ops-backup-test.mjs','node ops-restore-drill-test.mjs','node ops-backup-archive.test.mjs']);
 export const WRAPPER='node run-hours46-release.mjs';
 export function buildHours46Plan(scripts){
   assert.ok(scripts && typeof scripts==='object' && !Array.isArray(scripts),'GATE_SCRIPTS');
-  assert.deepEqual(Object.keys(scripts).sort(),Object.keys(original).sort(),'GATE_KEYS');
-  for(const name of Object.keys(original))assert.equal(scripts[name],name==='release:validate'?WRAPPER:original[name],'GATE_CHANGED '+name);
+  assert.deepEqual(Object.keys(scripts).sort(),Object.keys(approvedScripts).sort(),'GATE_KEYS');
+  for(const name of Object.keys(approvedScripts))assert.equal(scripts[name],name==='release:validate'?WRAPPER:approvedScripts[name],'GATE_CHANGED '+name);
   const outer=scripts.all.split(' && ');
   assert.equal(outer.filter(x=>x==='npm run static').length,1,'STATIC_ONCE');
   assert.equal(outer.filter(x=>x==='npm run dr:test').length,1,'DR_ONCE');
@@ -22,6 +30,9 @@ export function buildHours46Plan(scripts){
     if(name!=='static'&&name!=='dr:test'){steps.push(Object.freeze({kind:'npm',name}));continue;}
     for(const leaf of name==='static'?staticSteps:drSteps){
       if(NATIVE_COMMANDS.includes(leaf))continue;
+      if(name==='static'&&leaf==='node --test ../functions/schedule-replication-control.test.mjs'){
+        steps.push(Object.freeze({kind:'node',file:'../functions/schedule-replication-control.test.mjs',args:Object.freeze([]),execArgv:Object.freeze(['--test'])}));continue;
+      }
       if(name==='dr:test'&&leaf==='node --test ../functions/backup-monitoring.test.js'){
         steps.push(Object.freeze({kind:'node',file:'../functions/backup-monitoring.test.js',args:Object.freeze([]),execArgv:Object.freeze(['--test'])}));continue;
       }
