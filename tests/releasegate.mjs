@@ -307,7 +307,7 @@ const releaseVersion = JSON.parse(read('release-manifest.json')).version;
 
 // Explicitly retain the retired-route protections for 43. Unknown future
 // releases must not inherit approval of either frozen target manifest.
-if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46', '42H.47'].includes(releaseVersion)) {
+if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46', '42H.47', '42H.49'].includes(releaseVersion)) {
   const targets = JSON.parse(read('release-targets-42h42.json'));
   const expectedTargets = [
     'appendFaultPhotos', 'approvalMailStatus', 'getScheduleSourceRoster',
@@ -528,6 +528,30 @@ if (['42H.42', '42H.43', '42H.44', '42H.45', '42H.46', '42H.47'].includes(releas
       ...Object.keys(policy46).flatMap(k => [{ ...policy46, [k]: false }, { ...policy46, [k]: 'true' }])])
       ok('6.46 rejects missing, malformed or disabled admission policy', !valid46(manifest46, stamp46, policy));
     ok('6.46 operational manifest is not public', matchesAny(ignore, 'docs/release-targets-42h46.json') !== null);
+  }
+  if (releaseVersion === '42H.49') {
+    const manifest49 = JSON.parse(read('docs/release-targets-42h49.json'));
+    const stamp49 = JSON.parse(read('release-manifest.json'));
+    // Scope is pinned to this new release. Retired broad routes remain blocked.
+    const approved49 = 'ea6e25fbf7b715fcf5cc8c2293e5b432b1cb03d9c7d2b8b3a622af9d7e63c163';
+    const valid49 = (value, stamp = stamp49) => {
+      try { return createHash('sha256').update(JSON.stringify(value)).digest('hex') === approved49 &&
+        stamp.scope === 'hosting' && stamp.version === '42H.49' && stamp.date === '2.10.2026' &&
+        stamp.server_version === '42H.44' && stamp.telemetry_version === '42H.44' &&
+        stamp.asset_query === '42h49' && stamp.sw_cache_key === 'resq-v42h49-release1'; }
+      catch { return false; }
+    };
+    ok('6.49 exact driving release manifest and cache identity',valid49(manifest49));
+    for (const [name, mutate] of [
+      ['target omitted',x=>x.targets.pop()], ['extra target',x=>x.targets.push('sendCallout')],
+      ['duplicate target',x=>x.targets[1]=x.targets[0]], ['batch order',x=>x.batches.reverse()],
+      ['project',x=>x.project='other'], ['extra IAM',x=>x.services.push('iam')],
+      ['backup omitted',x=>x.backup.encrypted_readback_verified=false],
+      ['rollback data removal',x=>x.rollback.data='delete'], ['extra property',x=>x.extra=true]
+    ]) { const bad=structuredClone(manifest49);mutate(bad);ok('6.49 rejects '+name,!valid49(bad)); }
+    for (const key of ['scope','version','date','server_version','telemetry_version','asset_query','sw_cache_key'])
+      ok('6.49 rejects stamp drift '+key,!valid49(manifest49,{...stamp49,[key]:'wrong'}));
+    ok('6.49 operational manifest is private',matchesAny(ignore,'docs/release-targets-42h49.json') !== null);
   }
   if (releaseVersion === '42H.47') {
     const manifest47 = JSON.parse(read('docs/release-targets-42h47.json'));

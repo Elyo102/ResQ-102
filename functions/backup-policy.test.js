@@ -30,11 +30,16 @@ test('missing or empty policy manifests fail closed', () => {
 });
 
 test('retention decisions cover all policies without changing the restore catalogue', () => {
-  const legacy = backupPolicy.DATA_POLICIES.filter(item => !['security_audit_events/{eventId}', 'schedule_runtime_workers/{workerId}'].includes(item.path));
-  assert.equal(legacy.length, 182);
+  // Freeze the already released 48b890b catalogue, not the older 5dd2544 one.
+  const drivingPaths = ['stations/{sid}/driving_refresh_reports/{id}','stations/{sid}/driving_refresh_reports/{id}/edits/{eid}'];
+  const driving = backupPolicy.DATA_POLICIES.filter(item => drivingPaths.includes(item.path));
+  assert.equal(driving.length, 2);
+  for (const item of driving) { assert.equal(item.humanReadable,'forbidden'); assert.equal(item.backupPolicy,'managed_export'); assert.equal(backupPolicy.getRetentionDecision(item.path).automaticDeletionAuthorized,false); }
+  const legacy = backupPolicy.DATA_POLICIES.filter(item => !['security_audit_events/{eventId}', 'schedule_runtime_workers/{workerId}', ...drivingPaths].includes(item.path));
+  assert.equal(legacy.length, 198);
   assert.equal(require('node:crypto').createHash('sha256')
     .update(JSON.stringify(legacy)).digest('hex'),
-  '9d9a8f8cba0a65aee5e0f90fbc3c7da2dbb28afd351a05f305a241af54fa5c03');
+  'd0466405671539a0e1c3a110d3120b76d0679b11eeb54e4a3d96f98baf64bc83');
   for (const item of backupPolicy.DATA_POLICIES) {
     const decision = backupPolicy.getRetentionDecision(item.path);
     assert.deepEqual(Object.keys(decision).sort(), [
@@ -437,12 +442,13 @@ const correctionPaths = [
   'stations/{sid}/attendance_correction_receipts/{correctionId}',
   'stations/{sid}/attendance_correction_notification_jobs/{jobId}'
 ];
-const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, hrDerivedPaths, correctionPaths);
+const hrInvitationPaths = ['hr_invitation_operations/{id}','hr_invitation_recipients/{id}'];
+const hrPaths = hrDurablePaths.map(([path]) => path).concat(hrControlPaths, hrAttachmentPaths, hrReviewPaths, hrReviewJobPath, hrDerivedPaths, correctionPaths, hrInvitationPaths);
 
-test('exact thirty-six private HR/correction paths are classified, unreadable, and retention-explicit', () => {
+test('exact thirty-eight private HR/correction paths are classified, unreadable, and retention-explicit', () => {
   const actual = backupPolicy.DATA_POLICIES.filter(item => item.path.split('/').some(
     segment => segment.startsWith('hr_') && segment !== 'hr_reports') || correctionPaths.includes(item.path));
-  assert.equal(hrPaths.length, 36);
+  assert.equal(hrPaths.length, 38);
   assert.deepEqual(actual.map(item => item.path).sort(), [...hrPaths].sort());
   for (const path of hrPaths) {
     const item = backupPolicy.getPolicy(path);

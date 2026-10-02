@@ -7,7 +7,7 @@ const frozen=JSON.parse(fs.readFileSync(new URL('./lib/hours46-original-scripts.
 const current=JSON.parse(fs.readFileSync(new URL('./package.json',import.meta.url),'utf8')).scripts;
 test('actual original graph retained except explicit release supervisor',()=>{
  const plan=buildHours46Plan(current);
- assert.equal(current.all,'npm run driving:refresh && npm run backup:adapter:coverage && '+frozen.all);assert.equal(current.static,approvedScripts.static);
+ assert.equal(current.all,frozen.all.replace('npm run pages:source && ','npm run pages:source && npm run driving:refresh && npm run backup:adapter:coverage && '));assert.equal(current.static,approvedScripts.static);
  assert.equal(current.all.split(' && ').filter(s=>s==='npm run driving:refresh').length,1);
  assert.equal(current['driving:refresh'],'node ../functions/driving-refresh.test.js && node driving-refresh-wiring.mjs && node driving-refresh-browser.mjs');
  assert.equal(current['release:validate'],WRAPPER);
