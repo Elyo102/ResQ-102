@@ -111,3 +111,80 @@ merely an added timestamp field. No product timestamp change was made here.
 The requested AGENTS reporting-section removal was denied by the permission
 reviewer even after independent verification of the human message; it was not
 bypassed and AGENTS.md remains unchanged.
+
+## Random recovery key and real backup attempt
+
+Direct human turn01a0fb78-62b8-73a1-af95-ede7329e03e7 superseded the disclosed
+synthetic key with authorization for a cryptographically random32-byte key.
+ops-provision-backup-key.ps1 generated it with the platform CSPRNG, persisted it
+atomically in project-root .env.local, and verified a protected current-user-only
+ACL plus exact readback. Recovery location: this worktree's .env.local. No value
+or fingerprint is recorded here. It is local recovery material, not offsite DR.
+Subsequent runs reuse the random-marker key, never rotate it automatically.
+
+Two scoped reviews and45 synthetic assertions passed. Earlier failed synthetic
+attempts exposed PowerShell null-string replacement and redundant owner ACL
+assignment issues; both were repaired before real provisioning. Node22 loaded the
+persisted key and passed a synthetic seal/decrypt check. The original provisioning
+command completed successfully; its caller exited before Node verification due
+to unset LASTEXITCODE, so verification ran separately without regenerating the key.
+
+ADC was unavailable (including a metadata lookup warning), but the existing
+Firebase CLI session was independently usable. No login, new credentials, IAM
+grant or token persistence was performed. Firebase Admin rejected its generic
+custom credential before capture, so the reviewed adapter uses the installed
+Google Cloud Firestore client with GoogleAuth/OAuth2Client and an in-memory CLI
+refresh handler.19 synthetic adapter/refresh assertions passed with no Admin app
+creation. The optional inMemoryUnseal path passed8 new synthetic assertions,
+including wrong key/ciphertext/manifest rejection and zero plaintext-temp attempts.
+No earlier green application/browser suite was rerun.
+
+The actual authorized capture then failed. One bounded metadata-only diagnostic
+confirmed Firestore PERMISSION_DENIED(code7), not absent ADC or a missing key.
+No permission grant or retry loop followed. A private staging directory may
+remain; it is not a completed backup and was not removed. No backup readback
+success, source/config/IAM rollback completeness, point-in-time consistency,
+57/57 gate or production promotion is claimed. Successful CLI authentication
+does not establish authorization to read Firestore documents.
+
+### Subsequent bounded diagnosis: SDK failure remains unresolved
+
+The read-only IAM check returned all four requested permissions allowed:
+datastore.databases.get, datastore.entities.get, datastore.entities.list and
+serviceusage.services.use. A direct REST listCollectionIds metadata request with
+the existing CLI credential returned HTTP 200. No document contents or collection
+names were output. These results do not support claiming a missing IAM role.
+
+The final permitted SDK metadata-only check, using preferRest:true, still failed
+with code7 (capture stage; backupCreated:false). The SDK/credential-path mismatch
+remains unresolved. The adapter repair limit is reached: do not repeat capture,
+grant permissions, or describe this adapter as production-verified. Preserve the
+private staging directory and successful provisioning/synthetic-test evidence.
+No complete production backup or unified deployment was produced.
+
+### Owner-renewed REST-only recovery path
+
+Verified human turn01a0fbc1-f9f7-7c21-8b99-dd7221278608 renewed autonomous
+credential/backup resolution. The SDK repair cycle remains closed. A new bounded
+read-only REST adapter uses the existing CLI identity, fixed Firestore origin,
+no redirects/retries, and the existing protected key. No IAM change or key
+regeneration occurred. Two PRE and two POST source reviews covered this path.
+
+ops-backup-rest.mjs validates resource boundaries, collection/document pagination,
+missing-parent recursion, timestamp submilliseconds and snapshot value markers.
+It rejects unsupported/lossy values rather than silently converting them.
+The existing snapshot format does not preserve integer-versus-double identity;
+this is not a raw Firestore managed export. Limits:10000 requests,50000 documents
+including placeholders,128MiB aggregate responses,16MiB/page,100 path segments,
+30000ms per request including credentials/headers/body. Limits fail closed.
+
+Final changed adapter:50 synthetic assertions PASS;9 additional boundary checks
+PASS including nested missing-parent encrypted capture/readback, null-field and
+unknown-envelope rejection, aggregate/document limits and stalled credentials/
+headers. Existing application suites were not repeated. Syntax checks PASS.
+Git diff hygiene PASS. This is local adapter evidence, not final57 acceptance.
+
+Actual metadata-only proof through the exact wrapper returned exit0,
+operationSucceeded:true,metadataReadVerified:true,backupCreated:false. Private
+key/destination ACL and ignored-key checks passed before this call. One subsequent
+authorized capture was started; its completion must be recorded separately.

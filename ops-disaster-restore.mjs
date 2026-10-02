@@ -52,6 +52,7 @@ import {
   sealDocumentsFile,
   sealDocumentsBuffer,
   verifySealedFile,
+  unsealBuffer,
   unsealDocumentsToTemp,
   cleanupUnsealTemp
 } from './ops-backup-seal.mjs';
@@ -648,6 +649,10 @@ export function readSet(setDir, options = {}) {
     const env = options.env || process.env;
     const passphrase = options.sealPassphrase !== undefined ? options.sealPassphrase : env[SEAL_PASSPHRASE_ENV];
     requireSealPassphrase(passphrase);
+    if (options.inMemoryUnseal === true) {
+      const plain = unsealBuffer(JSON.parse(fs.readFileSync(path.join(dir, SEALED_FILE_NAME), 'utf8')), passphrase);
+      try { jsonl = plain.toString('utf8'); } finally { plain.fill(0); }
+    } else {
     const opened = unsealDocumentsToTemp(dir, passphrase);
     tempCleanup = () => cleanupUnsealTemp(opened.tempDir, opened.tempFile);
     try {
@@ -655,6 +660,7 @@ export function readSet(setDir, options = {}) {
     } catch (error) {
       tempCleanup();
       throw error;
+    }
     }
   } else {
     jsonl = fs.readFileSync(path.join(dir, PLAIN_FILE_NAME), 'utf8');
@@ -1110,14 +1116,15 @@ export function runReport(args, options = {}) {
 //  מתאם SDK אמיתי — נטען בעצלנות בלבד, לעולם לא ברמת המודול
 // ----------------------------------------------------------------------
 
-async function loadAdminApi(projectId, options = {}) {
+export async function loadAdminApi(projectId, options = {}) {
   const root = repoRoot(options);
   const require = createRequire(pathToFileURL(path.join(root, 'functions', 'package.json')).href);
   const resolved = require.resolve('firebase-admin');
   const imported = await import(pathToFileURL(resolved).href);
   const admin = imported.default || imported;
-  if (!admin.apps.length) admin.initializeApp({ projectId });
-  const db = admin.firestore();
+  if (options.firestoreDb && options.firestoreDb.projectId !== projectId) throw new Error('backup adapter project mismatch');
+  if (!options.firestoreDb && !admin.apps.length) admin.initializeApp({ projectId });
+  const db = options.firestoreDb || admin.firestore();
   const types = { Timestamp: admin.firestore.Timestamp, GeoPoint: admin.firestore.GeoPoint, Bytes: admin.firestore.Bytes, doc: (p) => db.doc(p) };
   const PAGE = 300;
   const api = {
