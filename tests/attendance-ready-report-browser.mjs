@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)('./lib/contained-playwright.cjs');
-const source=fs.readFileSync(new URL('../attendance.html',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../attendance.html',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const extract=(start,end)=>{assert.equal(source.split(start).length,2,start);const at=source.indexOf(start);assert.ok(source.indexOf(end,at)>at);return source.slice(at,source.indexOf(end,at));};
 const helpers=extract('function readyReportRows(){','function render(){');
 const preview=extract('function submitPreview(){',"$('btnSubmit').onclick = submitPreview;");
