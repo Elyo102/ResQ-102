@@ -1,0 +1,23 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'stations/eilat_102/callouts/decoder-malformed/responses/callout-decoder-only'
+- 'stations/station-102/callouts/decoder-malformed/responses/callout-decoder-only'
+
+    at file:///C:/Users/User/Documents/Codex/2026-08-25/referenced-chatgpt-conversation-this-is-an/work/resq-hours-production-42h47/tests/callout-decoder-browser.mjs:105:10
+    at runNextTicks (node:internal/process/task_queues:65:5)
+    at process.processImmediate (node:internal/timers:453:9)
+    at process.callbackTrampoline (node:internal/async_hooks:130:17) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'stations/eilat_102/callouts/decoder-malformed/responses/callout-decoder-only',
+  expected: 'stations/station-102/callouts/decoder-malformed/responses/callout-decoder-only',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.21.1

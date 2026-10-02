@@ -1,0 +1,51 @@
+PASS valid text retained without escaping or rewriting
+PASS string sender fields retained
+PASS empty sender uses current fallback
+PASS malformed sender components 0
+PASS malformed sender components 1
+PASS malformed sender components 2
+PASS malformed sender components 3
+PASS malformed sender components 4
+PASS malformed sender components 5
+PASS malformed sender components 6
+PASS malformed sender components 7
+PASS malformed sender components 8
+PASS malformed sender components 9
+PASS malformed sender components 10
+PASS malformed sender components 11
+PASS invalid body is explicitly nonactionable 0
+PASS invalid body is explicitly nonactionable 1
+PASS invalid body is explicitly nonactionable 2
+PASS invalid body is explicitly nonactionable 3
+PASS invalid body is explicitly nonactionable 4
+PASS invalid body is explicitly nonactionable 5
+PASS invalid body is explicitly nonactionable 6
+PASS invalid body is explicitly nonactionable 7
+PASS invalid body is explicitly nonactionable 8
+PASS invalid body is explicitly nonactionable 9
+PASS invalid body is explicitly nonactionable 10
+PASS invalid body is explicitly nonactionable 11
+PASS invalid body is explicitly nonactionable 12
+PASS invalid body is explicitly nonactionable 13
+PASS invalid body is explicitly nonactionable 14
+PASS nonblank body whitespace remains intact
+PASS absent value
+PASS null legacy value
+PASS empty legacy value
+PASS provided malformed timestamp remains visible with warning 0
+PASS provided malformed timestamp remains visible with warning 1
+PASS provided malformed timestamp remains visible with warning 2
+PASS provided malformed timestamp remains visible with warning 3
+PASS provided malformed timestamp remains visible with warning 4
+PASS provided malformed timestamp remains visible with warning 5
+PASS provided malformed timestamp remains visible with warning 6
+PASS provided malformed timestamp remains visible with warning 7
+PASS provided malformed timestamp remains visible with warning 8
+PASS provided malformed timestamp remains visible with warning 9
+PASS current
+PASS one millisecond inside TTL
+PASS exact TTL expired
+PASS older than TTL
+PASS future retains existing eligibility
+PASS raw input and nested malformed values are preserved
+Callout decoder boundaries: 50/50 PASS

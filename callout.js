@@ -53,10 +53,23 @@ export function ackHe(id) {
   return a ? a.he : '';
 }
 
+function calloutDisplay(value, now = Date.now()) {
+  const v = value || {};
+  const string = field => typeof field === 'string' ? field : '';
+  const key = v.created_key;
+  const t = typeof key === 'string' ? Date.parse(key) || 0 : 0;
+  const text = string(v.text);
+  return {
+    validText: !!text.trim(), text,
+    from: [string(v.by_name) || 'מפקד', string(v.by_role_he), string(v.when_he)]
+      .filter(Boolean).join(' · '),
+    fresh: !t || now - t < CALLOUT_TTL_MS,
+    ageUnverified: !t && key != null && key !== ''
+  };
+}
+
 function fresh(v) {
-  const t = Date.parse(String((v || {}).created_key || '')) || 0;
-  if (!t) return true;                       // אין חותמת — לא מסתירים
-  return (Date.now() - t) < CALLOUT_TTL_MS;
+  return calloutDisplay(v).fresh; // אין חותמת — לא מסתירים
 }
 
 // ------------------------------------------------------------------
@@ -375,16 +388,44 @@ export function watchCallouts(db, sid, uid, opts) {
       if (!owner.doneTimer && !owner.confirmingId) shownId = '';
       return;
     }
-    const cur = list[0];
+    const valid = list.filter(row => calloutDisplay(row.v).validText);
+    const invalidCount = list.length - valid.length;
+    if (!valid.length) {
+      if (owner.doneTimer || owner.confirmingId) return;
+      const w = box();
+      clearCalloutUi();
+      shownId = '';
+      owner.visibleId = '';
+      document.getElementById('coText').textContent =
+        'התקבלה קריאת פתע, אך פרטי הקריאה אינם זמינים. יש ליצור קשר עם המפקד.';
+      document.getElementById('coMore').textContent =
+        'קריאות שפרטיהן אינם זמינים: ' + invalidCount;
+      document.getElementById('coBtns').hidden = true;
+      ['coYes', 'coNo', 'coSend', 'coBack'].forEach(id => {
+        document.getElementById(id).disabled = true;
+      });
+      w.classList.add('on');
+      return; // Not a presentation of the body: no seen/answer/alarm side effects.
+    }
+    const cur = valid[0];
+    const display = calloutDisplay(cur.v);
+    const more = [list.length > 1 ? 'יש עוד ' + (list.length - 1) + ' קריאות ממתינות.' : '',
+      invalidCount ? 'קריאות שפרטיהן אינם זמינים: ' + invalidCount : '',
+      display.ageUnverified ? 'לא ניתן לאמת את מועד הקריאה.' : ''].filter(Boolean).join(' ');
     // Keep the answered call's confirmation visible until its timer expires.
     // A second pending call must never inherit the first call's closing timer.
     if (owner.doneTimer || (owner.confirmingId && owner.visibleId === owner.confirmingId &&
         cur.id !== owner.confirmingId)) return;
-    if (cur.id === shownId) return;
-    shownId = cur.id;
-    show(owner, db, sid, uid, cur.id, cur.v, o, list.length, function () {
+    if (cur.id === shownId) {
+      document.getElementById('coMore').textContent = more;
+      return; // Preserve an in-progress rejection draft.
+    }
+    show(owner, db, sid, uid, cur.id, display, o, more, function () {
       shownId = '';
       renderLatest();
+    }, function () {
+      shownId = cur.id;
+      owner.visibleId = cur.id;
     });
   }
 
@@ -447,19 +488,17 @@ export function watchCallouts(db, sid, uid, opts) {
   return owner.dispose;
 }
 
-function show(owner, db, sid, uid, id, v, o, count, advance) {
+function show(owner, db, sid, uid, id, display, o, more, advance, commitDisplay) {
   if (activeOwner !== owner || owner.disposed) return;
-  owner.visibleId = id;
   const w = box();
   const t = document.getElementById('coText');
   const f = document.getElementById('coFrom');
   const m = document.getElementById('coMore');
   const e = document.getElementById('coErr');
 
-  t.textContent = String(v.text || '');
-  f.textContent = [v.by_name || 'מפקד', v.by_role_he || '', v.when_he || '']
-    .filter(Boolean).join(' · ');
-  m.textContent = count > 1 ? 'יש עוד ' + (count - 1) + ' קריאות ממתינות.' : '';
+  t.textContent = display.text;
+  f.textContent = display.from;
+  m.textContent = more;
   e.style.display = 'none';
   e.textContent = '';
 
@@ -616,6 +655,7 @@ function show(owner, db, sid, uid, id, v, o, count, advance) {
   reason.oninput = function () { updateSend(); };
 
   w.classList.add('on');
+  commitDisplay();
   // הצפייה אינה תשובה ולכן אינה סוגרת או מסתירה את הקריאה.
   // אם הכתיבה נכשלת, הקריאה נשארת פתוחה והמשתמש עדיין יכול
   // לענות; מאזין עתידי ינסה שוב בעת ההצגה הבאה.

@@ -1,5 +1,27 @@
 # Unified execution checkpoint
 
+## Callout decoder continuation — 2026-10-02
+
+Base c4b587dbf67280b724ee754ff7461561fed410b3 is pushed. The E10 callout decoder
+now avoids coercing persisted text/sender/timestamp maps. Invalid bodies remain
+visibly pending and non-actionable, with no seen/answer/alarm side effects;
+valid siblings continue and their rejection drafts survive malformed siblings.
+Corrected same-ID rows can recover. Display identity commits after DOM setup and
+before seen/alarm. Legacy missing/unparseable timestamp eligibility is preserved;
+this does not make Firestore orderBy return documents lacking the ordered field.
+
+Evidence:50 pure decoder cases,65 existing lifecycle browser assertions, one new
+contained browser scenario PASS. Initial new browser failure was a fixture
+expectation using project alias station-102 rather than canonical station path
+eilat_102; one test-only correction passed. Both logs are retained. Two independent
+POST reviews found no blocker in this narrow scope. No arbitrary DOM exception
+isolation or already-visible same-ID content-refresh guarantee is claimed.
+
+Source-development estimate stays22/57 (38.6%); E10 remains partial. Formal gate0/57.
+No production/secret/IAM/employee-data mutation. Scoped repository inspection
+found the existing backup seal path requires RESQ_BACKUP_SEAL_PASSPHRASE; no
+alternate KMS reference was found in the inspected ops/release configuration.
+
 ## Clean-environment continuation — 2026-10-02
 
 Further differential closure: bulletin rendering now type-checks display metadata

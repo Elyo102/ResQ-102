@@ -1,0 +1,67 @@
+✓ one callout listener exists after initial login
+✓ one mode listener exists after initial login
+✓ the wide banner is gone, and with it the offset it forced on every screen
+✓ a compact chip sits in the header instead
+✓ and it really is inside the header, not floating over the page
+✓ its aria-label says what the mode is
+✓ and so does the visible label
+✓ the chip is at least 44×44
+✓ the explanation starts closed — the point was to reduce noise
+✓ pressing it explains what trial mode actually does
+✓ and the control says it is expanded
+✓ Escape closes it again
+✓ header does not overflow at 320
+✓ the chip keeps its touch target at 320
+✓ and stays inside the header at 320
+✓ header does not overflow at 360
+✓ the chip keeps its touch target at 360
+✓ and stays inside the header at 360
+✓ header does not overflow at 390
+✓ the chip keeps its touch target at 390
+✓ and stays inside the header at 390
+✓ repeated persisted pageshow keeps exactly one callout listener
+✓ repeated persisted pageshow keeps exactly one mode listener
+✓ a delayed old identity cannot reclaim the rendered home screen
+✓ the winning identity owns one callout and one mode listener
+✓ a delayed same-UID route cannot overwrite newer claims
+✓ the mode chip stays below a 47px safe inset
+✓ and the chip rides inside it rather than stacking above it
+✓ identity replacement survives a throwing callout unsubscribe
+✓ identity replacement survives a throwing mode unsubscribe
+✓ displaying a callout records a merge-only seen timestamp without answering
+✓ recording seen does not hide the unanswered callout
+✓ rejecting a callout opens a mandatory reason field
+✓ and the two first answers step aside so the reason is the only question on screen
+✓ the five agreed quick reasons are offered, in order
+✓ the send button is disabled until a reason is chosen
+✓ an empty rejection reason writes nothing
+✓ choosing "other" opens the free-text field
+✓ and an empty "other" still cannot be sent
+✓ choosing a listed reason closes the free-text field again
+✓ a chosen reason enables sending
+✓ a rejection stores the required bounded reason
+✓ the rejection is confirmed on screen and not merely by the dialog vanishing
+✓ and nothing is left to press twice
+✓ the final answer merges into and preserves the original seen receipt
+✓ a response is isolated in its own recipient document
+✓ the accept button says it is sending
+✓ and both answers are locked while it is in flight
+✓ a second press while sending writes nothing at all
+✓ accepting confirms on screen instead of only closing the dialog
+✓ a server-confirmed answer releases the screen without waiting for a response snapshot
+✓ the failure message carries no technical error code at all
+✓ and it says in Hebrew what happened
+✓ a failed answer leaves the buttons usable for a real retry
+✓ late snapshot and late error from a disposed owner cannot reopen the overlay
+✓ a disposed snapshot error callback performs no stale side effect
+✓ the current owner can still display a valid callout
+✓ a held acknowledgement cannot mutate the replacement identity UI
+✓ a successful old acknowledgement cannot close the new owner callout
+✓ logout removes the callout listener
+✓ logout removes the mode listener
+✓ logout clears the old identity overlay and button handlers
+✓ logout removes the mode chip with the rest of the identity
+✓ and releases the trial marker on the document
+✓ no browser exception occurred
+
+65 passed, 0 failed
