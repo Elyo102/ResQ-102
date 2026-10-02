@@ -328,7 +328,7 @@ try {
     } finally { await f.context.close(); }
   });
 
-  await test('all 31 Firebase screens bootstrap monitoring and all 23 factories use the facade', async () => {
+  await test('all 32 Firebase screens bootstrap monitoring and all 24 factories use the facade', async () => {
     const publicLegalPages = ['privacy.html', 'terms.html'];
     for (const page of publicLegalPages) {
       const source = fs.readFileSync(path.join(root, page), 'utf8');
@@ -336,24 +336,29 @@ try {
     }
     const screens = fs.readdirSync(root).filter(n => n.endsWith('.html') && !['index.html','schedule.html',...publicLegalPages].includes(n));
     const expectedScreens = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','board.html','callout.html','check.html','faults.html','feedback.html','forms.html','guards.html','hr-documents.html','hr-requests.html','hr.html','import.html','login.html','maintenance.html','operational-vehicles.html','people.html','quals.html','schedule-management.html','sign.html','stats.html','swaps.html','unlock.html','vehicle.html','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
+    expectedScreens.push('driving-refresh.html');
     assert.deepEqual(screens.sort(), expectedScreens.sort());
     const externalBootstrap = {
       'schedule-management.html': 'schedule-management.js',
       'hr.html': 'hr-client.js',
       'hr-requests.html': 'hr-requests-client.js',
-      'hr-documents.html': 'hr-documents-client.js'
+      'hr-documents.html': 'hr-documents-client.js',
+      'driving-refresh.html': 'driving-refresh.js'
     };
     for (const screen of screens) {
       let source = fs.readFileSync(path.join(root, screen), 'utf8');
       const module = externalBootstrap[screen];
       if (module) {
-        assert.ok(source.includes(`./${module}?v=42h49`), screen + ' disconnected bootstrap');
+        const reference = screen === 'driving-refresh.html'
+          ? `src="${module}?v=dr1"` : `./${module}?v=42h49`;
+        assert.ok(source.includes(reference), screen + ' disconnected bootstrap');
         source += fs.readFileSync(path.join(root, module), 'utf8');
       }
       assert.equal((source.match(/await initAppCheck\(app\);/g) || []).length, 1, screen);
     }
     const consumers = ['access.html','admin.html','alerts.html','attendance-shadow.html','attendance.html','callout.html','check.html','feedback.html','guards.html','import.html','login.html','operational-vehicles.html','schedule-management.js','stats.html','swaps.html','unlock.html','hr-client.js','hr-requests-client.js','hr-documents-client.js','device-readiness.html','saas-admin.html','metrics.html','cost-usage.html'];
-    assert.equal(consumers.length, 23);
+    consumers.push('driving-refresh.js');
+    assert.equal(consumers.length, 24);
     for (const file of consumers) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
       assert.ok(source.includes("from './monitored-functions.js?v=42h49'"), file);
