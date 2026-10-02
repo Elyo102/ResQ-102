@@ -75,7 +75,7 @@ for (const m of indexSrc.matchAll(/^const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Object\
   frozenOptionConsts.set(m[1], /enforceAppCheck:\s*true/.test(m[2]));
 }
 const callables = callableOptions(indexSrc);
-check('functions/index.js exposes the reviewed inventory of 194 callables', callables.length === 194);
+check('functions/index.js exposes the reviewed inventory of 195 callables', callables.length === 195);
 
 function enforcesAppCheck(options) {
   // A literal override must not inherit enforcement from a spread constant.

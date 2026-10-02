@@ -148,8 +148,8 @@ const mutations = [
   {
     name: 'the monthly build goes back to one hours read per employee',
     file: 'hr-monthly-summary.js', test: SCALE,
-    find: "    const reports = reportRefs.length && typeof db.getAll === 'function'\n      ? await db.getAll(...reportRefs) : [];",
-    replace: '    const reports = await Promise.all(reportRefs.map((ref) => ref.get()));'
+    find: '    const reports = reportRefs.length ? await tx.getAll(...reportRefs) : [];',
+    replace: '    const reports = await Promise.all(reportRefs.map((ref) => tx.get(ref)));'
   },
   {
     name: 'the test double goes back to passing every row for every operator but ==',

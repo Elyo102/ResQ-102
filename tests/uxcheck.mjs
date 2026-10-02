@@ -81,8 +81,10 @@ check(loginPage.includes("applyReadyUpdate({ document, runningVersion:APP_VERSIO
 check(!pwaRuntime.includes('cacheStorage.keys') &&
       serviceWorker.includes("String(k).startsWith('resq-') && k !== CACHE"),
       'service worker exclusively owns release-cache cleanup');
-check(/caches\.match\(req\s*,\s*\{\s*ignoreSearch\s*:\s*true\s*\}\s*\)/.test(serviceWorker),
-      'service worker offline fallback ignores asset version query strings');
+const offlineFallbackBody = serviceWorker.match(/function offlineFallback\(req\)\s*\{([\s\S]*?)\n\}\s*\n/ )?.[1] || '';
+check(/return caches\.open\(CACHE\)\.then\(function\s*\(cache\)\s*\{\s*return cache\.match\(req\s*,\s*\{\s*ignoreSearch\s*:\s*true\s*\}\s*\)/.test(offlineFallbackBody) &&
+      !/\bcaches\s*\.\s*match\s*\(/.test(offlineFallbackBody),
+      'service worker offline fallback ignores asset version query strings only in the current release cache');
 for (const asset of ['./bulletin.js', './bulletin.css']) {
   check(serviceWorker.includes(asset), 'service worker shell includes ' + asset);
 }

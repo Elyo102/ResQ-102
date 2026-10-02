@@ -34,6 +34,8 @@ if (!sandboxFlag) {
     'functions/schedule-calendar-engine.test.js',
     'functions/schedule-publication.test.js',
     'functions/schedule-service.integration.test.js',
+    'functions/schedule-runtime.js',
+    'tests/fixtures/schedule-service-legacy-70a1522.cjs',
     'tests/schedule-calendar-source.mjs',
     'tests/schedule-calendar-mutations.mjs'
   ];
@@ -44,6 +46,7 @@ if (!sandboxFlag) {
   try {
     mkdirSync(join(tempRoot, 'functions'), { recursive:true });
     mkdirSync(join(tempRoot, 'tests'), { recursive:true });
+    mkdirSync(join(tempRoot, 'tests', 'fixtures'), { recursive:true });
     for (const name of copied) copyFileSync(join(activeRoot, name), join(tempRoot, name));
     writeFileSync(join(tempRoot, '.resq-mutation-sandbox'), marker, { encoding:'utf8', flag:'wx' });
     const child = spawnSync(process.execPath, [join(tempRoot, 'tests', 'schedule-calendar-mutations.mjs')], {
@@ -247,18 +250,23 @@ const MUTATIONS = [
   ['הדגשת המשתמש שמבוטלת', 'service',
     "          is_me: s.person === viewer", "          is_me: false", ['service']],
   ['יום שלפני ואחרי שנעלמים', 'service',
-    "      previous_day: Object.freeze(dayBlock(plan, shiftDate(inp.date, -1), actor.id, events, inp.roster)),",
-    "      previous_day: Object.freeze(dayBlock(plan, inp.date, actor.id, events, inp.roster)),", ['service']]
+    "      previous_day: Object.freeze(dayBlock(shiftDate(date, -1), actor.id, prepared)),",
+    "      previous_day: Object.freeze(dayBlock(date, actor.id, prepared)),", ['service']]
 ];
 
-function runSuite(key) {
+function runSuite(key, baseline = false) {
   const [cmd, args] = SUITES[key];
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
+  if (baseline && r.status !== 0) {
+    if (r.stdout) console.error(r.stdout);
+    if (r.stderr) console.error(r.stderr);
+    if (r.error) console.error(r.error.message);
+  }
   return r.status === 0;
 }
 
 for (const suite of ['engine', 'publication', 'service', 'source']) {
-  if (!runSuite(suite)) {
+  if (!runSuite(suite, true)) {
     console.error('✗ isolated baseline suite failed before mutations: ' + suite);
     process.exit(1);
   }

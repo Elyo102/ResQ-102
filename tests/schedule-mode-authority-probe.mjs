@@ -365,10 +365,19 @@ function createFakeDb() {
           }
           return ref.get();
         },
-        set(ref, value, options) { wrote = true; staged.push([ref, value, options]); }
+        set(ref, value, options) { wrote = true; staged.push(['set', ref, value, options]); },
+        create(ref, value) { wrote = true; staged.push(['create', ref, value]); }
       };
       const out = await fn(tx);
-      for (const [ref, value, options] of staged) await ref.set(value, options);
+      const committed = new Map(docs);
+      for (const [type, ref, value, options] of staged) {
+        if (type === 'create' && committed.has(ref.path)) {
+          const error = new Error('ALREADY_EXISTS'); error.code = 6; throw error;
+        }
+        const next = JSON.parse(JSON.stringify(value));
+        committed.set(ref.path, options?.merge ? { ...committed.get(ref.path), ...next } : next);
+      }
+      docs.clear(); for (const [path, value] of committed) docs.set(path, value);
       return out;
     },
     _put(path, value) { docs.set(path, JSON.parse(JSON.stringify(value))); },
@@ -531,6 +540,8 @@ await (async () => {
   eq('8.21 חזרה מסומנת ככפולה', again.duplicate, true);
   eq('8.22 ולא נוצר יומן שני',
     db._paths('stations/' + SID + '/schedule_mode_audit/').length, 1);
+  eq('8.22a replay preserves original audit content',
+    db._get(db._paths('stations/' + SID + '/schedule_mode_audit/')[0]), audit);
 
   // אותו מזהה בקשה לפעולה אחרת
   db._put('stations/' + SID + '/schedule_state/runtime', { mode: 'new' });
@@ -725,6 +736,26 @@ survives('9.8 ההרשאה נבדקת אחרי המוכנות',
 /* ==================================================================
  * סיכום
  * ================================================================== */
+
+await (async () => {
+  const db = createFakeDb();
+  const audit = db.collection('fixture_audits').doc('existing');
+  const business = db.collection('fixture_business').doc('state');
+  db._put(audit.path, { historical: true }); db._put(business.path, { active: 'old' });
+  await rejectsCode('atomic audit create collision', () => db.runTransaction(async tx => {
+    await tx.get(audit); tx.set(business, { active: 'new' }); tx.create(audit, { overwritten: true });
+  }), 6);
+  eq('collision preserves business state', db._get(business.path), { active: 'old' });
+  eq('collision preserves historical audit', db._get(audit.path), { historical: true });
+  const fresh = db.collection('fixture_audits').doc('fresh');
+  await rejectsCode('duplicate pending create is atomic', () => db.runTransaction(async tx => {
+    tx.create(fresh, { first: true }); tx.create(fresh, { second: true });
+  }), 6);
+  eq('duplicate pending create publishes nothing', db._get(fresh.path), null);
+  await rejectsCode('create retains read-before-write enforcement', () => db.runTransaction(async tx => {
+    tx.create(fresh, {}); await tx.get(audit);
+  }), 'transaction-read-after-write');
+})();
 
 if (fails.length) {
   console.error('schedule-mode-authority-probe · נכשל');

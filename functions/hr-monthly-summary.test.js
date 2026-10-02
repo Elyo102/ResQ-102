@@ -311,9 +311,42 @@ async function main() {
   await test('a generation that exists but is not complete is never published', async () => {
     const w = world(); employee(w, 'u1', { hours: 180 });
     const begun = await w.summary.beginGeneration({ station_id: SID, month: MONTH, intent_id: 'partial' });
-    await rejects(w.summary.activate({ station_id: SID, month: MONTH, generation_id: begun.generation_id }, {}),
+    const base = 'stations/' + SID + '/hr_monthly_summaries/' + MONTH;
+    const generationPath = base + '/hr_monthly_generations/' + begun.generation_id;
+    const sourceDigest = 'a'.repeat(64);
+    // Satisfy the independent digest precondition so only incompleteness blocks
+    // activation. Otherwise removing the state guard still rejects for no digest.
+    w.db._put(generationPath, { ...w.db._get(generationPath), source_digest: sourceDigest });
+    const before = w.db._get(generationPath);
+    assert.equal(before.state, 'building');
+    await rejects(w.summary.activate({ station_id: SID, month: MONTH, generation_id: begun.generation_id },
+      { source_digest: sourceDigest }),
       'failed-precondition');
+    assert.deepEqual(w.db._get(generationPath), before);
+    assert.equal(w.db._store.has(base), false);
     assert.equal((await w.summary.read({ station_id: SID, month: MONTH })).state, 'not_built');
+  });
+
+  await test('complete generation still requires a present matching source digest before activation', async () => {
+    const w = world();
+    const begun = await w.summary.beginGeneration({ station_id: SID, month: MONTH, intent_id: 'digest-guard' });
+    const base = 'stations/' + SID + '/hr_monthly_summaries/' + MONTH;
+    const generationPath = base + '/hr_monthly_generations/' + begun.generation_id;
+    const sourceDigest = 'b'.repeat(64);
+    w.db._put(generationPath, { ...w.db._get(generationPath), state: 'complete', source_digest: sourceDigest });
+    const before = w.db._get(generationPath);
+    const input = { station_id: SID, month: MONTH, generation_id: begun.generation_id };
+    for (const summary of [undefined, {}, { source_digest: 123 }, { source_digest: 'c'.repeat(64) }]) {
+      await rejects(w.summary.activate(input, summary), 'failed-precondition');
+      assert.deepEqual(w.db._get(generationPath), before);
+      assert.equal(w.db._store.has(base), false);
+    }
+    // Positive control: this fixture is publishable when both independent
+    // preconditions hold; the negative cases did not merely fail elsewhere.
+    const activated = await w.summary.activate(input, { source_digest: sourceDigest });
+    assert.equal(activated.activated, true);
+    assert.equal(w.db._get(generationPath).state, 'ready');
+    assert.equal(w.db._get(base).active_generation, begun.generation_id);
   });
 
   /* ⭐ והצד השני של אותה עובדה: תקציב שנגמר משאיר דור פתוח, ולא

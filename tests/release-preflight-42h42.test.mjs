@@ -262,11 +262,33 @@ for (const input of [
   "setGlobalOptions({ region:'europe-west1', maxInstances:100 });",
   "setGlobalOptions({ region:process.env.REGION, maxInstances:10 });"
 ]) assert.equal(globalOptionsSafe(input), false);
+// Reviewed unified-source deltas, not permission for the historical deployment
+// assessor to accept changed options. All other target options stay exact.
+const approvedUnifiedOptionDeltas = Object.freeze({
+  approveRegistration: Object.freeze({
+    before: '{ timeoutSeconds: 120 }',
+    after: '{ enforceAppCheck: true, timeoutSeconds: 120 }'
+  }),
+  resumeIdentityOperation: Object.freeze({
+    before: '{ timeoutSeconds: 120 }',
+    after: '{ enforceAppCheck: true, timeoutSeconds: 120 }'
+  }),
+  recordMetrics: Object.freeze({
+    before: '{ enforceAppCheck: true }',
+    after: '{ enforceAppCheck: true, secrets: [RESQ_METRICS_HASH_KEY] }'
+  })
+});
 for (const id of targets) {
   assert.equal(currentMeta[id]?.kind, id === 'systemHeartbeat' ? 'onSchedule' : 'onCall',
     `${id} trigger kind changed`);
   assert(!/region\s*:\s*['"](?!europe-west1)/.test(currentMeta[id].options), `${id} moved region`);
-  if (oldMeta[id]) assert.equal(currentMeta[id].options, oldMeta[id].options, `${id} changed options`);
+  if (Object.hasOwn(approvedUnifiedOptionDeltas, id)) {
+    const delta = approvedUnifiedOptionDeltas[id];
+    assert.equal(oldMeta[id]?.options, delta.before, `${id} historical options changed`);
+    assert.equal(currentMeta[id].options, delta.after, `${id} differs from reviewed unified options`);
+  } else if (oldMeta[id]) {
+    assert.equal(currentMeta[id].options, oldMeta[id].options, `${id} changed options`);
+  }
   passed++;
 }
 const fieldQueries = [];

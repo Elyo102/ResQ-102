@@ -213,6 +213,8 @@ const CALLABLES = Object.freeze([
   { name: 'getScheduleDisplayStatus', method: 'getScheduleDisplayStatus', gate: GATE.MANAGER },
   { name: 'setScheduleDisplay', method: 'setScheduleDisplay', gate: GATE.MANAGER },
   { name: 'previewScheduleEdit', method: 'previewScheduleEdit', gate: GATE.MANAGER },
+  { name: 'previewScheduleReplication', method: 'previewScheduleReplication', gate: GATE.MANAGER,
+    delegatesTo: 'previewScheduleEdit' },
   { name: 'applyScheduleEdit', method: 'applyScheduleEdit', gate: GATE.MANAGER },
   { name: 'getQualificationCatalog', method: 'getQualificationCatalog', gate: GATE.MANAGER },
   { name: 'saveQualification', method: 'saveQualification', gate: GATE.MANAGER },
@@ -280,6 +282,16 @@ function controlMethodBody(name, src) {
   return text.slice(start, end === -1 ? text.length : end);
 }
 
+// One explicit alias, not a general exemption for indirect manager methods.
+function replicationManagerGate(src = RUNTIME) {
+  const wrapper = stripComments(methodBody('previewScheduleReplication', src) || '').trim();
+  const target = stripComments(methodBody('previewScheduleEdit', src) || '');
+  return /return previewScheduleEdit\(req\);\s*\}$/.test(wrapper)
+    && D.noClientStation(wrapper) && D.noClientStation(target)
+    && /requireManager\(ctx\);/.test(target)
+    && /await requireLiveManagerNow\(ctx\);/.test(target);
+}
+
 // כיסוי הרשימה מול המקור — כפונקציה, כדי שסעיף 8 יוכל להוכיח
 // שהיא באמת תופסת callable שנשמט.
 function coverageMissing(index, names) {
@@ -320,7 +332,8 @@ CALLABLES.forEach((item) => {
 CALLABLES.filter((item) => item.gate === GATE.MANAGER && item.method).forEach((item) => {
   const body = methodBody(item.method);
   ok('3.M ' + item.method + ' דורש מינוי חי',
-    !!body && D.mgrGate(body), 'אין requireManager בגוף הפונקציה');
+    !!body && (item.delegatesTo === 'previewScheduleEdit' ? replicationManagerGate() : D.mgrGate(body)),
+    'אין שער מנהל ישיר או האצלה מפורשת ומוגנת');
   // התחנה לעולם אינה מגיעה מהלקוח.
   ok('3.S ' + item.method + ' אינו מקבל תחנה מהלקוח',
     !!body && D.noClientStation(body));
@@ -561,9 +574,20 @@ mutate('8.8 publishSchedule בלי App Check',
   (src) => D.appCheck(src, 'publishSchedule'));
 
 // --- כיסוי הרשימה ---
-ok('8.9 רשימת ה-callables תופסת פעולה שנשמטה ממנה',
-  coverageMissing(INDEX, NAMES.filter((n) => n !== 'publishSchedule')).length === 1,
-  'הסרת publishSchedule מהרשימה לא נתפסה');
+eq('8.9 רשימת ה-callables תופסת פעולה שנשמטה ממנה',
+  coverageMissing(INDEX, NAMES.filter((n) => n !== 'publishSchedule')), ['publishSchedule']);
+eq('8.9r replication cannot disappear from the inventory',
+  coverageMissing(INDEX, NAMES.filter((n) => n !== 'previewScheduleReplication')), ['previewScheduleReplication']);
+mutateIn('replication missing delegation', 'previewScheduleReplication',
+  'return previewScheduleEdit(req);', 'return {};', replicationManagerGate);
+mutateIn('replication changed delegation', 'previewScheduleReplication',
+  'return previewScheduleEdit(req);', 'return getStatus(req);', replicationManagerGate);
+mutateIn('replication changes delegated request', 'previewScheduleReplication',
+  'return previewScheduleEdit(req);', 'return previewScheduleEdit({});', replicationManagerGate);
+mutateIn('replication target loses initial manager gate', 'previewScheduleEdit',
+  'requireManager(ctx);', '', replicationManagerGate);
+mutateIn('replication target loses final live gate', 'previewScheduleEdit',
+  'await requireLiveManagerNow(ctx);', '', replicationManagerGate);
 
 // --- המסך אינו מתיימר ---
 mutate('8.10 היכולת נגזרת ממשהו שאינו תשובת השרת',

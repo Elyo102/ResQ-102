@@ -356,16 +356,24 @@ check('history opt-in retains retired operational and logistics vehicles without
   const handlers = {}, saved = new Map(), deleted = [];
   const origin = 'https://offline-fleet.example.invalid';
   const key = value => new URL(typeof value === 'string' ? value : value.url, origin + '/').pathname;
-  const context = vm.createContext({ URL, Response, console,
+  const context = vm.createContext({ URL, Response, console, AbortController, setTimeout, clearTimeout,
     fetch:async () => { throw new Error('offline'); },
     caches:{
       open:async () => ({
+        addAll:async values => {
+          const staged = values.map(value => [key(value), new Response(fs.readFileSync(path.join(root, key(value).slice(1))))]);
+          for (const [name, response] of staged) saved.set(name, response);
+        },
         add:async value => saved.set(key(value), new Response(fs.readFileSync(path.join(root, key(value).slice(1))))),
+        match:async (request, options) => {
+          assert.equal(options?.ignoreSearch, true);
+          return saved.get(key(request))?.clone();
+        },
         put:async (request, response) => saved.set(key(request), response.clone())
       }),
       keys:async () => ['resq-vold-release1'],
       delete:async name => { deleted.push(name); return true; },
-      match:async request => saved.get(key(request))?.clone()
+      match:async () => { throw new Error('global cache lookup forbidden'); }
     },
     self:{ location:{origin}, addEventListener:(event, fn) => { handlers[event] = fn; },
       skipWaiting:async()=>{}, clients:{claim:async()=>{}}, registration:{} },
@@ -380,9 +388,11 @@ check('history opt-in retains retired operational and logistics vehicles without
   assert.deepEqual(deleted, ['resq-vold-release1']);
   for (const file of ['board.html', 'faults.html', 'fleet.js?v=42h47']) {
     let pending;
+    const background = [];
     handlers.fetch({ request:{ method:'GET',url:origin+'/'+file,mode:file.endsWith('.html')?'navigate':'cors' },
-      respondWith:p => { pending = p; } });
+      respondWith:p => { pending = p; }, waitUntil:p => background.push(p) });
     const response = await pending;
+    await Promise.all(background);
     assert.equal(response.status, 200, file + ' available before first online visit');
     assert.equal((await response.text()).replace(/\r\n/g,'\n'), read(file.split('?')[0]));
   }

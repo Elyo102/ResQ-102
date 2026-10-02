@@ -44,7 +44,23 @@ try{
      assert(await scroll.evaluate(e=>document.activeElement===e));
      const geometry=await scroll.evaluate(e=>{e.scrollLeft=0;const r=e.getBoundingClientRect();return {sw:e.scrollWidth,cw:e.clientWidth,x:r.x,right:r.right};});
      assert(geometry.x>=0&&geometry.right<=width+1);assert(geometry.sw>geometry.cw);
-     await page.keyboard.press('ArrowLeft');await page.waitForTimeout(160);
+     // Fresh setContent/focus may precede Chromium's input-ready paint. The
+     // first trusted key must be tested after rendering, not replayed on failure.
+     await scroll.evaluate(async e=>{
+      await document.fonts.ready;
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      if(document.activeElement!==e || e.scrollLeft!==0 || e.scrollWidth<=e.clientWidth)throw new Error('keyboard precondition changed');
+     });
+     await page.keyboard.press('ArrowLeft');
+     try {
+      await page.waitForFunction(()=>{
+       const region=document.querySelector('.report-table-scroll');
+       return region && document.activeElement===region && region.scrollLeft<0;
+      },null,{timeout:3000});
+     } catch (error) {
+      const state=await scroll.evaluate(e=>({focused:document.activeElement===e,visibility:document.visibilityState,scrollLeft:e.scrollLeft,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth}));
+      throw new Error('RTL keyboard scroll timed out: '+JSON.stringify(state),{cause:error});
+     }
      assert(await scroll.evaluate(e=>e.scrollLeft)<0,'RTL keyboard scroll must move');
      await scroll.evaluate(e=>{e.scrollLeft=-e.scrollWidth;});
      assert(await page.locator('td.hrs,th:last-child').first().evaluate(e=>{const r=e.getBoundingClientRect(),s=e.closest('.report-table-scroll').getBoundingClientRect();return r.left>=s.left-1&&r.right<=s.right+1;}),'last column reachable');

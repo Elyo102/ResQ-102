@@ -134,10 +134,20 @@ function createFakeDb() {
           }
           return ref.get();
         },
-        set(ref, value, options) { wroteAlready = true; staged.push([ref, value, options]); }
+        set(ref, value, options) { wroteAlready = true; staged.push(['set', ref, value, options]); },
+        create(ref, value) { wroteAlready = true; staged.push(['create', ref, value]); }
       };
       const result = await fn(tx);
-      for (const [ref, value, options] of staged) await ref.set(value, options);
+      const committed = new Map(docs);
+      for (const [type, ref, value, options] of staged) {
+        if (type === 'create' && committed.has(ref.path)) {
+          const error = new Error('ALREADY_EXISTS'); error.code = 6; throw error;
+        }
+        const next = JSON.parse(JSON.stringify(value));
+        committed.set(ref.path, options?.merge ? { ...committed.get(ref.path), ...next } : next);
+      }
+      docs.clear(); for (const [path, value] of committed) docs.set(path, value);
+      writes += staged.length;
       return result;
     },
     _docs: docs,
@@ -382,10 +392,12 @@ await (async () => {
   const rt = buildRuntime(db);
   const a = await rt.savePolicy(request({ request_id: 'rid_1', draft: draft(), activate: true }));
   const before = db._paths(POLICIES).length;
+  const writesBeforeReplay = db._writes();
   const b = await rt.savePolicy(request({ request_id: 'rid_1', draft: draft(), activate: true }));
   eq('5.1 חזרה על אותה בקשה מסומנת ככפולה', b.duplicate, true);
   eq('5.2 אותה תוצאה', b.policy_id, a.policy_id);
   eq('5.3 ולא נוצר מסמך שני', db._paths(POLICIES).length, before);
+  eq('5.3a completed replay creates no second audit or business write', db._writes(), writesBeforeReplay);
 
   // אותו מזהה בקשה עם תוכן אחר — ניסיון להחליף פעולה שכבר בוצעה.
   await throwsCode('5.4 מזהה בקשה שמשמש לתוכן אחר נדחה', () => rt.savePolicy(request({
@@ -598,6 +610,29 @@ await (async () => {
 /* ==================================================================
  * סיכום
  * ================================================================== */
+
+await (async () => {
+  const db = createFakeDb();
+  const audit = db.collection('fixture_audits').doc('existing');
+  const business = db.collection('fixture_business').doc('state');
+  db._put(audit.path, { historical: true }); db._put(business.path, { active: 'old' });
+  const before = [...db._docs], writesBefore = db._writes();
+  await throwsCode('atomic audit create collision', () => db.runTransaction(async tx => {
+    await tx.get(audit);
+    tx.set(business, { active: 'new' });
+    tx.create(audit, { overwritten: true });
+  }), 6);
+  eq('collision preserves every document', [...db._docs], before);
+  eq('collision records no committed writes', db._writes(), writesBefore);
+  const fresh = db.collection('fixture_audits').doc('fresh');
+  await throwsCode('duplicate pending create also collides atomically', () => db.runTransaction(async tx => {
+    tx.create(fresh, { first: true }); tx.create(fresh, { second: true });
+  }), 6);
+  eq('duplicate pending create publishes nothing', [...db._docs], before);
+  await throwsCode('create retains read-before-write enforcement', () => db.runTransaction(async tx => {
+    tx.create(fresh, {}); await tx.get(audit);
+  }), 'transaction-read-after-write');
+})();
 
 if (fails.length) {
   console.error('schedule-policy-write-probe · נכשל');
