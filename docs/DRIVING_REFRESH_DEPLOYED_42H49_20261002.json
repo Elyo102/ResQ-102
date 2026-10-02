@@ -1,0 +1,234 @@
+{
+  "release": "42H.49",
+  "project": "station-102",
+  "candidate": "70e54f4fa4245df4271652dcd4be3b41166b1751",
+  "tree": "69f2766a596710bb7d5e322d5b94eb20433ba038",
+  "gitHubBranch": "codex/unified-enterprise-20261001",
+  "gitHubPushed": true,
+  "services": [
+    "firestore:rules",
+    "firestore:indexes",
+    "functions:getDrivingRefreshContext",
+    "functions:saveDrivingRefreshReport",
+    "functions:listDrivingRefreshReports",
+    "functions:getDrivingRefreshSummary",
+    "hosting"
+  ],
+  "deploymentExitCode": 0,
+  "startedAt": "2026-10-02T20:13:15.542Z",
+  "completedAt": "2026-10-02T20:14:57.880Z",
+  "hostingVersion": "sites/station-102/versions/ba9e7905448c8bcd",
+  "ruleset": "projects/station-102/rulesets/46910423-4604-4c68-98f1-531046af42aa",
+  "rulesVerified": true,
+  "assets": [
+    {
+      "file": "driving-refresh.html",
+      "sha256": "aec7cbc9de624ced40b9f0039e95510ef74c4aa6cb9a3c6239a9552de6f76e6d",
+      "httpStatus": 200
+    },
+    {
+      "file": "driving-refresh.js",
+      "sha256": "8a5c842c0c8be692517c33fdbbc4b172ce75b0ffd06f3aede0cf6e2e508fa2d9",
+      "httpStatus": 200
+    },
+    {
+      "file": "driving-refresh.css",
+      "sha256": "d1f590816dfeae140d6294c591df0264ada90d4a565be00889fd6d92eee5eddc",
+      "httpStatus": 200
+    },
+    {
+      "file": "nav.js",
+      "sha256": "4f7bae5be77300447e979c3099d02cd05c674af22879e33d2515686e7128e9b6",
+      "httpStatus": 200
+    },
+    {
+      "file": "firebase-messaging-sw.js",
+      "sha256": "02f3ba8243bdcab40ae86b6ccb55b3800f6d2935cc9e666b47d1ac63d399f85f",
+      "httpStatus": 200
+    }
+  ],
+  "functions": [
+    {
+      "name": "getDrivingRefreshContext",
+      "state": "ACTIVE",
+      "environment": "GEN_2",
+      "revision": "getdrivingrefreshcontext-00001-roq",
+      "source": {
+        "bucket": "gcf-v2-sources-52676411962-europe-west1",
+        "object": "getDrivingRefreshContext/function-source.zip",
+        "generation": "1790972037501020"
+      },
+      "sourceArchiveSha256": "af18e1b416f36d46f3f75b28ce12925b8fab6e59a5d9688fc8959459436f4af4"
+    },
+    {
+      "name": "saveDrivingRefreshReport",
+      "state": "ACTIVE",
+      "environment": "GEN_2",
+      "revision": "savedrivingrefreshreport-00001-yar",
+      "source": {
+        "bucket": "gcf-v2-sources-52676411962-europe-west1",
+        "object": "saveDrivingRefreshReport/function-source.zip",
+        "generation": "1790972076143517"
+      },
+      "sourceArchiveSha256": "af18e1b416f36d46f3f75b28ce12925b8fab6e59a5d9688fc8959459436f4af4"
+    },
+    {
+      "name": "listDrivingRefreshReports",
+      "state": "ACTIVE",
+      "environment": "GEN_2",
+      "revision": "listdrivingrefreshreports-00001-hux",
+      "source": {
+        "bucket": "gcf-v2-sources-52676411962-europe-west1",
+        "object": "listDrivingRefreshReports/function-source.zip",
+        "generation": "1790972076213213"
+      },
+      "sourceArchiveSha256": "af18e1b416f36d46f3f75b28ce12925b8fab6e59a5d9688fc8959459436f4af4"
+    },
+    {
+      "name": "getDrivingRefreshSummary",
+      "state": "ACTIVE",
+      "environment": "GEN_2",
+      "revision": "getdrivingrefreshsummary-00001-jog",
+      "source": {
+        "bucket": "gcf-v2-sources-52676411962-europe-west1",
+        "object": "getDrivingRefreshSummary/function-source.zip",
+        "generation": "1790972076184518"
+      },
+      "sourceArchiveSha256": "af18e1b416f36d46f3f75b28ce12925b8fab6e59a5d9688fc8959459436f4af4"
+    }
+  ],
+  "unauthenticatedChecks": [
+    {
+      "name": "getDrivingRefreshContext",
+      "httpStatus": 401,
+      "authTokenProvided": false,
+      "appCheckTokenProvided": false
+    },
+    {
+      "name": "saveDrivingRefreshReport",
+      "httpStatus": 401,
+      "authTokenProvided": false,
+      "appCheckTokenProvided": false
+    },
+    {
+      "name": "listDrivingRefreshReports",
+      "httpStatus": 401,
+      "authTokenProvided": false,
+      "appCheckTokenProvided": false
+    },
+    {
+      "name": "getDrivingRefreshSummary",
+      "httpStatus": 401,
+      "authTokenProvided": false,
+      "appCheckTokenProvided": false
+    }
+  ],
+  "indexesReady": true,
+  "indexes": [
+    {
+      "name": "projects/station-102/databases/(default)/collectionGroups/driving_refresh_reports/indexes/CICAgPjCvYQK",
+      "fields": [
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "local_date",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY"
+    },
+    {
+      "name": "projects/station-102/databases/(default)/collectionGroups/driving_refresh_reports/indexes/CICAgNjrvIMK",
+      "fields": [
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY"
+    },
+    {
+      "name": "projects/station-102/databases/(default)/collectionGroups/driving_refresh_reports/indexes/CICAgNi6wYoK",
+      "fields": [
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "crew",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY"
+    },
+    {
+      "name": "projects/station-102/databases/(default)/collectionGroups/driving_refresh_reports/indexes/CICAgNi6lZsK",
+      "fields": [
+        {
+          "fieldPath": "crew",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "local_date",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY"
+    }
+  ],
+  "indexesVerifiedAt": "2026-10-02T20:19:47.332Z",
+  "gate": {
+    "status": "ALL_ORIGINAL_GRAPH_LEAVES_ACCOUNTED_FOR_GREEN",
+    "method": "unchanged-code cached prefixes plus executed remainder",
+    "base": "7449fa6090e2c9a0f013b907156036218d15f772",
+    "baseTree": "019947f6284db118165aaf3db9923d2bec4797ec",
+    "cachedPrefixSteps": 136,
+    "cachedBrowserLeaves": 38,
+    "executedRemainderSteps": 32,
+    "nativeSuitesCached": 3,
+    "oldLogSha256": "4409191147f12de7d1506c716b04ada38e82fbc4c502c46f1a94e76b9389d62b",
+    "secondLogSha256": "a929c70d3bd604c789ee2d46de71e939bddba627b718b2a380d5beda91e1cd25",
+    "completedAt": "2026-10-02T20:11:11.416Z",
+    "localValidationOnly": true
+  },
+  "featureEvidence": {
+    "unit": 29,
+    "wiring": 21,
+    "browserAssertions": 45,
+    "nativeEmulatorAssertions": 21
+  },
+  "backup": {
+    "encryptedReadbackVerified": true,
+    "previousHostingVersion": "sites/station-102/versions/0c27a759899f20aa"
+  },
+  "productionReadOnlyVerification": true,
+  "employeeDocumentsRead": 0,
+  "employeeDocumentsWritten": 0,
+  "notRun": [
+    "physical iPhone/Android validation",
+    "authenticated employee report creation/edit in production",
+    "project-loss disaster recovery drill"
+  ],
+  "formal57Readiness": "NOT_CLAIMED",
+  "enterprise100Score": "NOT_CLAIMED",
+  "compatibilityNote": "Existing operational telemetry collector remains unchanged; new callable labels are safely normalized to unknown by the legacy finite vocabulary.",
+  "liveUrl": "https://station-102.web.app/driving-refresh.html"
+}
