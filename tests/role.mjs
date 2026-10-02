@@ -118,7 +118,7 @@ const EXPECT = {
 
 // The personal HR inbox is available to station members, not pending users.
 for (const role of ['super', 'firefighter', 'commander', 'hr', 'deputy', 'stcmd']) {
-  EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('נוכחות') + 1, 0, 'פנייה למשאבי אנוש', 'נהלים ומסמכים');
+  EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('נוכחות') + 1, 0, 'רענון נהיגה', 'פנייה למשאבי אנוש', 'נהלים ומסמכים');
   // Owner-approved navigation: the old team-up shortcut is removed; the
   // operational vehicle page is available to every active station member.
   EXPECT[role].nav.splice(EXPECT[role].nav.indexOf('ציוות'), 1);
