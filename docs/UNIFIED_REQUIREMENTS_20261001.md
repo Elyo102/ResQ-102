@@ -213,7 +213,7 @@ mandatory architecture changes. All integrated items need a final target manifes
 
 | ID | Requirement/source | Verified state | Next action/evidence needed |
 |---|---|---|---|
-| E00 | Safe tracked inputs / sanitized generators (roadmap phase0.1) | DEV `6d826bb` reproducibility files PRESENT; absent from product | Integrate reviewed public inputs only, no vault/provisioning/log directories |
+| E00 | Safe tracked inputs / sanitized generators (roadmap phase0.1) | PARTIAL product-only contract:13/13 unit checks and50-file working/index verification PASS; donor contract retained separately | Not complete transitive coverage or E01 clean install; no vault/provisioning/log inputs |
 | E01 | Actual clean-checkout reproduction | OPEN; `reproducibility.mjs` checks index, not clean install/run | Fresh exact committed checkout, three lockfiles, pinned tools, declared inventory and real gate proof |
 | E02 | One explicit test denominator and exclusions | PARTIAL; focused `test:all` and full `all` are distinct | Reconcile final registries without dropping existing product tests |
 | E03 | Current status and frozen integrated SHA | OPEN; status is historical, dev dirty | Preserve history; produce fresh integrated manifest/status, then freeze once |
@@ -223,7 +223,7 @@ mandatory architecture changes. All integrated items need a final target manifes
 | E07 | Durable operation/payload/attempt identities and duplicate visibility | WRITTEN / LOCAL_TESTED current working tree: native14+4 PASS, two reviews; source131 PASS | Same-lease attempt fencing, canonical payload retry conflicts and unknown/expired outcomes covered. Trial Auth/early cancellation combinations remain coverage gaps; no exactly-once/device claim |
 | E08 | Provider acceptance versus durable acknowledgement | LOCAL_TESTED3a4575b preserved; affected native8 PASS on integrated E07 runtime | Provider acceptance without own durable ACK remains explicitly unacknowledged; final frozen release and real provider behavior separate |
 | E09 | Planner deterministic parity/resource budget (phase1.5) | PARTIAL bea3992; local oracle/parity/adversarial measurement PASS | Production budgets/peak heap remain OPEN; no planner change or capacity reduction |
-| E10 | Realtime decoders/invalid-row isolation (phase2.1) | PARTIAL619e333; home-fault malformed-row isolation,7 browser checks PASS | Callout/bulletin and complete bounded/versioned decoder contract remain OPEN |
+| E10 | Realtime decoders/invalid-row isolation (phase2.1) | PARTIAL619e333 + bulletin timestamp repair: overflow/coercion reproduced14/27 before,27/27 boundary and46 compatibility PASS after; contained message/reply browser recovery PASS; two PRE/POST approvals | Bulletin display fields/callback isolation and malformed callout text/sender/created_key remain OPEN; no full decoder or production proof claimed |
 | E11 | Server-authoritative operational timestamps (phase2.2) | OPEN compatibility item; legacy client times remain | Preserve legacy schema while proving server ordering, retry and seen/answer races |
 | E12 | Listener/read budgets (phase2.3) | OPEN; existing cleanup, commander response fan-out remains | Measure synthetic active/history/reconnect reads; retain operational live updates, then reduce with parity |
 | E13 | Growing fault/vehicle history pagination (phase2.4) | OPEN for main collections; photo subcollections already lazy/paged | Separate complete active data from historical cursors; legacy and export continuity; no blind limit20 |

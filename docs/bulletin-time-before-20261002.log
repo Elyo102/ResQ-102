@@ -1,0 +1,28 @@
+FAIL numeric overflow: ERR_ASSERTION
+FAIL negative overflow: ERR_ASSERTION
+FAIL above endpoint: ERR_ASSERTION
+FAIL below endpoint: ERR_ASSERTION
+PASS positive endpoint
+PASS negative endpoint
+FAIL seconds overflow: ERR_ASSERTION
+FAIL seconds coercion: TypeError
+FAIL nanoseconds coercion: TypeError
+FAIL throwing millis: Error
+FAIL throwing date: Error
+FAIL throwing getter: Error
+FAIL malformed string: TypeError
+PASS NaN
+PASS Infinity
+PASS invalid date
+FAIL millis method overflow: ERR_ASSERTION
+PASS valid timestamp
+PASS valid toDate
+PASS valid seconds
+PASS valid Date
+PASS valid number
+PASS valid ISO
+PASS fractional millis
+PASS missing
+PASS epoch
+FAIL valid created_key fallback
+Bulletin time boundaries: 14/27 PASS

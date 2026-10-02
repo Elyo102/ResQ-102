@@ -1,5 +1,13 @@
 # Unified execution checkpoint
 
+## Follow-up local validation — 2026-10-02
+
+Integrated milestone634bd04 is committed and pushed on codex/unified-enterprise-20261001. The earlier integration paragraphs below are historical. Formal frozen release gate remains0/57; no product deployment occurred.
+
+E10 timestamp overflow in bulletin messages/replies was reproduced (13 failures among27 boundary cases), then fixed at the timestamp decoder. Targeted results:27/27 boundary tests,46/46 compatibility assertions, and one contained Chromium scenario covering malformed message/reply timestamps, valid siblings, fallback dates, loading completion, preserved unsent draft and subsequent valid snapshots. Logs:bulletin-time-before-20261002.log,bulletin-time-after-20261002.log,bulletin-compatibility-20261002.log,bulletin-time-browser-20261002.log. This does not close remaining malformed display-field/callout decoder cases or prove physical Safari behavior.
+
+Product-only E00 input validation is a partial independent contract, not the donor control-plane gate or a fresh installation. Its final unit checks passed13/13 after explicit emulator/rules/index inputs were added. Actual working/index validation passed for50 declared files including10 entrypoints (product-inputs-final-20261002.log and product-inputs-checkout-20261002.log). Two reviews found no blocker within this declared partial scope; raw-byte and base-HEAD identity limitations are documented. E01 remains OPEN. The prior integration-evidence-20261002.json describes milestone634bd04 only, not these follow-up changes.
+
 ## Current integrated evidence — 2026-10-02 (supersedes older status paragraphs)
 
 HEAD at verification: 3a4575b1920c84c9121341525e163d5ebe562138. HR48, replication and E07 integration remain local until the next explicitly enumerated commit. Formal frozen release acceptance is 0/57; no production mutation, secret payload read, paid dispatch or employee operation was performed. Development percentage is not recomputed from test counts.

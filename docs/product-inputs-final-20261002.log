@@ -1,0 +1,88 @@
+TAP version 13
+# Subtest: explicit product inventory succeeds without executing its entrypoints
+ok 1 - explicit product inventory succeeds without executing its entrypoints
+  ---
+  duration_ms: 2.6338
+  type: 'test'
+  ...
+# Subtest: entrypoints omission is refused
+ok 2 - entrypoints omission is refused
+  ---
+  duration_ms: 0.6521
+  type: 'test'
+  ...
+# Subtest: entrypoints extra is refused
+ok 3 - entrypoints extra is refused
+  ---
+  duration_ms: 0.2643
+  type: 'test'
+  ...
+# Subtest: inputs omission is refused
+ok 4 - inputs omission is refused
+  ---
+  duration_ms: 0.1878
+  type: 'test'
+  ...
+# Subtest: inputs extra is refused
+ok 5 - inputs extra is refused
+  ---
+  duration_ms: 0.2005
+  type: 'test'
+  ...
+# Subtest: duplicates are refused
+ok 6 - duplicates are refused
+  ---
+  duration_ms: 0.206
+  type: 'test'
+  ...
+# Subtest: private and cross-scope paths are refused
+ok 7 - private and cross-scope paths are refused
+  ---
+  duration_ms: 0.2458
+  type: 'test'
+  ...
+# Subtest: traversal colon NUL and backslash are refused
+ok 8 - traversal colon NUL and backslash are refused
+  ---
+  duration_ms: 0.1737
+  type: 'test'
+  ...
+# Subtest: untracked conflicted and nonregular index entries are refused
+ok 9 - untracked conflicted and nonregular index entries are refused
+  ---
+  duration_ms: 1.7311
+  type: 'test'
+  ...
+# Subtest: dirty filtered bytes and empty staged bytes fail closed
+ok 10 - dirty filtered bytes and empty staged bytes fail closed
+  ---
+  duration_ms: 0.8785
+  type: 'test'
+  ...
+# Subtest: index parser retains merge stages and rejects malformed records
+ok 11 - index parser retains merge stages and rejects malformed records
+  ---
+  duration_ms: 0.3308
+  type: 'test'
+  ...
+# Subtest: ancestors precede leaf access; links stop traversal
+ok 12 - ancestors precede leaf access; links stop traversal
+  ---
+  duration_ms: 0.5584
+  type: 'test'
+  ...
+# Subtest: wrong ancestor types and missing files are refused; other errors survive
+ok 13 - wrong ancestor types and missing files are refused; other errors survive
+  ---
+  duration_ms: 0.3322
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 123.8199

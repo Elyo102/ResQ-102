@@ -90,28 +90,26 @@ export function readStorageKey(uid, stationId, subStationId) {
 }
 
 export function messageTimeMs(value) {
-  if (!value) return 0;
-  if (typeof value.toMillis === 'function') {
-    const n = Number(value.toMillis());
-    return Number.isFinite(n) ? n : 0;
+  // Finite numbers can still be outside Date's representable range. Keep
+  // malformed stored values/converters from aborting an entire live feed.
+  const valid = n => Number.isFinite(n) && Math.abs(n) <= 8.64e15 ? n : 0;
+  try {
+    if (!value) return 0;
+    if (typeof value.toMillis === 'function') return valid(Number(value.toMillis()));
+    if (typeof value.toDate === 'function') {
+      const d = value.toDate();
+      return valid(d instanceof Date ? d.getTime() : 0);
+    }
+    if (typeof value === 'object' && Number.isFinite(Number(value.seconds))) {
+      return valid(Number(value.seconds) * 1000 +
+        Math.floor(Number(value.nanoseconds || 0) / 1000000));
+    }
+    if (value instanceof Date) return valid(value.getTime());
+    if (typeof value === 'number') return valid(value);
+    return valid(Date.parse(String(value)));
+  } catch (ignore) {
+    return 0;
   }
-  if (typeof value.toDate === 'function') {
-    const d = value.toDate();
-    const n = d instanceof Date ? d.getTime() : 0;
-    return Number.isFinite(n) ? n : 0;
-  }
-  if (typeof value === 'object' && Number.isFinite(Number(value.seconds))) {
-    const ms = Number(value.seconds) * 1000 +
-      Math.floor(Number(value.nanoseconds || 0) / 1000000);
-    return Number.isFinite(ms) ? ms : 0;
-  }
-  if (value instanceof Date) {
-    const n = value.getTime();
-    return Number.isFinite(n) ? n : 0;
-  }
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const parsed = Date.parse(String(value));
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function dataOf(message) {
