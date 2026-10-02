@@ -1,0 +1,78 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-resq", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
++  firestore: Firestore Emulator was started in standard edition.
++  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: node functions/hr-shift-change.integration.test.js && node functions/schedule-replication.integration.test.js && node functions/schedule-replication-boundary.integration.test.js && node functions/outbox-operation.integration.test.js && node functions/outbox-operation-boundary.integration.test.js && node functions/outbox-ack-race.integration.test.js
+PASS firefighter creates a shift change request: fixed subject, pending, no months, station_shift job
+PASS a client-supplied subject is refused: the subject is fixed by the server
+PASS reason is limited to 250 characters and rejects control characters
+PASS date must be today..+92 days by Israel time, sub-station must be active in this station
+PASS target fields are refused on any other request kind
+PASS shift change requests cannot carry attachments
+PASS live schedule manager lists only shift change requests and reads them, never other kinds
+PASS "my requests" tells the screen who handles shift requests — live, and false once revoked
+PASS commander and colleague without appointment cannot list, read or decide
+PASS revoking the appointment blocks the very next call; a foreign-station appointment never counts
+PASS schedule manager decides shift change only; not own request, not a sickness report
+PASS HR coordinator can also decide a shift change request
+PASS counters: the shift box counts pending then approved/closed, without drift
+PASS re-deciding: same decision (even with a note) is no_change; a flip is allowed until the day passes, then final
+PASS a schedule manager may reply on a shift request; the owner is notified
+PASS a new request notifies HR and the live schedule manager only — not the commander, colleague or owner
+PASS a revoked schedule manager is not notified of a new request
+PASS an appointment revoked after the decision but before delivery: the push is cancelled at send time
+PASS a general HR request is never pushed to a schedule manager
+PASS the decision reaches the owner exactly once
+PASS regression: an HR decision on a sickness report now reaches the employee (was cancelled as source-invalid)
+PASS durable create replay survives Israel midnight and rejects changed intent
+PASS new request crossing Israel midnight during final checks creates no record
+HR shift change integration: 23/23 PASS; actual producers/Firestore, synthetic Auth/FCM only.
+PASS replication is authenticated and rejects client date/edits injection
+PASS server preview binds source, month, Israel date and actual change count without writes
+PASS midnight and changed intent invalidate preview without writes
+PASS apply uses normal publication pipeline and creates provenance audit
+PASS completed receipt replays after midnight and pointer advance without another publication
+PASS no-change replication produces a zero-change preview and cannot publish
+PASS revoked live manager cannot replay a successful replication
+Replication runtime integration: 7/7 PASS; emulator only, no real FCM/device claim.
+PASS unpublished complete draft expires before retry; monthly=false
+PASS midnight during staging cannot activate; monthly=false
+PASS unpublished complete draft expires before retry; monthly=true
+PASS midnight during staging cannot activate; monthly=true
+PASS monthly successful receipt survives cutoff change
+Replication boundary: 5/5 PASS; native emulator, fake provider
+PASS schedule same-lease replaced attempt success
+PASS schedule same-lease replaced attempt error
+PASS schedule same-lease replaced attempt suppression
+PASS schedule changed recipient never enters provider
+PASS schedule changed payload never enters provider
+PASS schedule uncertain retry keeps operation and new attempt
+PASS schedule legacy expired lease retains prior unknown acceptance
+PASS guard same-lease replaced attempt success
+PASS guard same-lease replaced attempt error
+PASS guard same-lease replaced attempt suppression
+PASS guard changed recipient never enters provider
+PASS guard changed payload never enters provider
+PASS guard uncertain retry keeps operation and new attempt
+PASS guard legacy expired lease retains prior unknown acceptance
+Outbox operation native emulator: 14/14 PASS; provider synthetic, at-least-once only
+PASS schedule changed payload after uncertain send is rejected without losing history
+PASS schedule tracked expired attempt counts risk once across repeated reconciliation
+PASS guard changed payload after uncertain send is rejected without losing history
+PASS guard tracked expired attempt counts risk once across repeated reconciliation
+Outbox operation boundaries: 4/4 PASS; synthetic provider, at-least-once only
+PASS schedule ACK none
+PASS schedule ACK lease
+PASS schedule ACK cancelled
+PASS schedule ACK deleted
+PASS guard ACK none
+PASS guard ACK lease
+PASS guard ACK cancelled
+PASS guard ACK deleted
++  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator

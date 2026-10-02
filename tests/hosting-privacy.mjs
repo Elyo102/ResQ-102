@@ -149,6 +149,7 @@ const server = http.createServer((req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   for (const name of ['roster-import.js', 'firebase.attendance-test.json', 'firebase.emulator.42h11.json',
+                      'firebase.ack-emulator.json', 'firebase.hr48-emulator.json',
                       'apply-wiring.py', 'docs/FROZEN-TIP', 'docs/HANDOFF-hardening-package.md',
                       'archive/README-firestore_1.md', 'scripts/staging-auth-rest-bypass-probe.mjs']) {
     const response = await fetch('http://127.0.0.1:' + server.address().port + '/' + name);

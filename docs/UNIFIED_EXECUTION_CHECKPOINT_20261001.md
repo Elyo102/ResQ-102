@@ -1,5 +1,42 @@
 # Unified execution checkpoint
 
+## Clean-environment continuation — 2026-10-02
+
+Further differential closure: bulletin rendering now type-checks display metadata
+without altering raw records/message bodies.81 boundary checks,46 compatibility
+checks and a contained malformed-message/reply browser scenario passed; two
+independent POST reviews found no blocker in this narrow change. E10 remains
+partial for callout decoding and broader callback isolation.
+
+Hosting packaging: reproduced two unexcluded emulator sidecars; exact exclusions
+and local HTTP404 regression probes now pass47 privacy checks. No production
+exposure was inferred. Two independent target reviews resolved all8 transitive
+questions against local baseline023ed2: include markStationReady, exclude7 unchanged
+call graphs.79 semantic targets remain provisional until current cloud baseline
+and compatible encrypted rollback are verified. See DEPLOYMENT_TARGET_REVIEW_20261002.md.
+
+External release prerequisites remain unchanged: recoverable encryption material
+for the mandated readback-verified rollback archive; verified HMAC runtime secret
+access/binding (existing enabled version1, no regeneration); real App Check and
+safe Auth/client reauthentication evidence; physical-device checks; measured DR;
+owner/legal retention policy. These cannot be represented by mock passes. No
+secret payload, IAM mutation, employee write or product deployment was performed.
+
+Base e94988085d7413ba50ffdb89c564936489991194 was cloned into a separate detached
+checkout. All three lockfiles installed with explicit Node22; all10 declared
+entrypoints passed there (138 local assertions/scenarios), with no tracked drift.
+See E01_CLEAN_CHECKOUT_20261002.md for environment, initial npm launcher mismatch,
+remaining lifecycle-script/deprecation caveats and the deliberately partial scope.
+This is fresh-environment evidence, not an unnecessary repeat on unchanged inputs.
+E01 remains PARTIAL until the full frozen-candidate reproduction is complete.
+
+Conservative development indicator:22/57 (38.6%, rounded39%) have retained product
+implementation or locally tested implementation in the named scope: H01-H09;
+E04,E06,E07,E08,E15,E17,E26,E27,E28,E30; S01,S02,S04. This is a source-development
+indicator only, not22 accepted release items. Open integration, environment,
+coverage and operational caveats on those rows remain binding. All partial and
+unclassified rows are excluded from this numerator. Formal frozen gate:0/57.
+
 ## Follow-up local validation — 2026-10-02
 
 Integrated milestone634bd04 is committed and pushed on codex/unified-enterprise-20261001. The earlier integration paragraphs below are historical. Formal frozen release gate remains0/57; no product deployment occurred.

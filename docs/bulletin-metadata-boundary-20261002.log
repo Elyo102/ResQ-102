@@ -1,0 +1,82 @@
+PASS empty metadata
+PASS system author default does not replace reply default
+PASS valid metadata and own role label
+PASS legacy author fallbacks are message-only
+PASS empty primary fields retain fallback precedence
+PASS unmapped role preserves legacy precedence
+PASS unmapped role without legacy fallback
+PASS valid strings are not trimmed or rewritten
+PASS malformed author/role fields 0
+PASS malformed primary name still uses legacy fallback 0
+PASS malformed author/role fields 1
+PASS malformed primary name still uses legacy fallback 1
+PASS malformed author/role fields 2
+PASS malformed primary name still uses legacy fallback 2
+PASS malformed author/role fields 3
+PASS malformed primary name still uses legacy fallback 3
+PASS malformed author/role fields 4
+PASS malformed primary name still uses legacy fallback 4
+PASS malformed author/role fields 5
+PASS malformed primary name still uses legacy fallback 5
+PASS malformed author/role fields 6
+PASS malformed primary name still uses legacy fallback 6
+PASS malformed author/role fields 7
+PASS malformed primary name still uses legacy fallback 7
+PASS malformed author/role fields 8
+PASS malformed primary name still uses legacy fallback 8
+PASS malformed author/role fields 9
+PASS malformed primary name still uses legacy fallback 9
+PASS inherited Object role label ignored: constructor
+PASS inherited Object role label ignored: toString
+PASS inherited Object role label ignored: __proto__
+PASS custom inherited role label ignored
+PASS invalid or empty own label retains fallback 0
+PASS invalid or empty own label retains fallback 1
+PASS invalid or empty own label retains fallback 2
+PASS invalid or empty own label retains fallback 3
+PASS invalid or empty own label retains fallback 4
+PASS invalid or empty own label retains fallback 5
+PASS invalid or empty own label retains fallback 6
+PASS own reserved-name label is supported
+PASS crew boundary 40
+PASS crew boundary 41
+PASS crew boundary 42
+PASS crew boundary 43
+PASS crew boundary 44
+PASS crew boundary 45
+PASS crew boundary 46
+PASS crew boundary 47
+PASS crew boundary 48
+PASS crew boundary 49
+PASS crew boundary 50
+PASS crew boundary 51
+PASS crew boundary 52
+PASS reply count boundary 53
+PASS reply count boundary 54
+PASS reply count boundary 55
+PASS reply count boundary 56
+PASS reply count boundary 57
+PASS reply count boundary 58
+PASS reply count boundary 59
+PASS reply count boundary 60
+PASS reply count boundary 61
+PASS reply count boundary 62
+PASS reply count boundary 63
+PASS reply count boundary 64
+PASS reply count boundary 65
+PASS reply count boundary 66
+PASS reply count boundary 67
+PASS reply count boundary 68
+PASS reply count boundary 69
+PASS reply count boundary 70
+PASS reply count boundary 71
+PASS reply count boundary 72
+PASS reply count boundary 73
+PASS reply count boundary 74
+PASS reply count boundary 75
+PASS reply count boundary 76
+PASS reply count boundary 77
+PASS reply count boundary 78
+PASS reply count boundary 79
+PASS raw metadata, message text and labels remain unchanged
+Bulletin metadata boundaries: 81/81 PASS

@@ -1,0 +1,50 @@
+✓ copies the crew to every same-rotation day of the month at the same sub-station, roles kept
+✓ never writes into the past: days before not_before are reported, not edited
+✓ default mode skips a day that already has a manual assignment; override replaces it
+✓ engine-made (non-manual) slots on a target day are replaced by the template crew
+✓ an absent person is not placed; the day is reported as a gap
+✓ a person already posted elsewhere that day is not pulled away from the other sub-station
+✓ skipped template people already on target rows are removed consistently with gap reports
+✓ a template person who left the active source is skipped instead of failing the whole edit
+✓ the change count is the real one from applyEdits, not people x days
+✓ over the ceiling: refused as a whole with the real count — never split silently
+✓ running it again is a no-op (skip mode skips everything; override changes nothing)
+✓ days outside the active publication are reported, not edited
+✓ input plan is never mutated
+✓ refusals: no rotation, empty source, wrong month, unknown sub-station, bad mode, missing today
+✓ every generated edit passes the real normalizeEdits (same validation as the server)
+✓ a source row whose slots name nobody is refused — it must never mass-unassign the target days
+✓ the 400 ceiling holds by default and cannot be raised by the caller
+✓ a role no longer in the policy skips that person with a reason, instead of failing in another module
+✓ an engine slot that already matches is left untouched (not silently rewritten as manual)
+✓ sync: ceiling equals the runtime constant, rotation formula equals schedule-edit
+
+schedule-replicate: 20 checks passed.
+TAP version 13
+# Subtest: replication preview uses selected authority: monthly=false
+ok 1 - replication preview uses selected authority: monthly=false
+  ---
+  duration_ms: 4.2925
+  type: 'test'
+  ...
+# Subtest: replication preview uses selected authority: monthly=true
+ok 2 - replication preview uses selected authority: monthly=true
+  ---
+  duration_ms: 0.8828
+  type: 'test'
+  ...
+# Subtest: replication preview rejects authority change before returning its result
+ok 3 - replication preview rejects authority change before returning its result
+  ---
+  duration_ms: 1.1754
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 145.5161

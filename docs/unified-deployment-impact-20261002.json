@@ -6,9 +6,10 @@
   "baseline": "023ed2df7a8bf411cd7ef8280931137a8100818b",
   "baselineVerifiedAgainstCurrentProduction": false,
   "preservationReference": "09ac0fcbcf24b9a4382a38df0b0f6e807fee43e1",
-  "workingBase": "3a4575b1920c84c9121341525e163d5ebe562138",
+  "workingBase": "e94988085d7413ba50ffdb89c564936489991194",
   "frozenCandidate": null,
   "groups": {
+    "readinessAttestation": ["markStationReady"],
     "preservedHours": [
       "mutateMyAttendanceDay",
       "getMyAttendanceMonth",
@@ -159,6 +160,7 @@
     "listMyHrRequests",
     "listUsersWithClaims",
     "loginWithEmployeeNumber",
+    "markStationReady",
     "mutateMyAttendanceDay",
     "mutateMyAttendanceMonth",
     "nudgeHrRequest",
@@ -202,16 +204,25 @@
   "newExports": [
     "previewScheduleReplication"
   ],
-  "transitiveReviewPending": [
+  "transitiveReviewPending": [],
+  "transitiveReviewedUnchanged": [
     "getHrMonthReports",
     "listAttendanceCorrectionAudit",
     "getAttendanceCorrectionAudit",
     "getHrMonthlyOverHours",
     "getHrOverHoursAlert",
     "getMetricsDashboard",
-    "rollbackSchedule",
-    "markStationReady"
+    "rollbackSchedule"
   ],
+  "transitiveReviewEvidence": "DEPLOYMENT_TARGET_REVIEW_20261002.md",
+  "rulesDelta": {
+    "baseline": "023ed2df7a8bf411cd7ef8280931137a8100818b",
+    "firestoreRules": "add explicit server-only deny matches for schedule_runtime_workers and security_audit_events",
+    "indexesChangedAgainstBaseline": false,
+    "liveIndexReadiness": "NOT_VERIFIED",
+    "storageRulesChanged": false,
+    "deployStorageRules": false
+  },
   "servicesRequiringFinalManifest": [
     "firestore.rules",
     "firestore.indexes.json",
@@ -246,7 +257,7 @@
     "Generation-pinned sources/config/IAM plus encrypted readback-verified archive before release"
   ],
   "remaining": [
-    "Resolve transitive targets and actual live source/config baseline",
+    "Reconcile reviewed79 semantic targets with actual live source/config baseline; do not infer live parity from local baseline",
     "Freeze source and retain required tests, including new untracked modules",
     "Review Rules/index inventory and index readiness",
     "Capture compatible rollback artifacts",

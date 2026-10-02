@@ -345,7 +345,31 @@ function setFormStatus(text, kind) {
 }
 
 function categoryOf(id) {
-  return CATEGORY_BY_ID[id] || CATEGORY_BY_ID.general;
+  return typeof id === 'string' && Object.hasOwn(CATEGORY_BY_ID, id)
+    ? CATEGORY_BY_ID[id] : CATEGORY_BY_ID.general;
+}
+
+// Presentation only: keep raw records and message bodies intact for consumers.
+export function bulletinDisplayMetadata(data, roleLabels = {}) {
+  const text = value => typeof value === 'string' ? value : '';
+  const byName = text(data.by_name), authorName = text(data.author_name);
+  const byRole = text(data.by_role), authorRole = text(data.author_role);
+  const roleLabel = roleLabels && Object.hasOwn(roleLabels, byRole)
+    ? text(roleLabels[byRole]) : '';
+  const crewValue = typeof data.by_crew === 'string' ||
+    (typeof data.by_crew === 'number' && Number.isFinite(data.by_crew))
+    ? data.by_crew : '';
+  const count = typeof data.reply_count === 'number' || typeof data.reply_count === 'string'
+    ? Number(data.reply_count) : 0;
+  const integerCount = Math.floor(count);
+  return {
+    name: byName || authorName || (data.kind === 'system' ? 'מערכת ResQ' : 'חבר צוות'),
+    replyName: byName || 'חבר צוות',
+    role: roleLabel || authorRole || byRole,
+    replyRole: roleLabel || byRole,
+    crew: crewValue ? 'משמרת ' + crewValue : '',
+    replyCount: Number.isSafeInteger(integerCount) ? Math.max(0, integerCount) : 0
+  };
 }
 
 function timeParts(data) {
@@ -746,15 +770,16 @@ function renderReplyThread(item) {
   list.className = 'bulletin-replies';
   replies.forEach(function (reply) {
     const data = reply.data || {};
+    const display = bulletinDisplayMetadata(data, state.roleLabels);
     const card = document.createElement('div');
     card.className = 'bulletin-reply';
     card.dataset.replyId = reply.id;
     card.dataset.testid = 'bulletin-reply';
     const head = document.createElement('div');
     head.className = 'bulletin-reply-head';
-    addText(head, 'bulletin-reply-name', data.by_name || 'חבר צוות');
-    const role = state.roleLabels[data.by_role] || data.by_role || '';
-    const crew = data.by_crew ? 'משמרת ' + data.by_crew : '';
+    addText(head, 'bulletin-reply-name', display.replyName);
+    const role = display.replyRole;
+    const crew = display.crew;
     const detail = [role, crew].filter(Boolean).join(' · ');
     if (detail) addText(head, 'bulletin-reply-role', detail);
     const when = timeParts(data);
@@ -990,13 +1015,14 @@ function toggleViewers(item, article, button) {
 
 function renderMessage(item) {
   const data = item.data || {};
+  const display = bulletinDisplayMetadata(data, state.roleLabels);
   const category = categoryOf(data.category);
   const article = document.createElement('article');
   article.className = 'bulletin-message category-' + category.id;
   article.dataset.messageId = item.id;
   article.dataset.testid = 'bulletin-message';
   article.setAttribute('aria-label', category.label + ' מאת ' +
-    (data.by_name || data.author_name || 'חבר צוות'));
+    display.name);
 
   const top = document.createElement('div');
   top.className = 'bulletin-message-top';
@@ -1025,10 +1051,10 @@ function renderMessage(item) {
   const author = document.createElement('div');
   author.className = 'bulletin-author';
   addText(author, 'bulletin-author-name',
-    data.by_name || data.author_name || (data.kind === 'system' ? 'מערכת ResQ' : 'חבר צוות'));
+    display.name);
 
-  const role = state.roleLabels[data.by_role] || data.author_role || data.by_role || '';
-  const crew = data.by_crew ? ('משמרת ' + data.by_crew) : '';
+  const role = display.role;
+  const crew = display.crew;
   const detail = [role, crew].filter(Boolean).join(' · ');
   if (detail) addText(author, 'bulletin-author-role', detail);
   article.appendChild(author);
@@ -1049,7 +1075,7 @@ function renderMessage(item) {
     actions.appendChild(fault);
   }
 
-  const replyCount = Math.max(0, Math.floor(Number(data.reply_count || 0)));
+  const replyCount = display.replyCount;
   const threadOpen = state.replyThread &&
     state.replyThread.boardId === state.activeBoard &&
     state.replyThread.messageId === item.id;
@@ -1086,7 +1112,7 @@ function renderMessage(item) {
     reply.dataset.bulletinFocus = replyFocusKey('action', item.id);
     reply.textContent = 'תגובה';
     reply.setAttribute('aria-label', 'כתיבת תגובה להודעה מאת ' +
-      (data.by_name || data.author_name || 'חבר צוות'));
+      display.name);
     reply.setAttribute('aria-controls',
       replyThreadDomId(state.activeBoard, item.id));
     reply.setAttribute('aria-expanded',
@@ -1102,7 +1128,7 @@ function renderMessage(item) {
     hide.dataset.testid = 'bulletin-hide';
     hide.textContent = 'הסתר';
     hide.setAttribute('aria-label', 'הסתרת ההודעה מאת ' +
-      (data.by_name || data.author_name || 'חבר צוות'));
+      display.name);
     hide.onclick = function () { hideMessage(item, hide); };
     actions.appendChild(hide);
   }

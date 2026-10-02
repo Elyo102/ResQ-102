@@ -104,6 +104,8 @@
       "firestore.indexes.json",
       "release-targets-42h42.json",
       "firebase.attendance-test.json",
+      "firebase.ack-emulator.json",
+      "firebase.hr48-emulator.json",
       "firebase.*-test.json",
       "firebase.emulator*.json",
       "**/*.log",

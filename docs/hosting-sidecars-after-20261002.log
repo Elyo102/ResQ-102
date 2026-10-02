@@ -1,0 +1,49 @@
+✓ asset build key belongs exactly to the visible release
+✓ Firebase Hosting excludes generated output screenshots and diagnostic probes
+✓ the private roster file is absent from the deploy tree
+✓ import.html no longer contains roster-import
+✓ import.html no longer contains ROSTER
+✓ import.html no longer contains pwPaste
+✓ import.html no longer contains bulkImport
+✓ history import contains collection(db, 'stations', STATION_ID, 'users')
+✓ history import contains v.employee_number
+✓ history import contains v.is_active === false
+✓ import.html keeps #knob
+✓ import.html keeps #master
+✓ import.html keeps #mState
+✓ import.html keeps #ready
+✓ import.html keeps #hPaste
+✓ import.html keeps #hDry
+✓ import.html keeps #hRun
+✓ import.html keeps #hMsg
+✓ import.html keeps #hSum
+✓ Firebase Hosting excludes roster-import.js as defense in depth
+✓ Firebase Hosting excludes the private release target manifest
+✓ Firebase Hosting excludes firebase.attendance-test.json
+✓ Firebase Hosting excludes firebase.emulator.42h11.json
+✓ every Firebase sidecar config is excluded: firebase.ack-emulator.json
+✓ every Firebase sidecar config is excluded: firebase.attendance-test.json
+✓ every Firebase sidecar config is excluded: firebase.hr48-emulator.json
+✓ the service-worker cache is rotated away from the exposed copy
+✓ Firebase Hosting excludes root Python sources (*.py)
+✓ Firebase Hosting excludes nested Python sources (**/*.py)
+✓ apply-wiring.py is present in the tree (otherwise the 404 proves nothing)
+✓ the hosting ignore rules match apply-wiring.py
+✓ the hosting ignore rules match a nested .py as well
+✓ Firebase Hosting excludes private workspace file docs/FROZEN-TIP
+✓ Firebase Hosting excludes private workspace file docs/HANDOFF-hardening-package.md
+✓ Firebase Hosting excludes private workspace file archive/README-firestore_1.md
+✓ Firebase Hosting excludes private workspace file scripts/staging-auth-rest-bypass-probe.mjs
+✓ no served file carries an extension outside the public allow-list
+✓ a local hosting probe returns 404 for roster-import.js
+✓ a local hosting probe returns 404 for firebase.attendance-test.json
+✓ a local hosting probe returns 404 for firebase.emulator.42h11.json
+✓ a local hosting probe returns 404 for firebase.ack-emulator.json
+✓ a local hosting probe returns 404 for firebase.hr48-emulator.json
+✓ a local hosting probe returns 404 for apply-wiring.py
+✓ a local hosting probe returns 404 for docs/FROZEN-TIP
+✓ a local hosting probe returns 404 for docs/HANDOFF-hardening-package.md
+✓ a local hosting probe returns 404 for archive/README-firestore_1.md
+✓ a local hosting probe returns 404 for scripts/staging-auth-rest-bypass-probe.mjs
+
+47 hosting privacy checks passed.
