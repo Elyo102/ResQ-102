@@ -211,3 +211,31 @@ Firestore permission; S04 real refresh-token/client reauthentication proof needs
 a separately authorized dedicated test identity (never an employee account).
 Physical-device acceptance, project-loss DR, production baseline/rollback and
 the open requirements in UNIFIED_REQUIREMENTS_20261001.md remain unresolved.
+
+### Source-backed policy repair after renewed authorization
+
+Human turn01a0fbf1-c2fa-7b91-a92a-2cc1249b9322 authorized resolution, not a
+fabricated local_verified receipt. Failed staging directories contained zero
+files, so no raw-document diagnostic was available. Bounded root metadata
+comparison initially missed doc() syntax; the pure matcher was corrected and
+tested (10 assertions). It identified three source-backed roots: invitations,
+onboarding_assignment_links and system. Only these repository-defined schema
+labels were output; no live document identifiers/fields were printed.
+
+Seven exact policy/Rules additions were reviewed twice before and after edits:
+six invitation/onboarding/provisioning authority/receipt patterns use encrypted
+managed_export with specialized_restore (manual_required), restricted_identity,
+humanReadable:forbidden and unresolved retention. No automatic identity restore,
+TTL or deletion was enabled. The exact derived system/heartbeat singleton alone
+is excluded; system/other and unknown descendants remain unclassified. Three
+additional related receipt patterns were source-backed, not claimed live-present.
+
+Affected evidence:53 policy assertions PASS after one CRLF test-only repair;
+exact Rules/policy coverage191 PASS;5 restore-plan assertions PASS (six manual,
+zero automatic/identity writes);120 emulator-only denial assertions PASS with
+expected permission-denial diagnostics, not zero warnings. Heartbeat create
+case uses its adjacent -new name; exact singleton create is not independently
+exercised, although its new exact rule explicitly denies writes. Owned demo-resq
+emulator was stopped. Initial Java argument quoting failed before startup and
+was repaired once; it did not touch production. The59 unchanged REST assertions
+were preserved, not rerun. No backup or release success is inferred from these.

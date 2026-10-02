@@ -2239,6 +2239,30 @@ service cloud.firestore {
       }
     }
 
+    // Server-only onboarding authority and derived heartbeat. Explicit matches
+    // document existing catch-all denial; these grant no client permissions.
+    match /invitations/{inviteId} {
+      allow read, write: if false;
+    }
+    match /onboarding_assignment_links/{uid} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/onboarding_operations/{requestId} {
+      allow read, write: if false;
+    }
+    match /hr_invitation_operations/{id} {
+      allow read, write: if false;
+    }
+    match /hr_invitation_recipients/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/provision_operations/{requestId} {
+      allow read, write: if false;
+    }
+    match /system/heartbeat {
+      allow read, write: if false;
+    }
+
     // ---------- ברירת מחדל: הכל חסום ----------
 
     match /{document=**} {
