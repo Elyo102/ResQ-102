@@ -188,3 +188,26 @@ Actual metadata-only proof through the exact wrapper returned exit0,
 operationSucceeded:true,metadataReadVerified:true,backupCreated:false. Private
 key/destination ACL and ignored-key checks passed before this call. One subsequent
 authorized capture was started; its completion must be recorded separately.
+
+The single REST capture completed with exit1 at capture stage:
+operationSucceeded:false,backupCreated:false,category:POLICY_UNCLASSIFIED.
+Authentication/transport was no longer the blocker. The policy deliberately
+refuses a snapshot when paths have no backup classification; no catch-all,
+omission, restore classification or retention decision was invented. The error
+output was sanitized and contains no document paths, identities or payloads.
+No second full scan was launched. Protected staging artifacts remain preserved.
+No completed production backup, source/config/IAM rollback or promotion exists.
+
+Reviewed code and tests were committed/pushed non-force as4a3dd87 to
+codex/unified-enterprise-20261001 only. The backup/key/REST test files are scoped
+supplemental operational evidence, not silently added product-gate passes.
+Pure buildHours46Plan metadata validation passed with156 application entries;
+executedTests:0,formalAcceptancePassed:0. This does not execute or replace the
+required final gate. Prior readiness artifacts remain historical.
+
+Remaining boundaries reconfirmed by two read-only reviews: S02 runtime service
+account effective Secret Manager access is not established by the operator's
+Firestore permission; S04 real refresh-token/client reauthentication proof needs
+a separately authorized dedicated test identity (never an employee account).
+Physical-device acceptance, project-loss DR, production baseline/rollback and
+the open requirements in UNIFIED_REQUIREMENTS_20261001.md remain unresolved.
