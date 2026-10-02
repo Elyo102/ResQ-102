@@ -1,0 +1,4 @@
+releasegate · 153/153 עברו
+  LOCAL_VALIDATION_PASS; PRODUCTION_BLOCKED
+  לא נבדק כאן: הרצה בפועל של test-rules.bat. ניתוח סטטי אינו
+  הרצת Windows; קוד היציאה האמיתי נמדד בשער נפרד עם cmd.exe.

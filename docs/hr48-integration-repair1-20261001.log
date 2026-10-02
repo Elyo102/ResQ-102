@@ -1,0 +1,132 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-resq", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
++  firestore: Firestore Emulator was started in standard edition.
++  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: node functions/hr-shift-change.integration.test.js && node functions/hr-requests.integration.test.js && node functions/hr-parent-attachments.integration.test.js && node functions/hr-domain-dispatch.integration.test.js
+PASS firefighter creates a shift change request: fixed subject, pending, no months, station_shift job
+PASS a client-supplied subject is refused: the subject is fixed by the server
+PASS reason is limited to 250 characters and rejects control characters
+PASS date must be today..+92 days by Israel time, sub-station must be active in this station
+PASS target fields are refused on any other request kind
+PASS shift change requests cannot carry attachments
+PASS live schedule manager lists only shift change requests and reads them, never other kinds
+PASS "my requests" tells the screen who handles shift requests — live, and false once revoked
+PASS commander and colleague without appointment cannot list, read or decide
+PASS revoking the appointment blocks the very next call; a foreign-station appointment never counts
+PASS schedule manager decides shift change only; not own request, not a sickness report
+PASS HR coordinator can also decide a shift change request
+PASS counters: the shift box counts pending then approved/closed, without drift
+PASS re-deciding: same decision (even with a note) is no_change; a flip is allowed until the day passes, then final
+PASS a schedule manager may reply on a shift request; the owner is notified
+PASS a new request notifies HR and the live schedule manager only — not the commander, colleague or owner
+PASS a revoked schedule manager is not notified of a new request
+PASS an appointment revoked after the decision but before delivery: the push is cancelled at send time
+PASS a general HR request is never pushed to a schedule manager
+PASS the decision reaches the owner exactly once
+PASS regression: an HR decision on a sickness report now reaches the employee (was cancelled as source-invalid)
+PASS durable create replay survives Israel midnight and rejects changed intent
+PASS new request crossing Israel midnight during final checks creates no record
+HR shift change integration: 23/23 PASS; actual producers/Firestore, synthetic Auth/FCM only.
+PASS owner privacy; HR and profile-free signed super; command roles remain private
+PASS closed input, controls, lengths, fake super and malformed session rejected without writes
+PASS fresh Auth disabled, missing, moved, changed role and malformed validity fail closed
+PASS token revocation rejects unchanged claims; equal auth-time boundary passes
+PASS live profile inactive or transferred blocks owner while old station HR retains case
+PASS fresh stronger claims never upgrade an old signed request and former super must refresh
+PASS concurrent request replay creates one immutable event, job, receipt and quota charge
+PASS reply receipt precedes new CAS, changed payload conflicts, competing revisions allow one writer
+PASS HR status CAS, waiting-employee owner reply, closed denial and explicit reopen
+PASS no-change status records receipt without event, notification, revision or quota change
+PASS generic durable jobs route owner versus HR without content, and HR owner never self-notifies
+PASS business text/status persist at night under silent or unavailable runtime configuration
+PASS nudge relevance, night confirmation, bounded consent and silent cannot bypass
+PASS rolling mutation quota excludes replay, expires exactly at minute and final clock is fresh
+PASS quiet threshold crossed after async reads yields warning and no new event
+PASS final mutation Auth check blocks revocation without orphan event, receipt, job or quota
+PASS final read actor fence blocks transfer but newer reply does not invalidate coherent page
+PASS missing reads and exceptions after staged writes roll back whole business transaction
+PASS case and event pagination has bounded continuous pages without cross-owner results
+HR requests integration: 19 passed.
+{"run":"6db617b24de5","source_hashes":{"hr-requests.js":"cc08f4a46d1f63e17c52c1256c28065cc447d2002cd84d528ec670ca23de8ede","hr-documents.js":"fbad523158875e97e94a71c33fe1ed7fbc7d675613e070b6b00e61b3e5825bf1","ops-member-identity.js":"718617f302589ae1a81cf707ba9873f5af5b0088ac4fdefafbcfee997bca9162"},"transport":"none","auth":"synthetic","caller":"test-marker-not-attachment-service"}
+PASS request owner attachment uses common event/time, increments revision and creates generic work without parent quota
+PASS attachment preserves waiting_employee; explicit reply still reopens; closed blocks new attachment but permits existing read/replay
+PASS request HR/signed-super route to owner; other member/command/cross-station authority fails closed
+PASS document N+1 inherits content/membership; N receipts stay immutable and ordinary revise preserves inherited IDs
+PASS document upload is manager-only; procedure and self-target notification behavior remains exact
+PASS request same-attachment caller replay is one parent publication/job and remains read-only after sign-in refresh
+PASS request competing new attachments use parent CAS and cannot partially publish the loser
+PASS request final actor Auth revocation, disabled or moved state aborts before publication
+PASS request queued generic-job failure rolls back parent and synthetic ready marker together
+PASS request unreadable parent is an error, never missing/success or an advanced caller receipt
+PASS request transaction plan requires recheck, same transaction and once-only synchronous commit
+PASS request cumulative membership is bounded to10 unique IDs and attachment ports do not double-charge parent quota
+PASS document same-attachment caller replay is one parent publication/job and remains read-only after sign-in refresh
+PASS document competing new attachments use parent CAS and cannot partially publish the loser
+PASS document final actor Auth revocation, disabled or moved state aborts before publication
+PASS document queued generic-job failure rolls back parent and synthetic ready marker together
+PASS document unreadable parent is an error, never missing/success or an advanced caller receipt
+PASS document transaction plan requires recheck, same transaction and once-only synchronous commit
+PASS document cumulative membership is bounded to10 unique IDs and attachment ports do not double-charge parent quota
+PASS document final target Auth move/disable blocks even when manager remains authorized
+PASS legacy absent membership remains empty; malformed membership and attachment history reject rather than disappear
+PASS attachment routine publication never inherits a night override or private filename fields
+Parent attachment ports: 22/22 passed; actual parent factories/Firestore, synthetic Auth and caller marker only. No file service, Storage, dispatcher, UI, FCM or quota-integration claim.
+{"run":"6db617b24de5","cleaned_station_roots":26,"cleaned_quota_docs":260,"exact_cleanup_verified":true,"runtime_untouched":true,"source_hashes_unchanged":true}
+{"run":"0d21c6f30f61","source_hashes":{"hr-domain-dispatch.js":"b7cc6b840c7c36c59977e19d2344717f8e1928280cf67ca6063245d953e182c0","hr-requests.js":"cc08f4a46d1f63e17c52c1256c28065cc447d2002cd84d528ec670ca23de8ede","hr-documents.js":"fbad523158875e97e94a71c33fe1ed7fbc7d675613e070b6b00e61b3e5825bf1","hr-hours-dispatch.js":"3b0416a6ea78ecac6b094d18e1ea311ffd9b15f006b06020f0b8c8a63340d0b7","hr-notification-policy.js":"7753060ec10d2140282f6cd0e85d8c78b365e01271225265b8f96c534ec53599","hr-hours-service.js":"04e4163b95126b332b40356b9ffdd2c7bfda21b3f3896a2b4c7d80db18f9afd6","hr-hours-review-contract.js":"3978da9e0f67ba2e7f983a39df7eb863cb2f902b147ce051c4b7d554aba19cd9","attendance-corrections.js":"0925393c609d7601cbf305521a987670ca9b41badef425e11142e905e0aa12f2"},"selected":47,"prior_runtime":null}
+PASS correction actual operations send one neutral private-free notification including self and district target
+PASS correction quiet resumes at morning while silent and unknown state never bypass policy
+PASS correction source and receipt mutations cannot manufacture a valid historical notification
+PASS correction job rejects foreign family fields and policy or identity substitution
+PASS correction rechecks demotion revocation transfer and complete canonical bindings before claim
+PASS correction final fences stop held actor or recipient changes without erasing prior evidence
+PASS correction evidence is historical and authorized replay never recreates a retired job
+PASS original request document and review source digests retain exact pre-correction bytes
+PASS review actual producer sends neutral personal event once including self
+PASS review silent suppresses, quiet defers and unknown runtime blocks without transport
+PASS review immutable source corruption cancels before any delivery
+PASS review rechecks actor and canonical recipient after enqueue
+PASS review historical event survives later hours changes but not recipient transfer at final claim
+PASS real request fanout uses current local HR and signed super, not commanders or global Auth discovery
+PASS real targeted document identity, family-qualified intent and mandatory category preserve privacy
+PASS attachment owner event preserves waiting_employee and routes a neutral update only to current HR
+PASS attachment nonowner HR event routes only to the case owner and retains the generic payload
+PASS attachment malformed event identity fails closed before child creation or transport
+PASS concurrent generation and SDK claim remain one deterministic child and one send
+PASS routine request updates survive close while stale explicit nudge does not
+PASS old document revision stays a neutral event and opened/ack do not create jobs
+PASS document nudge uses current outstanding receipt and accepts another current HR author
+PASS source actor/audience/revision tampering fails closed before transport
+PASS fresh original actor revocation/disable/station/role and malformed marker prevent sending
+PASS live recipient disabled/moved/profile and HR audience downgrade are rechecked at claim
+PASS successful empty HR scan is no_recipient, not a swallowed Auth or DB failure
+PASS final recipient eligibility loss skips only that candidate rather than cancelling a whole fanout
+PASS I/O rejection and staged transaction crash do not advance cursor or partly create intents
+PASS routine night queue survives until morning; original TTL and expired consent never extend
+PASS uninitialized old job is discovered through created_at and nudge expiry remains one hour
+PASS fresh global silence has no allowlist or send_now bypass, and existing suppression never replays
+PASS final claim time crossing quiet defers; afterClaim known-unstarted routine also defers safely
+PASS final job clock expiry does not create children and afterClaim expiry never starts SDK
+PASS bounded discovery freezes observed ID maximum, never creates children before enqueue
+PASS failed initial heads back off so the healthy 26th source can progress
+PASS missing device is terminal and malformed runtime/token I/O blocks without pretending success
+PASS device budget is total, deduplicates per recipient and never slices a recipient
+PASS ten concurrent recipients and 250 checked intents are hard invocation caps
+PASS 60 second start budget stops new work; page checks remain bounded
+PASS fulfilled mixed batch preserves accepted/definite failure/network unknown without token or error leaks
+PASS throw and malformed final response are unknown with no application resend
+PASS station fence and fresh pre-SDK global policy prevent transport
+PASS postClaim scope mutation cannot redirect the policy check
+PASS postClaim station read failure retries only the known unsent attempt
+PASS crash before SDK and after SDK never turn expired attempting into a fresh send
+PASS late SDK callback cannot overwrite lease unknown or a different attempt token
+PASS dispatch never deletes or overwrites concurrently registered device tokens
+HR domain dispatcher integration: 47/47 PASS; scope=all; actual producers/Firestore, synthetic Auth/FCM only.
+{"cleanup_complete":true,"runtime_restored":true}
+{"source_hashes_unchanged":true,"source_hashes":{"hr-domain-dispatch.js":"b7cc6b840c7c36c59977e19d2344717f8e1928280cf67ca6063245d953e182c0","hr-requests.js":"cc08f4a46d1f63e17c52c1256c28065cc447d2002cd84d528ec670ca23de8ede","hr-documents.js":"fbad523158875e97e94a71c33fe1ed7fbc7d675613e070b6b00e61b3e5825bf1","hr-hours-dispatch.js":"3b0416a6ea78ecac6b094d18e1ea311ffd9b15f006b06020f0b8c8a63340d0b7","hr-notification-policy.js":"7753060ec10d2140282f6cd0e85d8c78b365e01271225265b8f96c534ec53599","hr-hours-service.js":"04e4163b95126b332b40356b9ffdd2c7bfda21b3f3896a2b4c7d80db18f9afd6","hr-hours-review-contract.js":"3978da9e0f67ba2e7f983a39df7eb863cb2f902b147ce051c4b7d554aba19cd9","attendance-corrections.js":"0925393c609d7601cbf305521a987670ca9b41badef425e11142e905e0aa12f2"}}
++  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator

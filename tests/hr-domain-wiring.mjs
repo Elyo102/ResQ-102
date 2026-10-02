@@ -29,10 +29,14 @@ const sha = value => createHash('sha256').update(value).digest('hex');
  *     מקובץ אחד. במסלול „הפניות שלי" הענף אינו רץ כלל.
  * שאר הקבצים לא נגענו בהם, וטביעותיהם נשארו כפי שהיו. */
 const pins = {
-  'functions/hr-domain-dispatch.js': '526ae68168c7e7e042477b05cb71886ff94dd06f4d0250c2c18cc568d0bae357',
+  // Claude42H48: shift-only manager audience and setDecision notification;
+  // native dispatcher regression 47/47, no broad HR role expansion.
+  'functions/hr-domain-dispatch.js': '6215c9546568f19572e5a21adec97e9978f4b54ba5ea5f0ea69e4601ecf7d3f5',
   // Paired-reviewed course kind/immutable HR approval snapshot transaction;
   // existing authority/provider behavior retained, native course integration passed.
-  'functions/hr-requests.js': '0b566c2b908b96132b503e47d326c98f587cb894aee5fa41b8366c16e2ce8f2d',
+  // Live shift-manager scope and durable create receipt before moving date
+  // validation; 23 shift-change +19 private request native scenarios passed.
+  'functions/hr-requests.js': '6ce609664a9acb3ad0d113e3d6458aea91730ecdf53bfd3c76b0c177321cfa3c',
   'functions/hr-documents.js': '63aa7a8f9f1372768fb243598ecb2caec83ed3c81ad11a8d421e4e4697dde3d7',
   'functions/hr-notification-policy.js': '1f463af5e307dc96fec5da330673260ac9a8a0a4aadae7c5892ccc769c3e2668',
   'functions/hr-hours-dispatch.js': '612cc9453f914e13538ea80b8f447c6b61e7ffc17ad16a03322883a74253f4ed',

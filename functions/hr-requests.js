@@ -25,8 +25,34 @@ const STATES = Object.freeze(['open', 'in_progress', 'waiting_employee', 'closed
  * דוחות שעות אינם סוג כאן ולעולם לא יהיו: הם חיים ב-`attendance`
  * וב-`monthly_reports`, באוסף אחר לגמרי. זו ההפרדה החזקה ביותר
  * שיש — היא מבנית, ולא מסנן במסך. */
-const KINDS = Object.freeze(['general', 'sick', 'reserve', 'vacation', 'extended_absence', 'course']);
+const KINDS = Object.freeze(['general', 'sick', 'reserve', 'vacation', 'extended_absence', 'course', 'shift_change']);
 const DATED_KINDS = Object.freeze(['sick', 'reserve', 'vacation', 'extended_absence', 'course']);
+/* ⭐ בקשת שינוי ציוות / תחנה (42H.48, הכרעת אלדד 1.10.2026).
+ *
+ * כבאי מבקש, בטקסט חופשי, לעבור ביום מסוים לתחנת קצה אחרת **באותה
+ * תחנה אזורית** (באילת: ראשית, שחמון, תמנע, יטבתה). מעבר בין תחנות
+ * אזוריות אינו בקשה כאן — הוא שינוי שיוך שעובר במסלול הקליטה בשרת.
+ *
+ * הבקשה אינה דיווח היעדרות: אין לה טווח ואין לה `months`, ולכן היא
+ * לעולם אינה נכנסת לדוח ההיעדרויות החודשי. יש לה הכרעה, כמו לדיווחים
+ * המתוארכים, ומי שמכריע בה הוא משאבי אנוש **או** אחראי/ת סידור בעל/ת
+ * מינוי חי בתחנה — ואחראי/ת הסידור רואה ומכריע/ה **רק** בבקשות מהסוג
+ * הזה, לא בשום פנייה אחרת. אישור אינו משנה את הסידור: השיבוץ עצמו
+ * נעשה בעריכה רגילה, והמסך אומר זאת במפורש. */
+const SHIFT_KIND = 'shift_change';
+const DECIDED_KINDS = Object.freeze([...DATED_KINDS, SHIFT_KIND]);
+const SHIFT_TEXT_MAX = 250, SHIFT_HORIZON_DAYS = 92;
+const SHIFT_SUBJECT = 'בקשת שינוי ציוות / תחנה';
+const SUB_STATION_ID = /^(?!__.*__$)[A-Za-z0-9_-]{1,64}$/;   // לא מזהה Firestore שמור
+const kindOf = v => (Object.prototype.hasOwnProperty.call(v, 'kind') ? v.kind : 'general');
+/* היום לפי שעון ישראל — לא לפי שעון המכשיר ולא לפי UTC. */
+function israelToday(ms) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date(ms));
+  const get = t => parts.find(x => x.type === t).value;
+  return get('year') + '-' + get('month') + '-' + get('day');
+}
+const addDays = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
 /* ההכרעה נפרדת מ-`status` בכוונה. `status` הוא מצב הטיפול
  * (פתוח/בטיפול/ממתין לעובד/סגור); ההכרעה היא התשובה עצמה. פנייה
  * יכולה להיסגר בלי שאושרה, ואישור אינו אומר שהטיפול הסתיים. */
@@ -97,7 +123,7 @@ function counterKeys(value) {
   if (!value) return [];
   const kind = own(value, 'kind') ? value.kind : 'general';
   const keys = [kind + '|status|' + value.status];
-  if (DATED_KINDS.includes(kind)) keys.push(kind + '|decision|' + value.decision);
+  if (DECIDED_KINDS.includes(kind)) keys.push(kind + '|decision|' + value.decision);
   return keys;
 }
 function counterDelta(before, after) {
@@ -159,7 +185,17 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     return identity.requireLive(tx, ctx);
   }
   const manager = ctx => ctx.super || ctx.role === 'hr_coordinator';
-  function caseData(snap, ctx) {
+  /* ⭐ מינוי אחראי/ת סידור נקרא **חי** בתוך אותה עסקה, בכל קריאה —
+   * לא מה-token ולא ממטמון. הסרת המינוי חוסמת את הקריאה הבאה מיד. */
+  const NO_SCOPE = Object.freeze({ schedule: false });
+  async function scopeOf(tx, ctx) {
+    if (manager(ctx)) return NO_SCOPE;
+    const snap = await tx.get(root(ctx.sid).collection('schedule_access').doc(ctx.uid));
+    return { schedule: snap.exists && access.isManagerAccess(snap.data(), ctx.sid, ctx.uid) };
+  }
+  const canDecide = (ctx, scope, kind) => (DATED_KINDS.includes(kind) ? manager(ctx)
+    : kind === SHIFT_KIND ? manager(ctx) || scope.schedule === true : false);
+  function caseData(snap, ctx, scope = NO_SCOPE) {
     if (!snap.exists) throw error('not-found', 'Request not found.');
     const value = snap.data();
     if (!plain(value) || value.schema !== 'hr-request-v1' || value.station_id !== ctx.sid
@@ -181,11 +217,23 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
       if (own(value, 'months') && !sameMonths(value.months, value.from_date, value.to_date)) {
         throw error('failed-precondition', 'Request data is invalid.');
       }
+    } else if (kind === SHIFT_KIND) {
+      if (!validDate(value.target_date) || typeof value.target_sub_station !== 'string'
+        || !SUB_STATION_ID.test(value.target_sub_station) || !DECISIONS.includes(value.decision)
+        || own(value, 'from_date') || own(value, 'to_date') || own(value, 'months')) throw error('failed-precondition', 'Request data is invalid.');
+      if (FINAL_DECISIONS.includes(value.decision)
+        && (!access.validUid(value.decided_by) || !Number.isSafeInteger(value.decided_at_ms))) throw error('failed-precondition', 'Request data is invalid.');
     } else if (own(value, 'from_date') || own(value, 'to_date') || own(value, 'decision')
       || own(value, 'months')) {
       throw error('failed-precondition', 'Request data is invalid.');
     }
-    if (value.owner_uid !== ctx.uid && !manager(ctx)) throw error('permission-denied', 'This request is private.');
+    if (kind !== SHIFT_KIND && (own(value, 'target_date') || own(value, 'target_sub_station'))) {
+      throw error('failed-precondition', 'Request data is invalid.');
+    }
+    /* בעלים, משאבי אנוש — או אחראי/ת סידור חי/ה, ורק לבקשת שינוי ציוות. */
+    if (value.owner_uid !== ctx.uid && !manager(ctx) && !(kind === SHIFT_KIND && scope.schedule === true)) {
+      throw error('permission-denied', 'This request is private.');
+    }
     return value;
   }
   const summary = c => ({ case_id: c.case_id, owner_uid: c.owner_uid, subject: c.subject,
@@ -200,6 +248,11 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
       ? { from_date: c.from_date, to_date: c.to_date, decision: c.decision,
           ...(FINAL_DECISIONS.includes(c.decision)
             ? { decided_by: c.decided_by, decided_at_ms: c.decided_at_ms } : {}) }
+      : {}),
+    ...(c.kind === SHIFT_KIND
+      ? { target_date: c.target_date, target_sub_station: c.target_sub_station, decision: c.decision,
+          ...(FINAL_DECISIONS.includes(c.decision)
+            ? { decided_by: c.decided_by, decided_at_ms: c.decided_at_ms } : {}) }
       : {}) });
   async function beforeWrites(stage) { if (typeof hooks.beforeWrites === 'function') await hooks.beforeWrites({ stage }); }
   async function runtime(tx) {
@@ -210,10 +263,10 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
   function mutationInput(req, op) {
     // הסרת קובץ אינה שולחת הודעה לאיש: היא פעולה של הבעלים על מה
     // שהוא עצמו העלה, ולכן אין לה `send_now` ואין לה נמען.
-    const keys = op === 'create' ? ['request_id', 'subject', 'text', 'send_now', 'kind', 'from_date', 'to_date']
+    const keys = op === 'create' ? ['request_id', 'subject', 'text', 'send_now', 'kind', 'from_date', 'to_date', 'target_date', 'target_sub_station']
       : op === 'removeAttachment' ? ['request_id', 'case_id', 'expected_revision', 'attachment_id']
         : ['request_id', 'case_id', 'expected_revision', 'send_now',
-          ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : op === 'setDecision' ? ['decision'] : [])];
+          ...(op === 'reply' ? ['text'] : op === 'setStatus' ? ['status'] : op === 'setDecision' ? ['decision', 'text'] : [])];
     const r = request(req, keys), d = r.data;
     const silentOp = op === 'removeAttachment';
     if (typeof d.request_id !== 'string' || !REQUEST_ID.test(d.request_id)
@@ -224,12 +277,21 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
       p.attachment_id = d.attachment_id;
     }
     if (op === 'create') {
-      p.subject = text(d.subject, 80);
       /* סוג אינו חובה: פנייה חופשית נשארת בדיוק כפי שהייתה. אבל אם
        * נאמר סוג, הוא חייב להיות מוכר, ומחלה/מילואים חייבים טווח. */
       const kind = own(d, 'kind') ? d.kind : 'general';
       if (!KINDS.includes(kind)) throw error('invalid-argument', 'Invalid request kind.');
       p.kind = kind;
+      /* בבקשת שינוי ציוות הנושא קבוע בשרת; הנימוק הוא התוכן. נושא מהלקוח נדחה. */
+      if (kind === SHIFT_KIND && own(d, 'subject')) throw error('invalid-argument', 'A shift change request has no subject.');
+      p.subject = kind === SHIFT_KIND ? SHIFT_SUBJECT : text(d.subject, 80);
+      if (kind === SHIFT_KIND) {
+        if (!validDate(d.target_date)) throw error('invalid-argument', 'A shift change request needs a valid date.');
+        if (typeof d.target_sub_station !== 'string' || !SUB_STATION_ID.test(d.target_sub_station)) throw error('invalid-argument', 'Invalid sub-station.');
+        p.target_date = d.target_date; p.target_sub_station = d.target_sub_station;
+      } else if (own(d, 'target_date') || own(d, 'target_sub_station')) {
+        throw error('invalid-argument', 'Only a shift change request carries a target date and sub-station.');
+      }
       if (DATED_KINDS.includes(kind)) {
         if (!validDate(d.from_date) || !validDate(d.to_date)) throw error('invalid-argument', 'A sickness or reserve report needs a start and an end date.');
         if (d.to_date < d.from_date) throw error('invalid-argument', 'The end date cannot precede the start date.');
@@ -249,8 +311,11 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
      * שיש, ולכן שם הוא נשאר חובה. הערה ריקה אינה נכתבת כלל —
      * אין שורת טקסט ריקה ביומן. */
     const optionalNote = op === 'create' && DATED_KINDS.includes(p.kind);
-    if (op === 'reply' || (op === 'create' && !optionalNote)) p.text = text(d.text, 1000);
+    const textMax = op === 'create' && p.kind === SHIFT_KIND ? SHIFT_TEXT_MAX : 1000;
+    if (op === 'reply' || (op === 'create' && !optionalNote)) p.text = text(d.text, textMax);
     else if (optionalNote && own(d, 'text') && String(d.text).trim() !== '') p.text = text(d.text, 1000);
+    /* נימוק להכרעה — אופציונלי, עד 250, ורק בבקשת שינוי ציוות (נבדק בעסקה). */
+    if (op === 'setDecision' && own(d, 'text') && String(d.text).trim() !== '') p.text = text(d.text, SHIFT_TEXT_MAX);
     if (op === 'setStatus') {
       if (!STATES.includes(d.status)) throw error('invalid-argument', 'Invalid status.');
       p.status = d.status;
@@ -266,8 +331,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     const r = mutationInput(req, op), { ctx, plan: p } = r;
     if (op === 'setStatus' && !manager(ctx)) throw error('permission-denied', 'HR authority required.');
     /* ⭐ העובד אינו מכריע בעניין של עצמו, וגם לא בעניין של אחר.
-     * ההכרעה היא סמכות משאבי אנוש בלבד, בדיוק כמו שינוי סטטוס. */
-    if (op === 'setDecision' && !manager(ctx)) throw error('permission-denied', 'HR authority required.');
+     * ההכרעה היא סמכות משאבי אנוש — ובבקשת שינוי ציוות גם של אחראי/ת
+     * סידור בעל/ת מינוי חי. מכיוון שהסוג נקרא רק מהמסמך, הבדיקה
+     * הסופית נעשית בתוך העסקה (`canDecide`). */
     const operationId = hash(['hr-request-operation-v1', ctx.uid, p.request_id]);
     const fingerprint = hash(['hr-request-payload-v1', ctx.sid, ctx.uid, p]);
     const ref = caseRef(ctx.sid, op === 'create' ? hash(['hr-request-v1', ctx.uid, p.request_id]) : p.case_id);
@@ -275,8 +341,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     const quotaRef = db.collection('hr_request_actor_quotas').doc(hash(['hr-request-quota-v1', ctx.uid]));
     return db.runTransaction(async tx => {
       await live(tx, r);
-      const [receipt, snap] = await Promise.all([tx.get(receiptRef), tx.get(ref)]);
-      let current = snap.exists ? caseData(snap, ctx) : null;
+      const [receipt, snap, scope] = await Promise.all([tx.get(receiptRef), tx.get(ref), scopeOf(tx, ctx)]);
+      let current = snap.exists ? caseData(snap, ctx, scope) : null;
       if (op !== 'create' && !current) throw error('not-found', 'Request not found.');
       if (receipt.exists) {
         if (!current) throw error('failed-precondition', 'The recorded request is missing.');
@@ -291,10 +357,27 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
       let decisionPlan = null;
       if (op === 'setDecision') {
         const kind = own(current, 'kind') ? current.kind : 'general';
-        if (!DATED_KINDS.includes(kind)) throw error('failed-precondition', 'Only a sickness or reserve report carries a decision.');
+        if (!DECIDED_KINDS.includes(kind)) throw error('failed-precondition', 'Only a sickness or reserve report carries a decision.');
+        if (!canDecide(ctx, scope, kind)) throw error('permission-denied', 'HR authority required.');
         // הכרעה על עצמך אינה אפשרית גם למי שהוא משאבי אנוש.
         if (current.owner_uid === ctx.uid) throw error('permission-denied', 'You cannot decide your own report.');
+        if (own(p, 'text') && kind !== SHIFT_KIND) throw error('invalid-argument', 'Only a shift change decision carries a note.');
+        /* ⭐ בקשת שינוי ציוות: אפשר לתקן הכרעה כל עוד היום המבוקש לא עבר
+         * (שעון ישראל). אחרי היום — ההכרעה סופית; אין היפוך רטרואקטיבי
+         * ואין פוש נוסף לעובד על יום שכבר היה. */
+        if (kind === SHIFT_KIND && FINAL_DECISIONS.includes(current.decision)
+          && current.decision !== p.decision && current.target_date < israelToday(now())) {
+          throw error('failed-precondition', 'The requested day has passed; the decision is final.');
+        }
+        /* אותה הכרעה שוב = אין שינוי (גם אם צורף נימוק) — אין גרסה ואין פוש. */
         decisionPlan = { decision: p.decision, noChange: current.decision === p.decision && current.kind !== 'course' };
+      }
+      /* תחנת הקצה המבוקשת נקראת מהשרת: קיימת, בתחנה הזו, ופעילה. */
+      if (op === 'create' && p.kind === SHIFT_KIND) {
+        const site = await tx.get(root(ctx.sid).collection('sub_stations').doc(p.target_sub_station));
+        const v = site.exists ? site.data() : null, state = plain(v) ? String(v.status || '').toLowerCase() : '';
+        if (!plain(v) || v.is_active === false || v.active === false || v.archived === true
+          || state === 'inactive' || state === 'archived' || typeof v.name !== 'string') throw error('failed-precondition', 'The requested sub-station is not active in this station.');
       }
       if (op === 'reply' && current.status === 'closed') throw error('failed-precondition', 'The request is closed.');
       if (op === 'nudge' && !(ownerSide ? ['open', 'in_progress'].includes(current.status) : current.status === 'waiting_employee')) throw error('failed-precondition', 'No outstanding action for the other side.');
@@ -335,6 +418,14 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
         coursePlan = await courseCredits.prepareDecision(tx, {ctx, caseBefore:current, decision:p.decision, nextRevision:current.revision+1});
       }
       await beforeWrites(op); await live(tx, r);
+      // Moving eligibility belongs after durable replay and the final async
+      // authority checks. A lost successful response remains replayable tomorrow.
+      if (op === 'create' && p.kind === SHIFT_KIND) {
+        const today = israelToday(now());
+        if (p.target_date < today || p.target_date > addDays(today, SHIFT_HORIZON_DAYS)) {
+          throw error('invalid-argument', 'A shift change request must be for today through ' + SHIFT_HORIZON_DAYS + ' days ahead.');
+        }
+      }
       const at = now(), old = quota.exists ? quota.data().requests_at_ms : [];
       if (!Array.isArray(old) || old.some(v => !Number.isSafeInteger(v) || v > at)) throw error('failed-precondition', 'Quota data is invalid.');
       const recent = old.filter(v => v > at - QUOTA_WINDOW_MS);
@@ -352,7 +443,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
         const revision = current ? current.revision + 1 : 1;
         if (!Number.isSafeInteger(revision)) throw error('failed-precondition', 'Revision overflow.');
         const status = op === 'create' ? 'open' : op === 'setStatus' ? p.status
-          : op === 'reply' && ownerSide && current.status === 'waiting_employee' ? 'open' : current.status;
+          : op === 'reply' && ownerSide && current.status === 'waiting_employee' ? 'open'
+            /* בקשת שינוי ציוות שהוכרעה — טופלה. */
+            : op === 'setDecision' && kindOf(current) === SHIFT_KIND ? 'closed' : current.status;
         const next = current ? { ...current, revision, status, updated_at_ms: at,
           ...(removalPlan ? { attachment_ids: removalPlan.attachment_ids,
             removed_attachment_ids: removalPlan.removed_attachment_ids } : {}),
@@ -364,7 +457,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
            * יוצר דיווח שכבר מאושר: ההכרעה נכתבת רק ב-`setDecision`,
            * שדורש סמכות משאבי אנוש ואוסר הכרעה על עצמך. */
           ...(DATED_KINDS.includes(p.kind)
-            ? { from_date: p.from_date, to_date: p.to_date, months: p.months, decision: 'pending' } : {})
+            ? { from_date: p.from_date, to_date: p.to_date, months: p.months, decision: 'pending' } : {}),
+          ...(p.kind === SHIFT_KIND
+            ? { target_date: p.target_date, target_sub_station: p.target_sub_station, decision: 'pending' } : {})
         };
         if (coursePlan) next.course_snapshot = coursePlan.snapshot;
         const eventId = hash(['hr-request-event-v1', operationId]);
@@ -374,6 +469,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
           ...(coursePlan ? { course_snapshot: coursePlan.snapshot, previous_course_snapshot: current.course_snapshot || null } : {}),
           ...(op === 'create' && DATED_KINDS.includes(p.kind)
             ? { request_kind: p.kind, from_date: p.from_date, to_date: p.to_date } : {}),
+          ...(op === 'create' && p.kind === SHIFT_KIND
+            ? { request_kind: p.kind, target_date: p.target_date, target_sub_station: p.target_sub_station } : {}),
           ...(own(p, 'text') ? { text: p.text } : {}),
           ...(op === 'setStatus' ? { from_status: current.status, to_status: status } : {}),
           /* ⭐ זהו יומן הביקורת של המחיקה: מי, מתי, איזה קובץ ובאיזו
@@ -391,7 +488,9 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
         if (notificationStatus !== 'no_other_recipient') {
           const job = { schema: 'hr-request-notification-v1', event_id: eventId, case_id: ref.id,
             station_id: ctx.sid, actor_uid: ctx.uid, actor_auth_time: r.authTime,
-            audience: ownerNotification ? 'person' : 'station_hr',
+            /* בקשת שינוי ציוות מגיעה גם לאחראי/ת הסידור — קהל נפרד,
+             * כדי שאף פנייה אחרת לא תגיע אליהם. */
+            audience: ownerNotification ? 'person' : kindOf(next) === SHIFT_KIND ? 'station_shift' : 'station_hr',
             ...(ownerNotification ? { recipient_uid: next.owner_uid } : {}),
             type: op === 'nudge' ? 'hr_nudge' : ownerNotification ? 'hr_reply' : 'hr_request',
             status: notificationStatus, delivery_status: 'intent_only', created_at_ms: at,
@@ -431,7 +530,10 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     if (typeof hooks.beforeFinalize === 'function') await hooks.beforeFinalize();
     await db.runTransaction(async tx => {
       await live(tx, r);
-      if (ref) caseData(await tx.get(ref), r.ctx);
+      if (ref) {
+        const [snap, scope] = await Promise.all([tx.get(ref), scopeOf(tx, r.ctx)]);
+        caseData(snap, r.ctx, scope);
+      }
     });
   }
   // Internal transaction ports, never callable endpoints. The caller owns the
@@ -473,6 +575,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     const ref = caseRef(ctx.sid, input.parent_id);
     await live(tx, r);
     const d = caseData(await tx.get(ref), ctx), ids = attachmentIds(d.attachment_ids);
+    if (kindOf(d) === SHIFT_KIND) throw error('failed-precondition', 'Files are not attached to a shift change request.');
     if (d.status === 'closed') throw error('failed-precondition', 'The request is closed.');
     if (d.revision !== expected) throw error('aborted', 'The request changed. Refresh before saving.');
     if (ids.includes(attachmentId)) throw error('already-exists', 'Attachment is already published.');
@@ -518,7 +621,10 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
   });
   async function list(req, inbox = false) {
     const r = request(req, inbox ? ['cursor', 'kind'] : ['cursor']);
-    if (inbox && !manager(r.ctx)) throw error('permission-denied', 'HR authority required.');
+    /* אחראי/ת סידור (לא משאבי אנוש) נכנס/ת לתיבה רק עם סינון לבקשות
+     * שינוי ציוות; המינוי החי נבדק בתוך העסקה. */
+    const shiftInbox = inbox && !manager(r.ctx) && r.data.kind === SHIFT_KIND;
+    if (inbox && !manager(r.ctx) && !shiftInbox) throw error('permission-denied', 'HR authority required.');
     if (own(r.data, 'cursor') && (typeof r.data.cursor !== 'string' || !KEY.test(r.data.cursor))) throw error('invalid-argument', 'Invalid cursor.');
     /* ⭐ הסינון נעשה בשאילתה ולא בדפדפן. סינון בדפדפן על עמוד
      * של 25 היה מציג למשאבי אנוש תיבה ריקה כשיש דיווחים הממתינים
@@ -526,13 +632,18 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     if (own(r.data, 'kind') && !KINDS.includes(r.data.kind)) throw error('invalid-argument', 'Invalid request kind.');
     const result = await db.runTransaction(async tx => {
       await live(tx, r);
+      /* „הפניות שלי" מחזיר גם האם המשתמש מטפל/ת בבקשות ציוות (מינוי חי) —
+       * כדי שהמסך ידע להציג את התיבה בלי קריאה נוספת. קריאה אחת, ממוסמך
+       * המינוי בלבד. ההרשאה עצמה נבדקת שוב בכל פעולה. */
+      const scope = shiftInbox || !inbox ? await scopeOf(tx, r.ctx) : NO_SCOPE;
+      if (shiftInbox && scope.schedule !== true) throw error('permission-denied', 'Schedule manager appointment required.');
       let q = root(r.ctx.sid).collection('hr_requests');
       if (!inbox) q = q.where('owner_uid', '==', r.ctx.uid);
       if (inbox && own(r.data, 'kind')) q = q.where('kind', '==', r.data.kind);
       q = q.orderBy('__name__').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
-      const items = docs.map(s => summary(caseData(s, r.ctx)));
+      const items = docs.map(s => summary(caseData(s, r.ctx, scope)));
       /* ⭐ שם ומשמרת לתיבת משאבי אנוש — קריאה מקובצת אחת,
        * לא אחת לשורה. 25 קריאות סדרתיות בתוך עסקה הן N+1 בסבבי
        * רשת; `getAll` הופך אותן לאחת.
@@ -564,9 +675,15 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
           c.owner_crew = person ? person.owner_crew : '';
         }
       }
-      return { items, next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null };
+      return { items, next_cursor: page.size > PAGE_SIZE ? docs[docs.length - 1].id : null,
+        ...(inbox ? {} : { can_handle_shift: manager(r.ctx) || scope.schedule === true }) };
     });
-    await finalRead(r); return result;
+    await finalRead(r);
+    if (shiftInbox) await db.runTransaction(async tx => {
+      const scope = await scopeOf(tx, r.ctx);
+      if (scope.schedule !== true) throw error('permission-denied', 'Schedule manager appointment required.');
+    });
+    return result;
   }
   /* מוני תיבות העבודה. קריאה אחת למסמך אחד, בלי סריקה
    * ובלי אינדקס חדש. שני הצירים מוחזרים בנפרד ואינם מאוחדים:
@@ -581,7 +698,7 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
       const stored = plain(value) && plain(value.buckets) ? value.buckets : {};
       let drift = plain(value) && Number.isSafeInteger(value.drift_at_ms) && value.drift_at_ms > 0;
       const boxes = {};
-      for (const kind of DATED_KINDS) {
+      for (const kind of DECIDED_KINDS) {
         const row = { status: {}, decision: {} };
         for (const state of STATES) {
           const v = counterValue(stored[kind + '|status|' + state]);
@@ -607,7 +724,8 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     const ref = caseRef(r.ctx.sid, r.data.case_id);
     const result = await db.runTransaction(async tx => {
       await live(tx, r);
-      const c = caseData(await tx.get(ref), r.ctx);
+      const [snap, scope] = await Promise.all([tx.get(ref), scopeOf(tx, r.ctx)]);
+      const c = caseData(snap, r.ctx, scope);
       let q = ref.collection('events').orderBy('revision').limit(PAGE_SIZE + 1);
       if (r.data.cursor) q = q.startAfter(r.data.cursor);
       const page = await tx.get(q), docs = page.docs.slice(0, PAGE_SIZE);
@@ -645,4 +763,5 @@ function createHrRequests({ db, auth, HttpsError, clock = Date.now, hooks = {}, 
     list: req => list(req), listInbox: req => list(req, true), counts, get, attachmentPorts });
 }
 module.exports = Object.freeze({ createHrRequests, PAGE_SIZE, QUOTA_MAX, QUOTA_WINDOW_MS, STATES,
-  KINDS, DATED_KINDS, DECISIONS, MAX_ABSENCE_DAYS, MAX_ABSENCE_MONTHS, absenceMonths, COUNTER_DOC });
+  KINDS, DATED_KINDS, DECIDED_KINDS, SHIFT_KIND, SHIFT_TEXT_MAX, SHIFT_HORIZON_DAYS, DECISIONS,
+  MAX_ABSENCE_DAYS, MAX_ABSENCE_MONTHS, absenceMonths, COUNTER_DOC, israelToday });

@@ -64,7 +64,8 @@ function runtime(hooks) {
     snapshotWriteChunkSize: hooks && hooks.snapshotWriteChunkSize,
     FieldValue: admin.firestore.FieldValue,
     FieldPath: admin.firestore.FieldPath,
-    clock: CLOCK,
+    clock: (hooks && hooks.clock) || CLOCK,
+    monthAuthorityEnabled: !!(hooks && hooks.monthAuthorityEnabled),
     hash,
     randomId,
     createEngine: createCalendarEngine,
@@ -161,7 +162,7 @@ const SHEET = [
 ].join('\n');
 const MATRIX = SHEET.split('\n').map((line) => line.split('\t'));
 
-async function seed() {
+async function seed(rotation = null) {
   await station().set({ name: 'Sheet Import Integration Station' });
   const batch = db.batch();
   batch.set(station().collection('users').doc(MGR), { station: SID, role: 'firefighter', full_name: 'אחראי בדיקה', active: true });
@@ -189,7 +190,7 @@ async function seed() {
         timna: { label: 'תמנע', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] },
         yotvata: { label: 'יטבתה', minimum: 0, requirements: [{ role: 'ff', count: 1, required: false }] }
       },
-      rest: { min_gap_days: 1 }, rotation: null, max_shifts_per_month: null
+      rest: { min_gap_days: 1 }, rotation, max_shifts_per_month: null
     }
   }));
   // מקור חתום כפי שהשרת כותב אותו — בלי לעבור דרך הדבקת כוח האדם.
@@ -284,7 +285,9 @@ async function test(name, fn) {
   console.log('✓ ' + name);
 }
 
-(async function run() {
+module.exports = { runtime, seed, wipe, station, runtimeDoc, req, MGR, SHEET };
+
+if (require.main === module) (async function run() {
   await wipe();
   await seed();
   const api = runtime();
@@ -519,6 +522,53 @@ async function test(name, fn) {
   await test('snapshot recovery: exact retry resumes a failure after a middle child batch', async () => {
     // Restore the absence so this is another real one-person edit.
     await proveSnapshotRecovery(1, 'edit_recover_middle', { kind: 'sick' });
+  });
+
+  /* ⭐ 42H.48 (Claude) · „אטומיות" של עריכה — כל עריכה, ובפרט שכפול ציוות
+   * חודשי שעובר באותו מסלול (כאן: עריכת היעדרות אחת, די כדי לפתוח את החלון) —
+   * אינה WriteBatch אחד: המנוע כותב את הפרסום ואת ה-outbox במנות, ורק אז
+   * מעביר את המצביע הפעיל בעסקה אחת. הבדיקה מוכיחה מה קורה בכשל בדיוק
+   * בחלון שבין השניים: אף אחד לא רואה את הפרסום, ואף התראה לא יוצאת —
+   * גם לא אחרי שמנקה ה-outbox המתוזמן רץ. */
+  await test('activation failure after staging: nothing becomes visible and nobody is notified, even after the outbox sweeper', async () => {
+    const current = (await station().collection('schedule_state').doc('active').get()).data();
+    const mine = [{ kind: 'absence', uid: 'u5', dates: ['2026-09-03'], absence: { kind: 'course' } }];
+    const report = await api.previewScheduleEdit(req(MGR, { expected: expectedOf(current), edits: mine }));
+    assert.ok(report.notifications >= 1, 'the edit would notify someone');
+    /* מנקים קודם את ה-outbox של הבדיקות הקודמות (בהארנס אין טריגר), כדי
+     * שכל פוש שייספר מכאן ואילך יהיה רק מהפרסום שנכשל. */
+    await api.resumeOutbox();
+    const pushes = [];
+    const failing = createScheduleRuntime({
+      db, FieldValue: admin.firestore.FieldValue, FieldPath: admin.firestore.FieldPath, clock: CLOCK, hash, randomId,
+      createEngine: createCalendarEngine, createPublication, createService: createScheduleService, isSuper: () => false,
+      sendPush: async (...args) => { pushes.push(args); return { sent: 1 }; },
+      beforeSnapshotFinalize: async (event) => { if (event.kind === 'publication') throw new Error('INJECTED_ACTIVATION_FAILURE'); }
+    });
+    const error = await caught(() => failing.applyScheduleEdit(req(MGR, { request_id: 'edit_activation_fail', expected: expectedOf(current),
+      edits: mine, expected_edit_digest: report.edit_digest, gap_acknowledgement: report.gaps.digest })));
+    assert.ok(error && /INJECTED_ACTIVATION_FAILURE/.test(error.message), error && error.message);
+    const after = (await station().collection('schedule_state').doc('active').get()).data();
+    assert.deepEqual([after.publication_id, after.revision, after.content_digest], [current.publication_id, current.revision, current.content_digest],
+      'the active pointer did not move');
+    const orphans = (await station().collection('schedule_publications').get()).docs
+      .filter((doc) => doc.id !== current.publication_id && doc.data().request_id === 'edit_activation_fail');
+    let staged = 0;
+    for (const doc of orphans) {
+      const outbox = await doc.ref.collection('schedule_outbox').get();
+      staged += outbox.size;
+      outbox.docs.forEach((n) => assert.equal(n.data().status, 'blocked', 'staged notification stays blocked'));
+    }
+    assert.ok(staged >= 1, 'the failure happened after the outbox was staged (the window under test)');
+    const swept = await failing.resumeOutbox();
+    /* המנקה באמת עבר עליהן (לא עבר לידן), ולא שחרר אף אחת. */
+    assert.ok(swept.scanned >= staged, 'the sweeper examined the staged entries: ' + JSON.stringify(swept));
+    assert.equal(swept.queued, 0, 'and queued none of them');
+    for (const doc of orphans) {
+      const outbox = await doc.ref.collection('schedule_outbox').get();
+      outbox.docs.forEach((n) => assert.ok(['blocked', 'cancelled'].includes(n.data().status), 'never queued or sent: ' + n.data().status));
+    }
+    assert.equal(pushes.length, 0, 'no push for a schedule nobody can see');
   });
 
   await test('rollback returns only to the immediate previous publication and records gap warnings', async () => {

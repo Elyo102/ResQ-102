@@ -1,0 +1,32 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-resq", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
++  firestore: Firestore Emulator was started in standard edition.
++  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: node functions/outbox-operation.integration.test.js && node functions/outbox-operation-boundary.integration.test.js
+PASS schedule same-lease replaced attempt success
+PASS schedule same-lease replaced attempt error
+PASS schedule same-lease replaced attempt suppression
+PASS schedule changed recipient never enters provider
+PASS schedule changed payload never enters provider
+PASS schedule uncertain retry keeps operation and new attempt
+PASS schedule legacy expired lease retains prior unknown acceptance
+PASS guard same-lease replaced attempt success
+PASS guard same-lease replaced attempt error
+PASS guard same-lease replaced attempt suppression
+PASS guard changed recipient never enters provider
+PASS guard changed payload never enters provider
+PASS guard uncertain retry keeps operation and new attempt
+PASS guard legacy expired lease retains prior unknown acceptance
+Outbox operation native emulator: 14/14 PASS; provider synthetic, at-least-once only
+PASS schedule changed payload after uncertain send is rejected without losing history
+PASS schedule tracked expired attempt counts risk once across repeated reconciliation
+PASS guard changed payload after uncertain send is rejected without losing history
+PASS guard tracked expired attempt counts risk once across repeated reconciliation
+Outbox operation boundaries: 4/4 PASS; synthetic provider, at-least-once only
++  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator

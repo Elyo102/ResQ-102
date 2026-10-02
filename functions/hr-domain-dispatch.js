@@ -75,7 +75,7 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
       || j.exclude_actor !== !personalRecord || !own(TITLES, j.type) || j.routine_after_quiet !== (j.type !== 'hr_nudge')
       || j.consent_expires_at_ms !== (j.send_now ? j.created_at_ms + LIMITS.consentMs : 0)
       || (j.audience === 'person' ? !access.validUid(j.recipient_uid) : own(j, 'recipient_uid'))
-      || !(personalRecord ? ['person'] : family === 'request' ? ['person', 'station_hr']
+      || !(personalRecord ? ['person'] : family === 'request' ? ['person', 'station_hr', 'station_shift']
         : workforce ? ['station_hr'] : ['person', 'station_members']).includes(j.audience)
       || (personalRecord ? j.type!==(correction?'attendance_corrected':'report_reviewed') || j.send_now!==false || j.consent_expires_at_ms!==0
         || ['case_id','document_id','revision',...(correction?['reviewed_revision']:[])].some(k=>own(j,k))
@@ -130,7 +130,16 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
     } catch (e) { throw fault('actor-profile-unavailable', ['permission-denied', 'failed-precondition', 'unauthenticated'].includes(codeOf(e))); }
     if (source.family === 'correction' || source.family === 'review' || source.family === 'document'
       || source.family === 'workforce' || source.event.kind === 'setStatus' || j.actor_uid !== source.parent.owner_uid) {
-      if (!ctx.super && ctx.role !== 'hr_coordinator') throw fault('actor-role-changed', true);
+      if (!ctx.super && ctx.role !== 'hr_coordinator') {
+        /* בבקשת שינוי ציוות גם אחראי/ת סידור בעל/ת מינוי חי רשאי/ת לפעול
+         * (הכרעה/תשובה) — נבדק שוב כאן, בזמן השליחה. */
+        const shiftActor = source.family === 'request' && source.parent.kind === 'shift_change'
+          && source.event.kind !== 'setStatus';
+        const appointment = shiftActor ? await tx.get(station(j.station_id).collection('schedule_access').doc(j.actor_uid)) : null;
+        if (!appointment || !appointment.exists || !access.isManagerAccess(appointment.data(), j.station_id, j.actor_uid)) {
+          throw fault('actor-role-changed', true);
+        }
+      }
     }
   }
   async function sourceOf(tx, j, family) {
@@ -203,11 +212,16 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
         || !integer(p.revision) || p.revision < 1 || !plain(e) || e.schema !== 'hr-request-event-v1'
         || e.event_id !== j.event_id || e.case_id !== j.case_id || e.station_id !== j.station_id
         || e.actor_uid !== j.actor_uid || e.created_at_ms !== j.created_at_ms || !integer(e.revision)
-        || e.revision < 1 || e.revision > p.revision || !['create', 'reply', 'setStatus', 'nudge', 'attachment'].includes(e.kind)
+        || e.revision < 1 || e.revision > p.revision || !['create', 'reply', 'setStatus', 'setDecision', 'nudge', 'attachment'].includes(e.kind)
         || (e.kind === 'attachment' && (typeof e.attachment_id !== 'string' || !/^[a-f0-9]{64}$/.test(e.attachment_id)))) throw fault('source-invalid', true);
-      const ownerSide = j.actor_uid === p.owner_uid, personal = e.kind === 'setStatus' || !ownerSide;
+      /* ⭐ הכרעה (setDecision) היא אירוע אישי לבעל/ת הפנייה, בדיוק כמו
+       * שינוי סטטוס. עד 42H.47 היא לא הופיעה ברשימה, ולכן כל התראת
+       * הכרעה בוטלה כ-source-invalid ולא הגיעה לעובד (נמדד באמולטור). */
+      const ownerSide = j.actor_uid === p.owner_uid, personal = e.kind === 'setStatus' || e.kind === 'setDecision' || !ownerSide;
       const type = e.kind === 'nudge' ? 'hr_nudge' : personal ? 'hr_reply' : 'hr_request';
-      if (j.type !== type || j.audience !== (personal ? 'person' : 'station_hr')
+      /* בקשת שינוי ציוות הולכת לקהל station_shift (משאבי אנוש + אחראי/ת סידור חי/ה). */
+      const groupAudience = p.kind === 'shift_change' ? 'station_shift' : 'station_hr';
+      if (j.type !== type || j.audience !== (personal ? 'person' : groupAudience)
         || (personal && (j.recipient_uid !== p.owner_uid || j.recipient_uid === j.actor_uid))
         || (e.kind === 'create' && (!ownerSide || e.revision !== 1))) throw fault('source-audience-invalid', true);
       if (e.kind === 'nudge' && (e.revision !== p.revision
@@ -249,6 +263,10 @@ function createHrDomainDispatch({ db, auth, messaging, HttpsError, clock = Date.
           (!['string','number'].includes(typeof d.employee_number)||(typeof d.employee_number==='number'&&!Number.isFinite(d.employee_number))||String(d.employee_number)!==j.employee_number))))throw fault('recipient-binding-changed',true);
     }
     if (j.audience === 'station_hr' && c.super !== true && p.role !== 'hr_coordinator') throw fault('recipient-not-hr', true);
+    if (j.audience === 'station_shift' && c.super !== true && p.role !== 'hr_coordinator') {
+      const appointment = await tx.get(station(j.station_id).collection('schedule_access').doc(uid));
+      if (!appointment.exists || !access.isManagerAccess(appointment.data(), j.station_id, uid)) throw fault('recipient-not-shift-approver', true);
+    }
     if (source.family === 'document' && j.type === 'hr_nudge') {
       const snap = await tx.get(station(j.station_id).collection('hr_documents').doc(j.document_id)
         .collection('revisions').doc(String(j.revision)).collection('receipts').doc(uid));

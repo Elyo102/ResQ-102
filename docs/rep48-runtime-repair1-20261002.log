@@ -1,0 +1,35 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-resq", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
++  firestore: Firestore Emulator was started in standard edition.
++  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: node functions/schedule-replication.integration.test.js && node functions/schedule-edit.integration.test.js
+PASS replication is authenticated and rejects client date/edits injection
+PASS server preview binds source, month, Israel date and actual change count without writes
+PASS midnight and changed intent invalidate preview without writes
+PASS apply uses normal publication pipeline and creates provenance audit
+PASS completed receipt replays after midnight and pointer advance without another publication
+PASS no-change replication produces a zero-change preview and cannot publish
+PASS revoked live manager cannot replay a successful replication
+Replication runtime integration: 7/7 PASS; emulator only, no real FCM/device claim.
+✓ seed: import the sheet, switch to new (test-only direct write), publish revision 1
+✓ edit gates: viewer refused; wrong base is stale; report writes nothing
+✓ apply: derived draft → new revision with CAS, audit, one outbox entry per changed person
+✓ the board shows the edit; a retry returns the same receipt; the old base is refused
+✓ a competing publication between report and apply is refused inside the transaction
+✓ §1 a gap-policy change is recomputed inside the transaction and stored as a warning
+✓ §2 an absence-only edit notifies the person once, naming the date and never the reason
+✓ §3/§6 edits are refused for a foreign sub-station key and an unknown role; after a policy change the rows are rebased, not refused
+✓ snapshot recovery: exact retry resumes a failure before the first child batch
+✓ snapshot recovery: exact retry resumes a failure after a middle child batch
+✓ activation failure after staging: nothing becomes visible and nobody is notified, even after the outbox sweeper
+✓ rollback returns only to the immediate previous publication and records gap warnings
+✓ source drift preserves the signed snapshot while allowing removal of a departed assignee
+
+13 schedule-edit Firestore integration checks passed.
++  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+!  Firestore Emulator has exited upon receiving signal: SIGINT
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator

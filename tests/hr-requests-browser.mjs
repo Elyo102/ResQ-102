@@ -11,7 +11,8 @@ const files = ['course-timeline.js', 'hr-requests.html', 'hr-requests-client.js'
 const hashes = () => Object.fromEntries(files.map(f => [f, createHash('sha256').update(fs.readFileSync(path.join(root, f))).digest('hex')]));
 const before = hashes(), browser = await chromium.launch(), contexts = new Set();
 let passed = 0;
-async function fixture({ role = 'firefighter', superUser = false, connected = true, width = 1100, theme = 'light' } = {}) {
+async function fixture({ role = 'firefighter', superUser = false, connected = true, width = 1100, theme = 'light',
+  stationId = 'synthetic_station', shiftHandler = false, query = '' } = {}) {
   const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width, height: 900 }, colorScheme: theme }); contexts.add(context);
   await context.addInitScript(options => {
     const t = window.__requests = { calls: [], held: [], claimsHeld: [], observers: [], hold: null, reject: null, nextFailure: null,
@@ -22,7 +23,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
         p2: { owner_name: '\u05d0\u05d1\u05d9 \u05db\u05d4\u05df', owner_crew: '\u05de\u05e9\u05de\u05e8\u05ea \u05d0' } },
       countsFailure: null, countsOverride: null };
     t.makeUser = (uid, role = 'firefighter', superUser = false) => {
-      const claims = { stationId: 'synthetic_station', role, super: superUser, auth_time: 1788220800 };
+      const claims = { stationId: options.stationId, role, super: superUser, auth_time: 1788220800 };
       return { uid, claims, getIdTokenResult: async () => ({ claims }) };
     };
     // Synthetic SDK response identity, matching epochOf; never call the SDK claim getter again.
@@ -57,12 +58,14 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
           ...c,
           has_attachment: c.has_attachment === true,
           ...(name === 'listHrRequestsInbox' && t.people[c.owner_uid] ? t.people[c.owner_uid] : {})
-        })), next_cursor: null };
+        })), next_cursor: null,
+          /* כמו השרת: „הפניות שלי" אומר אם יש מינוי חי לטיפול בבקשות ציוות. */
+          ...(name === 'listMyHrRequests' ? { can_handle_shift: options.shiftHandler === true } : {}) };
       } else if (name === 'countHrRequestBoxes') {
         if (t.countsFailure) throw Object.assign(new Error('Synthetic counts failure'), { code: 'functions/' + t.countsFailure });
         if (t.countsOverride) { result = structuredClone(t.countsOverride); }
         else {
-          const kinds = ['sick', 'reserve', 'vacation', 'extended_absence', 'course'];
+          const kinds = ['sick', 'reserve', 'vacation', 'extended_absence', 'course', 'shift_change'];
           const states = ['open', 'in_progress', 'waiting_employee', 'closed'];
           const decisions = ['pending', 'approved', 'rejected'];
           const boxes = {};
@@ -135,9 +138,11 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
           let c = t.cases.find(c => c.case_id === data.case_id);
           if (name === 'createHrRequest') {
             const dated = ['sick', 'reserve', 'vacation', 'extended_absence', 'course'].includes(data.kind);
-            c = t.addCase(String(++t.committed + 2), data.subject, t.auth.currentUser.uid,
+            const shift = data.kind === 'shift_change';
+            c = t.addCase(String(++t.committed + 2), shift ? 'בקשת שינוי ציוות / תחנה' : data.subject, t.auth.currentUser.uid,
               dated ? { kind: data.kind, from_date: data.from_date, to_date: data.to_date,
                 decision: 'pending', created_at_ms: Date.parse('2026-09-19T08:00:00+03:00') }
+                : shift ? { kind: 'shift_change', target_date: data.target_date, target_sub_station: data.target_sub_station, decision: 'pending' }
                 : { kind: data.kind || 'general' });
             // הערה ריקה אינה שורת טקסט ביומן, בדיוק כמו בשרת.
             if (data.text) c.events[0].text = data.text; else delete c.events[0].text;
@@ -155,12 +160,14 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
               if (name === 'decideMyStationReport') {
                 c.decision = data.decision; c.decided_by = t.auth.currentUser.uid;
                 c.decided_at_ms = Date.parse('2026-09-19T12:00:00+03:00');
+                if (c.kind === 'shift_change') c.status = 'closed';
               }
               if (name === 'replyHrRequest' && c.owner_uid === t.auth.currentUser.uid && c.status === 'waiting_employee') c.status = 'open';
               c.events.push({ event_id: c.revision.toString(16).padStart(64, '0'), revision: c.revision, actor_uid: t.auth.currentUser.uid,
                 kind: name === 'replyHrRequest' ? 'reply' : name === 'setHrRequestStatus' ? 'setStatus'
                   : name === 'decideMyStationReport' ? 'setDecision' : 'nudge',
-                ...(name === 'replyHrRequest' ? { text: data.text } : name === 'setHrRequestStatus' ? { from_status: 'open', to_status: data.status } : {}) });
+                ...(name === 'replyHrRequest' ? { text: data.text } : name === 'setHrRequestStatus' ? { from_status: 'open', to_status: data.status }
+                  : name === 'decideMyStationReport' && data.text ? { text: data.text } : {}) });
             }
           }
           result ||= { case_id: c.case_id, revision: c.revision, status: c.status, outcome: 'saved', notification_status: 'policy_pending', duplicate: false };
@@ -175,7 +182,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
     };
     function assertSame(a, b) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error('Retry changed request payload'); }
     t.release = () => t.held.splice(0).forEach(h => h.resolve());
-  }, { role, superUser, connected });
+  }, { role, superUser, connected, stationId, shiftHandler });
   const stubs = {
     '/appcheck.js': 'export async function initAppCheck(){window.__requests.appCheck=true;}',
     '/monitored-functions.js': 'export function getFunctions(a,r){window.__requests.region=r;return {};};export function httpsCallable(f,n){return data=>window.__requests.transport(n,data);}',
@@ -192,7 +199,7 @@ async function fixture({ role = 'firefighter', superUser = false, connected = tr
   });
   const page = await context.newPage(), errors = []; page.setDefaultTimeout(6000); page.on('pageerror', e => errors.push(e.message));
   page.on('dialog', d => d.accept());
-  await page.goto(origin + '/hr-requests.html');
+  await page.goto(origin + '/hr-requests.html' + query);
   if (connected && role !== 'district_commander') await page.waitForFunction(() => __requests.calls.some(c => c.name === 'listMyHrRequests'));
   return { page, errors, close: async () => { assert.deepEqual(errors, []); await context.close(); contexts.delete(context); } };
 }
@@ -773,7 +780,7 @@ try {
     const f = await fixture({ role: 'hr_coordinator' });
     await f.page.evaluate(() => {
       __requests.countsOverride = { drift: true, updated_at_ms: 1, boxes: Object.fromEntries(
-        ['sick', 'reserve', 'vacation', 'extended_absence', 'course'].map(k => [k, {
+        ['sick', 'reserve', 'vacation', 'extended_absence', 'course', 'shift_change'].map(k => [k, {
           status: { open: 4, in_progress: 0, waiting_employee: 0, closed: 0 },
           decision: { pending: 4, approved: 0, rejected: 0 } }])) };
     });
@@ -950,6 +957,105 @@ try {
     assert.ok(detail.includes('הוסר קובץ מהפנייה'), detail);
     assert.ok(detail.includes('request-private.pdf'), 'the removed file is named in the audit line');
     assert.equal(await q(f.page, 'message').innerText().then(t => t.includes('אינה זמינה')), false);
+    await f.close();
+  });
+
+  /* ----------------------------------------------------------------------
+   *  42H.48 · בקשת שינוי ציוות / תחנה (Claude, 1.10.2026)
+   * -------------------------------------------------------------------- */
+  const israelDay = (offset = 0) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' })
+    .format(new Date(Date.now() + offset * 86400000));
+
+  await check('shift change form: one date, the four Eilat sub-stations, a live 250 counter, no subject in the payload', async () => {
+    const f = await fixture({ stationId: 'eilat_102' });
+    await q(f.page, 'new').click();
+    await q(f.page, 'kind').selectOption('shift_change');
+    assert.equal(await q(f.page, 'shift-fields').isVisible(), true);
+    assert.equal(await q(f.page, 'subject-label').isHidden(), true);
+    assert.equal(await q(f.page, 'dates').isHidden(), true);
+    assert.deepEqual(await q(f.page, 'target-sub').locator('option').evaluateAll(o => o.map(x => x.value)), ['', 'rashit', 'shahmon', 'timna', 'yotvata']);
+    assert.equal(await q(f.page, 'body').getAttribute('maxlength'), '250');
+    assert.equal(await q(f.page, 'target-date').getAttribute('min'), israelDay());
+    await q(f.page, 'body').fill('א'.repeat(260));
+    assert.equal((await q(f.page, 'body').inputValue()).length, 250, 'the field itself stops at 250');
+    assert.equal(await q(f.page, 'body-count').innerText(), '250 / 250');
+    assert.equal(await q(f.page, 'body-count').getAttribute('data-full'), 'true');
+    await q(f.page, 'body').fill('מבקש לעבור לתמנע בגלל לימודים');
+    assert.equal(await q(f.page, 'body-count').innerText(), '29 / 250');
+    const day = israelDay(3);
+    await q(f.page, 'target-date').fill(day);
+    await q(f.page, 'target-sub').selectOption('timna');
+    const summary = await q(f.page, 'summary').innerText();
+    assert.ok(summary.includes('תמנע') && summary.includes(day) && summary.includes('בעריכת הסידור'), summary);
+    assert.equal(await q(f.page, 'save').innerText(), 'שליחת הבקשה');
+    await q(f.page, 'save').click();
+    await f.page.waitForFunction(() => __requests.calls.some(c => c.name === 'createHrRequest'));
+    const sent = await f.page.evaluate(() => __requests.calls.find(c => c.name === 'createHrRequest').data);
+    assert.equal(sent.kind, 'shift_change'); assert.equal(sent.target_date, day); assert.equal(sent.target_sub_station, 'timna');
+    assert.equal(sent.text, 'מבקש לעבור לתמנע בגלל לימודים'); assert.equal(Object.hasOwn(sent, 'subject'), false);
+    assert.equal(Object.hasOwn(sent, 'from_date'), false);
+    await f.close();
+  });
+
+  await check('a station whose sub-stations are unknown to the screen does not offer the shift change kind', async () => {
+    const f = await fixture();
+    await q(f.page, 'new').click();
+    assert.equal(await q(f.page, 'kind').locator('option[value="shift_change"]').evaluate(o => o.hidden), true);
+    await f.close();
+  });
+
+  await check('without an appointment a firefighter sees no requests tab and is never offered a decision', async () => {
+    const f = await fixture({ stationId: 'eilat_102' });
+    await f.page.evaluate(() => __requests.addCase('c', 'בקשת שינוי ציוות / תחנה', 'p1',
+      { kind: 'shift_change', target_date: '2026-10-10', target_sub_station: 'timna', decision: 'pending' }));
+    assert.equal(await q(f.page, 'box-shift').isHidden(), true);
+    assert.equal(await q(f.page, 'inbox').isHidden(), true);
+    assert.equal(await f.page.evaluate(() => __requests.calls.some(c => c.name === 'listHrRequestsInbox')), false);
+    await f.close();
+  });
+
+  await check('a live schedule manager gets only the requests tab, decides with a note, and is told the schedule did not change', async () => {
+    const f = await fixture({ stationId: 'eilat_102', shiftHandler: true });
+    await f.page.evaluate(() => __requests.addCase('c', 'בקשת שינוי ציוות / תחנה', 'p1',
+      { kind: 'shift_change', target_date: '2026-10-10', target_sub_station: 'timna', decision: 'pending' }));
+    await q(f.page, 'box-shift').waitFor({ state: 'visible' });
+    for (const key of ['inbox', 'box-sick', 'box-reserve', 'box-vacation', 'box-extended', 'box-course', 'box-hours']) {
+      assert.equal(await q(f.page, key).isHidden(), true, key + ' stays hidden');
+    }
+    await q(f.page, 'box-shift').click();
+    await f.page.waitForFunction(() => __requests.calls.some(c => c.name === 'listHrRequestsInbox'));
+    assert.deepEqual(await f.page.evaluate(() => __requests.calls.filter(c => c.name === 'listHrRequestsInbox').map(c => c.data.kind)), ['shift_change']);
+    await f.page.locator('[data-case="' + 'c'.repeat(64) + '"]').click();
+    await q(f.page, 'approve').waitFor({ state: 'visible' });
+    const detail = await q(f.page, 'detail').innerText();
+    assert.ok(detail.includes('2026-10-10') && detail.includes('תמנע'), detail);
+    assert.equal(await q(f.page, 'approve').innerText(), 'אישור הבקשה');
+    assert.equal(await q(f.page, 'status-save').isHidden(), true, 'status handling stays HR-only');
+    assert.equal(await q(f.page, 'attachments').isHidden(), true, 'no files on a shift change request');
+    await q(f.page, 'decision-note').fill('אושר מול מפקד המשמרת');
+    await q(f.page, 'approve').click();
+    await f.page.waitForFunction(() => __requests.calls.some(c => c.name === 'decideMyStationReport'));
+    const sent = await f.page.evaluate(() => __requests.calls.find(c => c.name === 'decideMyStationReport').data);
+    assert.equal(sent.decision, 'approved'); assert.equal(sent.text, 'אושר מול מפקד המשמרת');
+    await f.page.waitForFunction(() => document.querySelector('[data-r="message"]').textContent.includes('השינוי בסידור טרם בוצע'));
+    await f.page.waitForFunction(() => document.querySelector('[data-r="detail"]').innerText.includes('השינוי בסידור טרם בוצע'));
+    await f.close();
+  });
+
+  await check('deep link from the schedule card opens the request form with the day filled, and cleans the address', async () => {
+    const day = israelDay(2);
+    const f = await fixture({ stationId: 'eilat_102', query: '?new=shift_change&date=' + day });
+    await q(f.page, 'create').waitFor({ state: 'visible' });
+    assert.equal(await q(f.page, 'kind').inputValue(), 'shift_change');
+    assert.equal(await q(f.page, 'target-date').inputValue(), day);
+    assert.equal(await f.page.evaluate(() => location.search), '');
+    await f.close();
+  });
+
+  await check('a past date in the deep link is not pre-filled', async () => {
+    const f = await fixture({ stationId: 'eilat_102', query: '?new=shift_change&date=2020-01-01' });
+    await q(f.page, 'create').waitFor({ state: 'visible' });
+    assert.equal(await q(f.page, 'target-date').inputValue(), '');
     await f.close();
   });
 

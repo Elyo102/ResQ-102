@@ -1,0 +1,53 @@
+PASS disconnected and unsupported role shells make no calls and contain no private data
+PASS actual client waits for App Check, uses region, own default and plain private text
+PASS attachment history renders its label without reopening waiting_employee or inventing download links
+PASS attachment malformed or missing identity rejects detail and exposes no attachment controls
+PASS composed attachment first empty list uses full epoch and omits request revision
+PASS composed wrong auth time or well-shaped wrong digest clears the entire request host
+PASS composed held upload locks host handlers then refreshes the same waiting case without changing its draft
+PASS composed ready result survives parent refresh failure without another upload
+PASS composed identity clear fences a held ready upload response and removes its private card
+PASS HR and signed super can choose inbox; ordinary command sees own view only
+PASS lost response after create commit locks edits; Retry preserves exact request and commits once
+PASS reply CAS keeps draft and waits for explicit refresh and a new user action
+PASS night nudge warning creates fresh explicitly consented action and resets checkbox
+PASS older detail response cannot replace a newly selected case
+PASS identity reset erases private drafts and late committed response cannot touch next identity
+PASS same UID token change and permission denial clear private DOM immediately
+PASS status update preserves an unrelated reply draft and uses explicit revision
+PASS mobile light/dark layout stays within viewport and leaves keyboard focus visible
+PASS the remove button appears only beside a file this person uploaded
+PASS removing a file calls the request callable, never Storage, and hides the file
+PASS the removed file is reported as removed in the request history
+PASS a viewer who does not own the request is offered no removal, even for a file they uploaded
+PASS the confirmation says what removal actually does, and says nothing about deleting
+PASS course employee range remains pending with no client credit or approval fields
+PASS actual HR course box displays approved server snapshot timeline without replacing assignments
+PASS the employee form sends the kind and the range, and nothing it was not given
+PASS an ordinary request still carries no dates at all
+PASS the note is optional on a report and required on an ordinary request
+PASS the receipt says HR has it and never says the schedule moved
+PASS a report reads as kind, range, pending, and says plainly that it is retroactive
+PASS HR approves a report and the screen then says who decided and when
+PASS HR is offered no decision on a report of their own
+PASS an ordinary firefighter is offered no decision, and no boxes at all
+PASS each box asks the server for its own kind and shows nothing else
+PASS a box refuses a page that carries the wrong kind instead of showing it under its title
+PASS hours reports are not in this screen at all
+PASS each box carries its open count, and both axes in the accessible name
+PASS a drifting tally says so instead of presenting the number as a fact
+PASS a malformed or failed tally leaves no number at all, never a wrong one
+PASS an HR row carries who, which crew, which range and whether an approval is attached
+PASS the employee sees no name or crew on their own rows, because the server sends none
+PASS status is colour AND text: the label is the exact stored word, the tone is an attribute
+PASS the summary sits inside the form, follows the dates, and one press sends
+PASS while sending, the button says so, reports aria-busy, and a second press writes nothing
+PASS the box row survives 320, 360 and 390 with 44 pixel targets and no sideways scroll
+PASS removing a file leaves the request readable, decision and all
+PASS shift change form: one date, the four Eilat sub-stations, a live 250 counter, no subject in the payload
+PASS a station whose sub-stations are unknown to the screen does not offer the shift change kind
+PASS without an appointment a firefighter sees no requests tab and is never offered a decision
+PASS a live schedule manager gets only the requests tab, decides with a note, and is told the schedule did not change
+PASS deep link from the schedule card opens the request form with the day filled, and cleans the address
+PASS a past date in the deep link is not pre-filled
+HR requests browser: 52/52 passed.

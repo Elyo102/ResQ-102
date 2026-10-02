@@ -61,6 +61,7 @@ const call = Object.freeze({
   displayStatus: httpsCallable(functions, 'getScheduleDisplayStatus'),
   displaySet: mutationCallable('setScheduleDisplay'),
   editPreview: httpsCallable(functions, 'previewScheduleEdit'),
+  replicationPreview: httpsCallable(functions, 'previewScheduleReplication'),
   editApply: mutationCallable('applyScheduleEdit'),
   qualCatalog: httpsCallable(functions, 'getQualificationCatalog'),
   qualSave: mutationCallable('saveQualification'),
@@ -2205,6 +2206,7 @@ function renderBoard(target, days, options) {
     const chip = node('span', 'crew' + (crew ? ' crew-' + crew : ''), crew ? 'משמרת ' + CREW_HE[crew] : '—');
     chip.title = crew ? 'המשמרת שעובדת ביממה הזאת' : 'המשמרת של היום אינה ידועה';
     head.appendChild(chip);
+    if (opts.id !== 'draftBoard') head.appendChild(shiftRequestLink(day.date));
     headerRow.appendChild(head);
   });
   board.appendChild(headerRow);
@@ -2236,6 +2238,12 @@ function renderBoard(target, days, options) {
         if (block) break;
       }
       cellContent(cell, block, sub.minVisualSlots, { date: day.date, subStation: sub.id });
+      if (opts.id === 'stationBoard' && canRunSchedule() && block) {
+        const replicate = node('button', 'replicate-row', 'שכפל ציוות לכל המשמרות החודש');
+        replicate.type = 'button';
+        replicate.addEventListener('click', managerAction(() => beginReplication(day.date, block.sub_station)));
+        cell.appendChild(replicate);
+      }
       ariaRow.appendChild(cell);
     });
     board.appendChild(ariaRow);
@@ -2400,6 +2408,7 @@ async function loadStationRange(ym) {
   renderBoardHead($('stationHead'), requestedMonth,
     (value) => loadStationRange(value), 'stationBoard', 'stationWeek');
   const box = $('stationContent');
+  state.renderedStationDays = null;
   clear(box); box.appendChild(node('div', 'loader'));
   $('stationNote').textContent = '';
   try {
@@ -2411,6 +2420,7 @@ async function loadStationRange(ym) {
       return { active:false, source:view.source || null };
     }
     renderBoard(box, view.days, { id: 'stationBoard', showAbsences: true });
+    state.renderedStationDays = view.days;
     watchWeekLabel('stationBoard', 'stationWeek', (view.days || []).length);
     // הלוח נפתח על היום, ורק אחר כך תווית השבוע מתעדכנת מהגלילה בפועל.
     focusTodayColumn('stationBoard');
@@ -2469,6 +2479,12 @@ function answerButtons(itemId, item) {
   wrap.append(yes, no); return wrap;
 }
 
+function shiftRequestLink(date) {
+  const link = node('a', 'shift-change-link', 'בקשת שינוי ציוות / תחנה');
+  link.href = './hr-requests.html?new=shift_change&date=' + encodeURIComponent(date);
+  return link;
+}
+
 function assignmentCard(item) {
   const card = node('article', 'assignment');
   card.appendChild(node('div', 'place', item.sub_station_label || item.sub_station));
@@ -2490,6 +2506,7 @@ function assignmentCard(item) {
     names.length ? 'צוות: ' + names.join(' · ') : 'לא שובצו אנשי צוות נוספים.'));
   if (item.change) inner.appendChild(node('div', 'msg info', 'השיבוץ הזה השתנה בפרסום האחרון.'));
   if (item.requires_answer || item.answer) inner.appendChild(answerButtons(item.date, item));
+  inner.appendChild(shiftRequestLink(item.date));
   card.appendChild(inner); return card;
 }
 
@@ -4171,7 +4188,8 @@ function editBase() {
 }
 
 function canEditSchedule() {
-  return canManageSchedule() && ['shadow', 'new'].indexOf(state.status.mode) !== -1 && !!editBase();
+  return canManageSchedule() && ['shadow', 'new'].indexOf(state.status.mode) !== -1
+    && !!(state.replication ? state.replicationBase : editBase());
 }
 
 function editStations() {
@@ -4346,8 +4364,52 @@ function editItemText(item) {
   return name + ' · ' + EDIT_ABSENCE_HE[item.absence.kind] + (item.absence.location ? ' (' + ABSENCE_LOCATIONS.get(item.absence.location) + ')' : '') + ' · ' + when;
 }
 
+async function beginReplication(date, subStation) {
+  if (!canRunSchedule() || state.busy || state.editPending) return;
+  if (state.editList && state.editList.length) {
+    message('editMessage', 'יש עריכות ברשימה. יש להשלים או להסיר אותן לפני שכפול ציוות.', 'warn');
+    return;
+  }
+  const task = authTask(); state.busy = true;
+  let active;
+  try {
+    const status = (await call.status({ date })).data;
+    if (!authTaskCurrent(task)) return;
+    active = status && status.active;
+    if (!status.manager || !active || !active.publication_id || !active.content_digest || !active.revision) throw new Error('אין פרסום חתום לעריכה ביום שנבחר.');
+  } catch (error) {
+    if (authTaskCurrent(task)) message('editMessage', errorText(error), 'err');
+    return;
+  } finally { if (authTaskCurrent(task)) state.busy = false; }
+  state.replicationBase = { publication_id: active.publication_id, content_digest: active.content_digest, revision: active.revision };
+  state.replication = { source: { date, sub_station: subStation }, month: date.slice(0, 7), mode: 'skip_manual' };
+  chooseTab('manage');
+  openEditDrawer(true);
+  updateEditAvailability();
+  invalidateEditReport();
+  renderEditList();
+  message('editMessage', 'בחרו אם לדרוס שיבוצים ידניים, ואז בדקו את השינויים לפני הפרסום.', 'info');
+}
+
 function renderEditList() {
   const box = $('editList'); clear(box);
+  if (state.replication) {
+    box.appendChild(node('b', '', 'שכפול מ-' + dateLabel(state.replication.source.date) + ' · ' + editStationLabel(state.replication.source.sub_station)));
+    const label = node('label', 'replication-override');
+    const override = node('input'); override.type = 'checkbox'; override.checked = state.replication.mode === 'override';
+    override.disabled = !!state.editPending || state.busy;
+    override.addEventListener('change', () => {
+      if (state.busy || state.editPending || !state.replication) return;
+      state.replication.mode = override.checked ? 'override' : 'skip_manual'; invalidateEditReport();
+    });
+    label.append(override, document.createTextNode('דרוס ימים עם שיבוץ ידני')); box.appendChild(label);
+    const cancel = node('button', '', 'ביטול השכפול'); cancel.type = 'button'; cancel.disabled = !!state.editPending || state.busy;
+    cancel.addEventListener('click', () => {
+      if (state.busy || state.editPending) return;
+      state.replication = null; state.replicationBase = null; invalidateEditReport(); renderEditList(); updateEditAvailability();
+    });
+    box.appendChild(cancel);
+  }
   (state.editList || []).forEach((item, index) => {
     const row = node('div', 'row');
     row.appendChild(node('b', '', editItemText(item)));
@@ -4356,10 +4418,11 @@ function renderEditList() {
     row.appendChild(remove);
     box.appendChild(row);
   });
-  $('editCheck').disabled = !(state.editList && state.editList.length) || !canEditSchedule() || !!state.editPending;
+  $('editCheck').disabled = state.busy || !(state.replication || (state.editList && state.editList.length)) || !canEditSchedule() || !!state.editPending;
 }
 
 function editPayload() {
+  if (state.replication) return { expected: structuredClone(state.replicationBase), replication: structuredClone(state.replication) };
   return {
     expected: editBase(),
     edits: (state.editList || []).map((item) => {
@@ -4387,6 +4450,7 @@ function pendingEditText() {
 
 function addEditItem() {
   if (!canEditSchedule()) return;
+  if (state.replication) { message('editMessage', 'יש להשלים או לבטל את השכפול לפני הוספת עריכה ידנית.', 'warn'); return; }
   const person = state.editPerson;
   if (!person) { message('editMessage', 'יש לבחור עובד מהחיפוש.', 'err'); return; }
   const dates = editDatesFor($('editRange').value, $('editDate').value);
@@ -4444,6 +4508,18 @@ function renderEditReport(report) {
   });
   if (report.changes_truncated) changes.appendChild(node('div', 'change warn', 'מוצגים ' + report.changes.length + ' השינויים הראשונים בלבד.'));
   const warnings = $('editWarnings'); clear(warnings);
+  if (report.replication) {
+    const reasons = { absent: 'נעדר', 'not-in-source': 'אינו במקור כוח האדם הפעיל',
+      'assigned-elsewhere': 'משובץ בתחנת קצה אחרת', 'role-not-in-policy': 'התפקיד אינו במדיניות',
+      past: 'יום שכבר חלף', 'outside-publication': 'מחוץ לטווח הפרסום', 'manual-exists': 'שיבוץ ידני קיים' };
+    const names = new Map(((state.setup && state.setup.people) || []).map(person => [person.id, person.name]));
+    for (const skip of report.replication.skipped_people || []) warnings.appendChild(node('div', 'change warn',
+      (names.get(skip.uid) || skip.uid) + ' · ' + dateLabel(skip.date) + ' · ' + (reasons[skip.reason] || skip.reason)));
+    for (const skip of report.replication.skipped_dates || []) warnings.appendChild(node('div', 'change warn',
+      dateLabel(skip.date) + ' · ' + (reasons[skip.reason] || skip.reason)));
+    for (const gap of report.replication.gaps || []) warnings.appendChild(node('div', 'change weak',
+      dateLabel(gap.date) + ' · ' + editStationLabel(gap.sub_station) + ' · שובצו ' + gap.placed + ' מתוך ' + gap.expected + ' בתבנית המקור'));
+  }
   /* ⭐ seq457 §2 · חוקי התחנה השתנו מאז הפרסום — נאמר במפורש, עם מספר השורות
    * שיושרו, ודורש אישור מפורש (תיבה) לפני הביצוע. */
   const policyBox = $('editPolicyChanged');
@@ -4475,12 +4551,13 @@ function editApplyAllowed() {
 }
 
 async function checkEdit() {
-  if (state.busy || !canEditSchedule() || !(state.editList && state.editList.length)) return;
+  if (state.busy || !canEditSchedule() || !(state.replication || (state.editList && state.editList.length))) return;
   const task = authTask();
   state.busy = true; $('editCheck').disabled = true; $('editApply').disabled = true;
+  renderEditList();
   message('editMessage', 'בודק את השינויים מול הסידור הפעיל…', 'info');
   try {
-    const report = (await call.editPreview(editPayload())).data;
+    const report = (await (state.replication ? call.replicationPreview : call.editPreview)(editPayload())).data;
     if (!authTaskCurrent(task)) return;
     state.editReport = report;
     renderEditReport(report);
@@ -4490,6 +4567,13 @@ async function checkEdit() {
     if (report.policy_changed && report.counts.changes && !editGapsBlock()) message('editMessage', 'חוקי התחנה השתנו מאז הפרסום — ' + report.policy_changed.rows_rebased + ' שורות יושרו. יש לאשר בתיבה לפני הביצוע.', 'warn');
     $('editApply').disabled = !!state.editPending ? false : !editApplyAllowed();
     if (state.editPending) message('editMessage', pendingEditText(), 'warn');
+    if (report.replication) {
+      const r = report.replication;
+      const skippedManual = r.skipped_dates.filter(day => day.reason === 'manual-exists').length;
+      message('editMessage', 'יוחלו ' + report.counts.changes + ' שינויים ב-' + report.counts.dates
+        + ' ימים · ' + skippedManual + ' ימים דולגו (שיבוץ ידני) · ' + r.summary.skipped_people
+        + ' דילוגי עובד/יום (היעדרות, שיבוץ אחר או אי־זכאות). יש לעיין בדוח לפני הפרסום.', 'info');
+    }
   } catch (error) {
     if (!authTaskCurrent(task)) return;
     state.editReport = null; $('editReport').hidden = true;
@@ -4499,7 +4583,8 @@ async function checkEdit() {
   } finally {
     if (authTaskCurrent(task)) {
       state.busy = false;
-      $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length);
+      $('editCheck').disabled = !canEditSchedule() || !(state.replication || (state.editList && state.editList.length));
+      renderEditList();
     }
   }
 }
@@ -4539,16 +4624,17 @@ async function applyEdit() {
   state.busy = true; $('editApply').disabled = true; $('editCheck').disabled = true;
   message('editMessage', pending ? 'שולח שוב את אותה בקשה…' : 'מבצע ומפרסם גרסה חדשה…', 'info');
   state.editPending = { payload };
+  renderEditList();
   try {
     const result = (await call.editApply(payload)).data;
     if (!authTaskCurrent(task)) return;
     /* ⭐ §7 · תשובה בלי מזהה פרסום וגרסה אינה קבלה — הבקשה נשארת ממתינה. */
     if (!receiptOk(result, ['publication_id', 'revision'])) throw malformedReceipt();
     state.editPending = null;
-    state.editList = []; state.editReport = null; renderEditList(); $('editReport').hidden = true;
+    state.editList = []; state.replication = null; state.replicationBase = null; state.editReport = null; renderEditList(); $('editReport').hidden = true;
     const deliveryText = state.status && state.status.mode === 'shadow'
       ? 'השינוי פעיל בסביבת הניסוי והפוש הוגבל לחשבון הבדיקה של התחנה.'
-      : (result.notified_people || 0) + ' עובדים קיבלו הודעה מסכמת אחת.';
+      : 'הוכנו הודעות ל־' + (result.notified_people || 0) + ' עובדים; מסירה עדיין לא אומתה.';
     message('editMessage', 'פורסמה גרסה ' + result.revision + (result.duplicate ? ' (הבקשה כבר בוצעה קודם)' : '') + '. '
       + deliveryText + ' אפשר לחזור לגרסה הקודמת מכפתור „חזור לגרסה הקודמת".', 'ok');
     await refreshStatusAfterEdit(task);
@@ -4576,7 +4662,8 @@ async function applyEdit() {
     if (authTaskCurrent(task)) {
       state.busy = false;
       $('editApply').disabled = !state.editPending;
-      $('editCheck').disabled = !canEditSchedule() || !(state.editList && state.editList.length) || !!state.editPending;
+      $('editCheck').disabled = !canEditSchedule() || !(state.replication || (state.editList && state.editList.length)) || !!state.editPending;
+      renderEditList();
     }
   }
 }
@@ -5166,6 +5253,14 @@ function finishManagerSetup(requestedTab, tabRevision) {
   setRollbackAvailability();
   updateImportDisplayAvailability();
   updateEditAvailability();
+  // The board may finish before manager setup. Repaint cached rows, not a
+  // second network request, so authenticated edit controls become available.
+  if (state.renderedStationDays && $('stationBoard')) {
+    const left = $('stationBoard').scrollLeft;
+    renderBoard($('stationContent'), state.renderedStationDays, { id:'stationBoard', showAbsences:true });
+    $('stationBoard').scrollLeft = left;
+    watchWeekLabel('stationBoard', 'stationWeek', state.renderedStationDays.length);
+  }
   if (state.tabChoiceRevision === tabRevision && state.tab !== requestedTab) chooseTab(requestedTab);
 }
 
@@ -5188,6 +5283,7 @@ $('managerSetupRetry').addEventListener('click', async () => {
 // כשירויות ומזהי ניסיון חוזר. כך כשל בטעינת התחנה הבאה אינו יכול
 // לחשוף או לשלוח מחדש תוכן מהתחנה הקודמת.
 function resetScopedWorkspace() {
+  state.renderedStationDays = null;
   Object.assign(state, {
     authContextVersion: state.authContextVersion + 1,
     managerSetupReady: false, tabChoiceRevision: 0,
@@ -5209,7 +5305,7 @@ function resetScopedWorkspace() {
     importPending: null, importRequestIds: {}, displayRequestIds: {}, displayPending: null,
     displayStatusSequence: state.displayStatusSequence + 1,
     editList: [], editPending: null, editPerson: null, editPersonSub: null,
-    editReport: null, editRequestIds: {}, role: null, sub_station: null,
+    editReport: null, replication: null, replicationBase: null, editRequestIds: {}, role: null, sub_station: null,
     absence: null, quals: null, intentRequestIds: {}, busy: false,
     month: null, tab: null, editDrawerOpen: false, editDrawerReturnFocus: null,
     editFormDirty: false, qualificationsDirty: false, gapPolicyDirty: false

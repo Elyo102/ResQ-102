@@ -7172,6 +7172,8 @@ exports.importScheduleSheet = onCall({ enforceAppCheck: true, timeoutSeconds: 30
 // 42H.2 · עריכת סידור שפורסם — אחראי סידור חי בלבד; revision חדש דרך publish.
 exports.previewScheduleEdit = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
   invokeSchedule('previewScheduleEdit', req));
+exports.previewScheduleReplication = onCall({ enforceAppCheck: true, memory: '512MiB' }, async (req) =>
+  invokeSchedule('previewScheduleReplication', req));
 exports.applyScheduleEdit = onCall({ enforceAppCheck: true, timeoutSeconds: 300, memory: '512MiB' }, async (req) =>
   invokeSchedule('applyScheduleEdit', req));
 // 42H.2 · קטלוג כשירויות ומחזיקים — אחראי סידור חי בלבד; CAS על revision, יומן.

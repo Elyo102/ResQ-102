@@ -33,6 +33,8 @@ assert.match(schedule, /delivery_policy === 'trial_control'[\s\S]*?activeTrialCo
 assert.match(schedule, /claims\.personal_lab_control === true/);
 assert.match(schedule, /activation_auth_time_ms/);
 assert.match(schedule, /getAuthUser\(String\(candidateValue\.person \|\| ''\)\)/);
-assert.match(schedule, /validateOutboxForSend\(ref, claimed\.lease_token, claimed\)/);
+// Trial sends mark provider entry only after the final Auth + Firestore fence.
+assert.match(schedule, /validateOutboxForSend\(ref, claimed\.lease_token, claimed, true\)/);
+assert.match(schedule, /if \(!ownsDeliveryAttempt\(value, candidateValue\)\) return false/);
 
 console.log('personal-live-lab wiring: passed');

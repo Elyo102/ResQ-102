@@ -312,13 +312,16 @@ check('outbox expiry and active-pointer are rechecked immediately before send', 
   const validation = runtime.slice(validateStart, start);
   const send = body.indexOf('await sendPush');
   const hook = body.lastIndexOf('await beforeOutboxSend', send);
-  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token, claimed)', send);
+  const guard = body.lastIndexOf('await validateOutboxForSend(ref, claimed.lease_token, claimed, true)', send);
   assert.ok(validateStart > -1 && start > validateStart && end > start && send > -1);
   assert.ok(hook > -1 && hook < guard && guard < send);
   assert.ok(validation.includes('return db.runTransaction(async (tx) => {'));
   assert.equal(validation.includes('let sendable'), false,
     'transaction retries must not leak an earlier callback decision');
   assert.ok(validation.includes('outboxExpired(value, now)'));
+  assert.ok(validation.includes('ownsDeliveryAttempt(value, candidateValue)'));
+  assert.ok(validation.includes('digest(scheduleDeliveryIntent(value)) !== candidateValue.delivery_payload_digest'));
+  assert.ok(validation.includes("provider_state: 'entered'"));
   assert.ok(validation.includes('publicationMatches(value, pointer, publication)'));
   assert.ok(validation.includes("'publication-not-active'"));
 });
@@ -544,7 +547,9 @@ check('a guard notice names the date, the hours and the place', () => {
   assert.ok(text.includes('shortDate(value.date)'), 'התאריך אינו בהתראה');
   assert.ok(text.includes('guardPlaceText(value)'), 'המקום אינו בהתראה');
   // ⭐ המקום נלקח ממסמך האבטחה החי שכבר נקרא, ולא מעותק ישן בתור.
-  assert.ok(runtime.includes('lease_token: leaseToken, place: live.place'));
+  assert.ok(runtime.includes('Object.assign({}, value, { place: live.place })'));
+  assert.ok(runtime.includes('const intent = guardDeliveryIntent(value, live)'));
+  assert.ok(runtime.includes('digest(guardDeliveryIntent(value, guard.data() || {})) !== claimed.delivery_payload_digest'));
   // והוא מנוקה לפני שהוא מגיע למסך נעול.
   const clean = runtime.slice(runtime.indexOf('function guardPlaceText(value)'),
     runtime.indexOf('function guardOutboxText(value)'));

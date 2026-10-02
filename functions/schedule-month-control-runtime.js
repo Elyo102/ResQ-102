@@ -3,10 +3,10 @@ const outboxFairScan=require('./schedule-outbox-fair-scan');
 const C=require('./schedule-month-authority');
 const SELECTED=Object.freeze(['getStatus','getManagerSetup','getModeOptions','setRuntimeMode','previewCutover','promoteToNew',
   'previewPolicy','savePolicy','previewSource','saveSource','runPlanner','previewScheduleImport','importScheduleSheet',
-  'previewScheduleEdit','applyScheduleEdit','getGapReport','getDraftPreview','getScheduleDisplayStatus','setScheduleDisplay',
+  'previewScheduleEdit','previewScheduleReplication','applyScheduleEdit','getGapReport','getDraftPreview','getScheduleDisplayStatus','setScheduleDisplay',
   'publish','rollback','getMy','getStation','getStationRange','getEffectiveWorkdays','getLegacyCompatibility','respond']);
 const READERS=new Set(['getStatus','getManagerSetup','getModeOptions','previewCutover','previewPolicy','previewSource','previewScheduleImport',
-  'previewScheduleEdit','getGapReport','getDraftPreview','getScheduleDisplayStatus','getMy','getStation','getStationRange','getEffectiveWorkdays','getLegacyCompatibility','effectiveWorkDaysForStation']);
+  'previewScheduleEdit','previewScheduleReplication','getGapReport','getDraftPreview','getScheduleDisplayStatus','getMy','getStation','getStationRange','getEffectiveWorkdays','getLegacyCompatibility','effectiveWorkDaysForStation']);
 function validateOutbox(ref,value,expectedSid){
   const match=/^stations\/([^/]+)\/schedule_publications\/([^/]+)\/schedule_outbox\/[^/]+$/.exec(String(ref && ref.path||''));
   if(!match || !value || value.station_id!==match[1] || value.publication_id!==match[2] || (expectedSid && match[1]!==expectedSid))C.fail('outbox-physical-scope');

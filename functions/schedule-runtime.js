@@ -15,6 +15,7 @@ const cutoverModule = require('./schedule-cutover');
 const sourceAuthorModule = require('./schedule-source-author');
 const sheetImport = require('./schedule-sheet-import');
 const scheduleEdit = require('./schedule-edit');
+const scheduleReplicate = require('./schedule-replicate');
 const qualifications = require('./schedule-qualifications');
 const rosterCandidates = require('./schedule-roster-candidates');
 const scheduleGaps = require('./schedule-gaps');
@@ -224,6 +225,8 @@ function createScheduleRuntime(deps) {
     ? d.beforeSnapshotWriteChunk : async function () {};
   const beforeOutboxSend = typeof d.beforeOutboxSend === 'function'
     ? d.beforeOutboxSend : async function () {};
+  const afterOutboxProvider = typeof d.afterOutboxProvider === 'function'
+    ? d.afterOutboxProvider : async function () {};
   const beforeEffectiveViewRecheck = typeof d.beforeEffectiveViewRecheck === 'function'
     ? d.beforeEffectiveViewRecheck : async function () {};
   // This seam exists only to prove that the final active-pointer read really
@@ -4354,19 +4357,48 @@ function createScheduleRuntime(deps) {
         authority_generation:resolved.generation,active:result.segments[0].value,available:result.segments[0].available};
   }
 
+  function replicationIntent(data) {
+    if (!hasOwn(data, 'replication')) return null;
+    const r = data.replication;
+    if (hasOwn(data, 'edits') || !plain(r) || Object.keys(r).some(k => !['source', 'month', 'mode'].includes(k))
+        || !plain(r.source) || Object.keys(r.source).some(k => !['date', 'sub_station'].includes(k))
+        || typeof r.source.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.source.date)
+        || !safeSubKey(r.source.sub_station) || typeof r.month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(r.month)
+        || r.source.date.slice(0, 7) !== r.month || !['skip_manual', 'override'].includes(r.mode || 'skip_manual')) {
+      throw new ScheduleRuntimeError('replicate-input', 'בקשת השכפול אינה תקינה.', 'invalid-argument');
+    }
+    return { source: { date: r.source.date, sub_station: r.source.sub_station }, month: r.month, mode: r.mode || 'skip_manual' };
+  }
+
+  function replicationToday() {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date(clock()));
+    return ['year', 'month', 'day'].map(type => parts.find(p => p.type === type).value).join('-');
+  }
+
+  function requireCurrentReplicationCutoff(draft) {
+    const replication = draft && draft.edit_report && draft.edit_report.replication;
+    if (replication && replication.not_before !== replicationToday()) {
+      throw new ScheduleRuntimeError('edit-report-stale',
+        'היום התחלף מאז בדיקת השכפול. יש לבדוק מחדש לפני הפרסום.', 'failed-precondition');
+    }
+  }
+
   async function scheduleEditBasis(ctx, req) {
     const config = await configuration(ctx.sid);
     requireRuntimeMode(config, [MODE.NEW, MODE.SHADOW]);
     const data = plain(req.data) ? req.data : {};
     const base = requestedEditBase(data);
+    const replication = replicationIntent(data);
+    let replicationPlan = null, replicationCutoff = null;
     // ⭐ קריאה מלאה של הפרסום הפעיל — החתימה מאומתת — ואז CAS מול מה שהמסך ראה.
     let active,monthEditBase=null,affectedMonths=null;
     if(monthAuthorityEnabled){
       const ref=stationRef(ctx.sid).collection('schedule_publications').doc(base.publication_id),snap=await ref.get(),meta=snap.exists?snap.data():null;
       if(!meta || meta.station_id!==ctx.sid || meta.status!=='active' || meta.snapshot_complete!==true)throw new ScheduleRuntimeError('edit-no-active','אין בסיס חתום לעריכה.');
       active={ref,meta,pointer:base,...await readSnapshot(ref,meta)};
-      let normalized;try{normalized=scheduleEdit.normalizeEdits(data.edits,{from:active.plan.from,to:active.plan.to});}catch(error){scheduleEditError(error);}
-      affectedMonths=Array.from(new Set(normalized.flatMap(edit=>edit.dates.map(date=>date.slice(0,7))))).sort();
+      let normalized=[];if(!replication)try{normalized=scheduleEdit.normalizeEdits(data.edits,{from:active.plan.from,to:active.plan.to});}catch(error){scheduleEditError(error);}
+      affectedMonths=replication ? [replication.month] : Array.from(new Set(normalized.flatMap(edit=>edit.dates.map(date=>date.slice(0,7))))).sort();
       const baseline=await monthAuthority.readBaseline(ctx.sid,affectedMonths);
       for(const month of affectedMonths){const owner=baseline.owners[month];
         if(!owner || owner.state==='unowned' || !editBaseMatches(owner,base))throw new ScheduleRuntimeError('edit-owner-mixed','העריכה כוללת חודש מבסיס אחר. יש לערוך כל בסיס בנפרד.','failed-precondition');
@@ -4415,12 +4447,35 @@ function createScheduleRuntime(deps) {
     let edits;
     let applied;
     try {
-      edits = scheduleEdit.normalizeEdits(data.edits, { from: active.plan.from, to: active.plan.to });
-      applied = scheduleEdit.applyEdits({
+      if (replication) {
+        replicationCutoff = replicationToday();
+        replicationPlan = scheduleReplicate.planReplication({ ...replication, not_before: replicationCutoff,
+          plan: active.plan, policy: editPolicy.value, people: editablePeople, station_id: ctx.sid });
+      }
+      const requestedEdits = replicationPlan ? replicationPlan.edits : data.edits;
+      edits = replicationPlan && !requestedEdits.length ? [] : scheduleEdit.normalizeEdits(requestedEdits, { from: active.plan.from, to: active.plan.to });
+      if (replication && monthEditBase) {
+        const owner = monthEditBase.owners[replication.month];
+        const dates = [replication.source.date, ...edits.flatMap(e => e.dates)];
+        if (dates.some(date => date < owner.coverage_from || date > owner.coverage_to)) {
+          throw new ScheduleRuntimeError('edit-date-unavailable', 'תאריך השכפול אינו מכוסה.');
+        }
+      }
+      applied = replicationPlan && !edits.length ? {
+        plan: active.plan, events: active.events, changes: [], warnings: [], warnings_total: 0,
+        warnings_truncated: false, people_changed: [], rows_rebased: 0,
+        counts: { edits: 0, changes: 0, people: 0, dates: 0, no_ops: 0 }
+      } : scheduleEdit.applyEdits({
         plan: active.plan, events: active.events, edits, people: editablePeople, policy: editPolicy.value,
         station_id: ctx.sid, rebase_policy: policyChanged
       });
-    } catch (error) { scheduleEditError(error); }
+      if (replication && applied.changes.length > MAX_EDIT_REPORT_CHANGES) {
+        throw new ScheduleRuntimeError('replicate-too-many-changes', 'השכפול יוצר יותר מ-400 שינויים; לא בוצע דבר.', 'resource-exhausted');
+      }
+    } catch (error) {
+      if (error && error.name === 'ScheduleReplicateError') throw new ScheduleRuntimeError(error.code, error.message, 'invalid-argument');
+      scheduleEditError(error);
+    }
     /* Do not create a hybrid snapshot. The current source decides who may be
      * edited and feeds the live gap gate, but the derived publication retains
      * the exact signed source contract, events and roster of its active base. */
@@ -4460,6 +4515,7 @@ function createScheduleRuntime(deps) {
      * הביצוע מקבל את החתימה שהמסך ראה — או סירוב. */
     const editDigest = digest({
       station_id: ctx.sid, base, edits,
+      ...(replication ? { replication, replication_cutoff: replicationCutoff } : {}),
       ...(monthAuthorityEnabled?{affected_months:affectedMonths,month_edit_base:monthEditBase}:{}),
       source: { snapshot_id: snapshotSourceId, snapshot_digest: active.plan.source_digest,
         current_id: source.id, current_digest: source.digest },
@@ -4472,7 +4528,7 @@ function createScheduleRuntime(deps) {
     return {
       ctx, config, data, base: Object.assign({}, base, { policy_digest: policy.digest }),
       policyChanged: policyChanged ? { from: active.plan.policy_digest, to: policy.digest, rows_rebased: applied.rows_rebased } : null,
-      sourceChanged, snapshotSourceId,
+      sourceChanged, snapshotSourceId, replication, replicationPlan, replicationCutoff,
       active, policy, editPolicy, source, people, edits, applied, effective, plan, planned, editDigest, gapReport,monthEditBase,affectedMonths
     };
   }
@@ -4489,6 +4545,9 @@ function createScheduleRuntime(deps) {
       .map((row) => ({ date: row.date, sub_station: row.sub_station, label: row.label, people: row.slots.length, minimum: row.minimum }));
     return {
       base: basis.base,
+      ...(basis.replication ? { replication: { ...basis.replication, not_before: basis.replicationCutoff,
+        summary: basis.replicationPlan.summary, skipped_dates: basis.replicationPlan.skipped_dates,
+        skipped_people: basis.replicationPlan.skipped_people, gaps: basis.replicationPlan.gaps } } : {}),
       from: basis.plan.from, to: basis.plan.to,
       counts: basis.applied.counts,
       changes: basis.applied.changes.slice(0, MAX_EDIT_REPORT_CHANGES).map((change) => Object.assign({}, change, {
@@ -4522,6 +4581,13 @@ function createScheduleRuntime(deps) {
     // הדוח נושא שמות — אימות חי אחרון אחרי כל הקריאות, לפני ההחזרה.
     await requireLiveManagerNow(ctx);
     return report;
+  }
+
+  async function previewScheduleReplication(req) {
+    if (!replicationIntent(plain(req.data) ? req.data : {})) {
+      throw new ScheduleRuntimeError('replicate-input', 'חסרה בקשת שכפול.', 'invalid-argument');
+    }
+    return previewScheduleEdit(req);
   }
 
   function stagedEditMatchesBasis(value, basis, fingerprint, expectedSnapshotDigest, report) {
@@ -4560,9 +4626,11 @@ function createScheduleRuntime(deps) {
     const requestId = requireId(data.request_id, 'request-id', 'מזהה הפעולה');
     const base = requestedEditBase(data);
     const expectedDigest = String(data.expected_edit_digest || '');
+    const replication = replicationIntent(data);
     const draftId = 'd_' + hash(ctx.sid + '|' + ctx.uid + '|' + requestId).slice(0, 40);
     const ref = stationRef(ctx.sid).collection('schedule_drafts').doc(draftId);
-    const fingerprintOf = (edits) => digest({ station_id: ctx.sid, uid: ctx.uid, requestId, base, edits, expected: expectedDigest });
+    const fingerprintOf = (edits) => digest({ station_id: ctx.sid, uid: ctx.uid, requestId, base,
+      ...(replication ? { replication } : { edits }), expected: expectedDigest });
     /* ⭐ ניסיון חוזר קודם לכל בדיקת בסיס: אחרי שהעריכה פורסמה המצביע כבר זז,
      * ובכל זאת אותה בקשה חייבת לקבל את אותה קבלה — לא „הבסיס השתנה". */
     const existing = await ref.get();
@@ -4571,7 +4639,7 @@ function createScheduleRuntime(deps) {
       const before = existing.data() || {};
       let edits;
       try {
-        edits = scheduleEdit.normalizeEdits(data.edits, { from: before.from, to: before.to });
+        edits = replication ? null : scheduleEdit.normalizeEdits(data.edits, { from: before.from, to: before.to });
       } catch (error) { scheduleEditError(error); }
       if (before.request_fingerprint !== fingerprintOf(edits)) {
         throw new ScheduleRuntimeError('request-conflict', 'אותו מזהה פעולה כבר שימש לעריכה אחרת.', 'already-exists');
@@ -4692,6 +4760,8 @@ function createScheduleRuntime(deps) {
        * ב-publish (action: publish + edited_from). */
       tx.create(stationRef(ctx.sid).collection('schedule_audit').doc('a_' + randomId()), {
         action: 'edit-draft', draft_id: draftId, request_id: requestId,
+        ...(basis.replication ? { origin: 'replicate', source_date: basis.replication.source.date,
+          source_sub_station: basis.replication.source.sub_station, replication_mode: basis.replication.mode } : {}),
         base_publication_id: base.publication_id, base_revision: base.revision,
         edit_digest: basis.editDigest, by: ctx.uid, at: FV.serverTimestamp(),
         policy_changed: basis.policyChanged, source_changed: basis.sourceChanged,
@@ -6018,9 +6088,20 @@ function createScheduleRuntime(deps) {
         const leaseUntil = timeMillis(value.lease_until);
         if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
       }
-      tx.update(ref, {
+      const legacyUnknown = status === 'sending' && !nonEmpty(value.delivery_attempt_id);
+      const uncertain = legacyUnknown || (status === 'sending'
+        && value.provider_state === 'entered'
+        && nonEmpty(value.delivery_attempt_id)
+        && value.delivery_ack_attempt_id !== value.delivery_attempt_id);
+      tx.update(ref, Object.assign({
         status: 'queued', queued_at: FV.serverTimestamp(), lease_token: null, lease_until: null
-      });
+      }, uncertain ? {
+        delivery_uncertain: true,
+        duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+        last_uncertain_attempt_id: value.delivery_attempt_id || 'legacy-untracked',
+        prior_acceptance_unknown: legacyUnknown || value.prior_acceptance_unknown === true,
+        provider_state: 'uncertain'
+      } : {}));
       queued = true;
     });
     return { queued, deliver };
@@ -6762,6 +6843,7 @@ function createScheduleRuntime(deps) {
       throw new ScheduleRuntimeError('draft-not-ready', 'הטיוטה אינה קיימת או טרם הושלמה.');
     }
     const draftMeta = draftSnap.data() || {};
+    requireCurrentReplicationCutoff(draftMeta);
     if (!nonEmpty(expectedContentDigest) || expectedContentDigest !== draftMeta.content_digest) {
       throw new ScheduleRuntimeError('draft-preview-required',
         'יש לפתוח ולבדוק את התצוגה המקדימה העדכנית לפני הפרסום.', 'failed-precondition');
@@ -7056,6 +7138,9 @@ function createScheduleRuntime(deps) {
       }
       const monthPlan=monthAuthorityEnabled?await monthAuthority.readAndValidate(tx,monthPrepared):null;
       if(monthPlan && monthPlan.replay)return;
+      // Recheck after all async transaction reads, before first activation.
+      // The successful publication receipt above remains replayable tomorrow.
+      requireCurrentReplicationCutoff(liveDraft);
       if(monthPlan)monthAuthority.applyWrites(tx,monthPlan);
       tx.update(pubRef, {
         status: 'active', activated_at: FV.serverTimestamp(), gap_report: gapRecord,
@@ -9517,11 +9602,33 @@ function createScheduleRuntime(deps) {
     throw error;
   }
 
-  async function cancelLeasedOutbox(ref, leaseToken, reason, policyReason, providerOutcome) {
+  function ownsDeliveryAttempt(value, claimed) {
+    return value.status === 'sending' && value.lease_token === claimed.lease_token
+      && nonEmpty(claimed.delivery_attempt_id)
+      && value.delivery_attempt_id === claimed.delivery_attempt_id
+      && value.delivery_operation_id === claimed.delivery_operation_id
+      && value.delivery_payload_digest === claimed.delivery_payload_digest;
+  }
+
+  function scheduleDeliveryIntent(value) {
+    const push = value.push || {};
+    return { station_id: String(value.station_id || ''), recipient_uid: String(value.person || ''),
+      type:'schedule_mine', title:push.title || 'ResQ · הסידור שלך', body:push.body || 'הסידור שלך עודכן',
+      url:'./schedule-management.html?tab=mine', important:true };
+  }
+
+  function guardDeliveryIntent(value, guard) {
+    const withPlace = Object.assign({}, value, {place:guard.place});
+    const message = guardOutboxText(withPlace), target = guardOutboxDelivery(withPlace);
+    return {station_id:String(value.station_id || ''), recipient_uid:String(value.recipient_uid || ''),
+      type:target.type, title:message.title, body:message.body, url:target.url, important:target.important};
+  }
+
+  async function cancelLeasedOutbox(ref, claimed, reason, policyReason, providerOutcome) {
     return (providerOutcome===true?outcomeTransaction:callback=>db.runTransaction(callback))(async (tx) => {
       const snap = await tx.get(ref);
       const value = snap.exists ? (snap.data() || {}) : {};
-      if (value.status === 'sending' && value.lease_token === leaseToken) {
+      if (ownsDeliveryAttempt(value, claimed)) {
         cancelOutbox(tx, ref, reason);
         if (policyReason) tx.update(ref, { policy_reason: policyReason });
         return true;
@@ -9530,7 +9637,7 @@ function createScheduleRuntime(deps) {
     });
   }
 
-  async function validateOutboxForSend(ref, leaseToken, claimed) {
+  async function validateOutboxForSend(ref, leaseToken, claimed, enterProvider) {
     const candidateValue = plain(claimed) ? claimed : {};
     let trialAuth = null;
     let trialAuthTerminal = false;
@@ -9549,7 +9656,8 @@ function createScheduleRuntime(deps) {
       const snap = await tx.get(ref);
       if (!snap.exists) return false;
       const value = snap.data() || {};
-      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
+      if (!ownsDeliveryAttempt(value, candidateValue)) return false;
+      if (digest(scheduleDeliveryIntent(value)) !== candidateValue.delivery_payload_digest) return false;
       const stationId = String(value.station_id || '');
       const publicationId = String(value.publication_id || '');
       const person = String(value.person || '');
@@ -9590,6 +9698,10 @@ function createScheduleRuntime(deps) {
       if (!recipientIsActive(checks[3], stationId)) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return false;
+      }
+      if (enterProvider === true) {
+        if (value.delivery_attempt_id !== candidateValue.delivery_attempt_id) return false;
+        tx.update(ref, { provider_state: 'entered', provider_entered_at: FV.serverTimestamp() });
       }
       return true;
     });
@@ -9636,12 +9748,35 @@ function createScheduleRuntime(deps) {
         cancelOutbox(tx, ref, 'recipient-inactive');
         return;
       }
+      const intent = scheduleDeliveryIntent(data);
+      const operationId = 'dop_' + hash('push-operation|' + ref.path).slice(0, 40);
+      const payloadDigest = digest(intent);
+      if ((nonEmpty(data.delivery_operation_id) && data.delivery_operation_id !== operationId)
+          || (nonEmpty(data.delivery_payload_digest) && data.delivery_payload_digest !== payloadDigest)) {
+        tx.update(ref, {
+          status: 'failed', last_error: 'DELIVERY_OPERATION_CONFLICT',
+          operation_conflict_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
       const leaseToken = 'l_' + randomId();
+      const attemptId = 'dat_' + randomId();
       tx.update(ref, {
         status: 'sending', claimed_at: FV.serverTimestamp(), lease_token: leaseToken,
-        lease_until: new Date(now + OUTBOX_LEASE_MS)
+        lease_until: new Date(now + OUTBOX_LEASE_MS),
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId,
+        delivery_semantics: 'at-least-once',
+        provider_state: 'not-entered',
+        provider_entered_at: null
       });
-      claimed = Object.assign({}, data, { lease_token: leaseToken });
+      claimed = Object.assign({}, data, intent, {
+        lease_token: leaseToken,
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId
+      });
     });
     if (!claimed) return { skipped: true };
     let providerEntered=false;
@@ -9649,7 +9784,8 @@ function createScheduleRuntime(deps) {
       await beforeOutboxSend(claimed);
       // The second transaction is as close as possible to the external call.
       // It closes pointer/mode/expiry changes that happened after the claim.
-      if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+      if (!await validateOutboxForSend(ref, claimed.lease_token, claimed,
+        claimed.delivery_policy !== 'trial_control')) return { skipped: true };
       if (claimed.delivery_policy === 'trial_control') {
         let currentAuth = null;
         try { currentAuth = await getAuthUser(String(claimed.person || '')); }
@@ -9662,22 +9798,26 @@ function createScheduleRuntime(deps) {
         }
         if (!trialAuthValid(currentAuth, String(claimed.person || ''),
           String(claimed.station_id || ''), Number(claimed.control_auth_time_ms))) {
-          await cancelLeasedOutbox(ref, claimed.lease_token, 'trial-control-inactive');
+          await cancelLeasedOutbox(ref, claimed, 'trial-control-inactive');
           return { skipped: true };
         }
         // Auth and Firestore cannot share one transaction.  Re-run the leased
         // Firestore fence after the final Auth lookup so a config/mode/pointer
         // change during that lookup is still observed before the provider.
-        if (!await validateOutboxForSend(ref, claimed.lease_token, claimed)) return { skipped: true };
+        if (!await validateOutboxForSend(ref, claimed.lease_token, claimed, true)) return { skipped: true };
       }
-      const push = claimed.push || {};
       providerEntered=true;
       const delivery = await sendPush(claimed.station_id, claimed.person, 'schedule_mine',
-        push.title || 'ResQ · הסידור שלך', push.body || 'הסידור שלך עודכן',
-        './schedule-management.html?tab=mine', true);
+        claimed.title, claimed.body, claimed.url, claimed.important);
+      await afterOutboxProvider({
+        ref_path: ref.path,
+        operation_id: claimed.delivery_operation_id,
+        attempt_id: claimed.delivery_attempt_id,
+        delivery
+      });
       const policyReason = pushPolicySuppression(delivery);
       if (policyReason) {
-        const cancelled = await cancelLeasedOutbox(ref, claimed.lease_token, 'station-policy', policyReason,true);
+        const cancelled = await cancelLeasedOutbox(ref, claimed, 'station-policy', policyReason,true);
         return cancelled ? { skipped: true, suppressed: true } : { skipped: true };
       }
       if (!delivery || Number(delivery.sent || 0) < 1) {
@@ -9688,10 +9828,14 @@ function createScheduleRuntime(deps) {
       const acknowledged = await outcomeTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
-        if (live.status === 'sending' && live.lease_token === claimed.lease_token) {
+        if (ownsDeliveryAttempt(live, claimed)) {
           tx.update(ref, {
             status: 'sent', sent_at: FV.serverTimestamp(), last_error: null,
             delivered_devices: Number(delivery.sent),
+            delivery_ack_attempt_id: claimed.delivery_attempt_id,
+            delivery_ack_at: FV.serverTimestamp(),
+            delivery_uncertain: false,
+            provider_state: 'acknowledged',
             lease_token: null, lease_until: null
           });
           return true;
@@ -9713,15 +9857,20 @@ function createScheduleRuntime(deps) {
       await (providerEntered?outcomeTransaction:callback=>db.runTransaction(callback))(async (tx) => {
         const snap = await tx.get(ref);
         const live = snap.exists ? (snap.data() || {}) : {};
-        if (live.status !== 'sending' || live.lease_token !== claimed.lease_token) return;
-        tx.update(ref, {
+        if (!ownsDeliveryAttempt(live, claimed)) return;
+        tx.update(ref, Object.assign({
           status: retry.status,
           attempt: retry.attempt,
           next_attempt_at: retry.next_attempt_at || null,
           last_error: retry.last_error,
           lease_token: null, lease_until: null,
           updated_at: FV.serverTimestamp()
-        });
+        }, providerEntered ? {
+          delivery_uncertain: true,
+          duplicate_risk_count: Number(live.duplicate_risk_count || 0) + 1,
+          last_uncertain_attempt_id: claimed.delivery_attempt_id,
+          provider_state: 'uncertain'
+        } : { provider_state: 'not-entered' }));
       });
       return { sent: false, status: retry.status };
     }
@@ -10034,23 +10183,23 @@ function createScheduleRuntime(deps) {
     };
   }
 
-  async function cancelLeasedGuardOutbox(ref, leaseToken, policyReason) {
+  async function cancelLeasedGuardOutbox(ref, claimed, policyReason) {
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const value = snap.exists ? (snap.data() || {}) : {};
-      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
+      if (!ownsDeliveryAttempt(value, claimed)) return false;
       cancelGuardOutbox(tx, ref, 'station-policy');
       tx.update(ref, { policy_reason: policyReason });
       return true;
     });
   }
 
-  async function validateGuardOutboxForSend(ref, leaseToken) {
+  async function validateGuardOutboxForSend(ref, claimed) {
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) return false;
       const value = snap.data() || {};
-      if (value.status !== 'sending' || value.lease_token !== leaseToken) return false;
+      if (!ownsDeliveryAttempt(value, claimed)) return false;
       const now = Date.parse(clock());
       if (outboxExpired(value, now)) {
         cancelGuardOutbox(tx, ref, 'outbox-expired');
@@ -10076,6 +10225,8 @@ function createScheduleRuntime(deps) {
         cancelGuardOutbox(tx, ref, 'recipient-inactive');
         return false;
       }
+      if (digest(guardDeliveryIntent(value, guard.data() || {})) !== claimed.delivery_payload_digest) return false;
+      tx.update(ref, { provider_state: 'entered', provider_entered_at: FV.serverTimestamp() });
       return true;
     });
   }
@@ -10113,38 +10264,67 @@ function createScheduleRuntime(deps) {
         cancelGuardOutbox(tx, ref, 'recipient-inactive');
         return;
       }
+      const live = guard && guard.exists ? (guard.data() || {}) : {};
+      const withPlace = Object.assign({}, value, { place: live.place });
+      const intent = guardDeliveryIntent(value, live);
+      const operationId = 'dop_' + hash('push-operation|' + ref.path).slice(0, 40);
+      const payloadDigest = digest(intent);
+      if ((nonEmpty(value.delivery_operation_id) && value.delivery_operation_id !== operationId)
+          || (nonEmpty(value.delivery_payload_digest) && value.delivery_payload_digest !== payloadDigest)) {
+        tx.update(ref, {
+          status: 'failed', last_error: 'DELIVERY_OPERATION_CONFLICT',
+          operation_conflict_at: FV.serverTimestamp(), lease_token: null, lease_until: null
+        });
+        return;
+      }
       const leaseToken = 'l_' + randomId();
+      const attemptId = 'dat_' + randomId();
       tx.update(ref, {
         status: 'sending',
         claimed_at: FV.serverTimestamp(),
         lease_token: leaseToken,
-        lease_until: new Date(now + OUTBOX_LEASE_MS)
+        lease_until: new Date(now + OUTBOX_LEASE_MS),
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId,
+        delivery_semantics: 'at-least-once',
+        provider_state: 'not-entered',
+        provider_entered_at: null
       });
       // ⭐ המקום נלקח ממסמך האבטחה **החי** שכבר נקרא כאן, ולא
       // מעותק ששמור בשורת התור. כך אין קריאה נוספת, והכתובת
       // שנשלחת היא זו שתקפה עכשיו ולא זו שהייתה כשהתור נוצר.
-      const live = guard && guard.exists ? (guard.data() || {}) : {};
-      claimed = Object.assign({}, value, {
-        lease_token: leaseToken, place: live.place
+      claimed = Object.assign({}, withPlace, intent, {
+        lease_token: leaseToken,
+        delivery_operation_id: operationId,
+        delivery_payload_digest: payloadDigest,
+        delivery_attempt_id: attemptId
       });
     });
     if (!claimed) return { skipped: true };
+    let providerEntered = false;
     try {
-      if (!await validateGuardOutboxForSend(ref, claimed.lease_token)) return { skipped: true };
-      const message = guardOutboxText(claimed);
-      const deliveryTarget = guardOutboxDelivery(claimed);
+      await beforeOutboxSend(claimed);
+      if (!await validateGuardOutboxForSend(ref, claimed)) return { skipped: true };
+      providerEntered = true;
       const delivery = await sendPush(
         claimed.station_id,
         claimed.recipient_uid,
-        deliveryTarget.type,
-        message.title,
-        message.body,
-        deliveryTarget.url,
-        deliveryTarget.important
+        claimed.type,
+        claimed.title,
+        claimed.body,
+        claimed.url,
+        claimed.important
       );
+      await afterOutboxProvider({
+        ref_path: ref.path,
+        operation_id: claimed.delivery_operation_id,
+        attempt_id: claimed.delivery_attempt_id,
+        delivery
+      });
       const policyReason = pushPolicySuppression(delivery);
       if (policyReason) {
-        const cancelled = await cancelLeasedGuardOutbox(ref, claimed.lease_token, policyReason);
+        const cancelled = await cancelLeasedGuardOutbox(ref, claimed, policyReason);
         return cancelled ? { skipped: true, suppressed: true } : { skipped: true };
       }
       if (!delivery || Number(delivery.sent || 0) < 1) {
@@ -10155,12 +10335,16 @@ function createScheduleRuntime(deps) {
       const acknowledged = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const value = snap.exists ? (snap.data() || {}) : {};
-        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return false;
+        if (!ownsDeliveryAttempt(value, claimed)) return false;
         tx.update(ref, {
           status: 'sent',
           sent_at: FV.serverTimestamp(),
           delivered_devices: Number(delivery.sent),
           last_error: null,
+          delivery_ack_attempt_id: claimed.delivery_attempt_id,
+          delivery_ack_at: FV.serverTimestamp(),
+          delivery_uncertain: false,
+          provider_state: 'acknowledged',
           lease_token: null,
           lease_until: null
         });
@@ -10177,8 +10361,8 @@ function createScheduleRuntime(deps) {
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const value = snap.exists ? (snap.data() || {}) : {};
-        if (value.status !== 'sending' || value.lease_token !== claimed.lease_token) return;
-        tx.update(ref, {
+        if (!ownsDeliveryAttempt(value, claimed)) return;
+        tx.update(ref, Object.assign({
           status: retrying ? 'retry' : 'failed',
           attempt: nextAttempt,
           next_attempt_at: retrying ? new Date(Date.parse(clock()) + wait) : null,
@@ -10186,7 +10370,12 @@ function createScheduleRuntime(deps) {
           lease_token: null,
           lease_until: null,
           updated_at: FV.serverTimestamp()
-        });
+        }, providerEntered ? {
+          delivery_uncertain: true,
+          duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+          last_uncertain_attempt_id: claimed.delivery_attempt_id,
+          provider_state: 'uncertain'
+        } : { provider_state: 'not-entered' }));
       });
       return { sent: false, status: retrying ? 'retry' : 'failed' };
     }
@@ -10237,12 +10426,23 @@ function createScheduleRuntime(deps) {
         const leaseUntil = timeMillis(value.lease_until);
         if (Number.isFinite(leaseUntil) && leaseUntil > now) return;
       }
-      tx.update(ref, {
+      const legacyUnknown = status === 'sending' && !nonEmpty(value.delivery_attempt_id);
+      const uncertain = legacyUnknown || (status === 'sending'
+        && value.provider_state === 'entered'
+        && nonEmpty(value.delivery_attempt_id)
+        && value.delivery_ack_attempt_id !== value.delivery_attempt_id);
+      tx.update(ref, Object.assign({
         status: 'queued',
         queued_at: FV.serverTimestamp(),
         lease_token: null,
         lease_until: null
-      });
+      }, uncertain ? {
+        delivery_uncertain: true,
+        duplicate_risk_count: Number(value.duplicate_risk_count || 0) + 1,
+        last_uncertain_attempt_id: value.delivery_attempt_id || 'legacy-untracked',
+        prior_acceptance_unknown: legacyUnknown || value.prior_acceptance_unknown === true,
+        provider_state: 'uncertain'
+      } : {}));
       queued = true;
     });
     return { queued, deliver };
@@ -10283,6 +10483,7 @@ function createScheduleRuntime(deps) {
     previewScheduleImport,
     importScheduleSheet,
     previewScheduleEdit,
+    previewScheduleReplication,
     applyScheduleEdit,
     getQualificationCatalog,
     saveQualification,
