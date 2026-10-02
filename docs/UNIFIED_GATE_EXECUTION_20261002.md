@@ -239,3 +239,84 @@ exercised, although its new exact rule explicitly denies writes. Owned demo-resq
 emulator was stopped. Initial Java argument quoting failed before startup and
 was repaired once; it did not touch production. The59 unchanged REST assertions
 were preserved, not rerun. No backup or release success is inferred from these.
+
+### Resumed capture outcome after policy commit 0c66a15
+
+The existing capture process (session 51623) completed with exit1:
+operationSucceeded:false,backupCreated:false,stage:capture,
+category:POLICY_UNCLASSIFIED. Authentication, request metadata and transport
+failure flags were all false. The seven classified patterns did not establish
+complete live-path coverage. No new capture, deployment, IAM change or secret
+rotation was started during this continuation. Existing artifacts were preserved.
+
+The root-only diagnostic explicitly does not validate nested coverage; its prior
+result cannot locate or classify the remaining gap. The sanitized capture output
+does not identify it. Do not invent a classification, exclude unknown records, or
+replace the failure with local_verified. A scoped, privacy-preserving diagnostic
+is still needed before another authorized capture.
+
+Current tracked product source remains 0c66a15. AGENTS.md already matches the
+requested autonomous-execution instructions. Local source inspection confirms
+recordMetrics declares RESQ_METRICS_HASH_KEY in its Functions secret binding;
+this is not proof of deployed runtime secret access. Final frozen gate remains
+0/57; a development percentage is not established by this operational check.
+
+### Authorized metadata diagnosis and HMAC metadata verification
+
+The resumed owner-authorized diagnosis uses a separate REST metadata interface
+(`listDocumentMetadata`, no `listDocuments` and no data payload), a field mask
+and partial-response selector, and rejection of any returned fields. A bounded
+probe must succeed before recursive enumeration, including missing parents.
+The original request/response/document limits and no-retry policy remain.
+Two independent PRE and POST reviews approved the diagnostic under the verified
+private destination/key ACL controls. It is not a backup or restore artifact.
+
+New synthetic evidence:16 metadata/parser assertions passed;3 additional private
+callback/redaction assertions passed via inline execution, then preserved as
+tests/backup-metadata-private-callback.mjs with repository-relative imports.
+The59 historical REST assertions were not rerun. Changed CLI syntax and diff
+checks passed (Git line-ending notices retained). Static scanning covered716
+tracked source files, with4106 path-call findings and6113 unresolved constructs:
+2411 possible wrappers,3639 dynamic paths/parents,59 computed calls,4 HTML
+external-script references. No parse failures occurred in this inventory.
+Lexical binding analysis is not scope-aware or full dynamic execution coverage;
+the unresolved inventory cannot authorize automatic policies.
+
+Read-only cloud metadata confirms deployed recordMetrics is ACTIVE, uses the
+shared Compute runtime identity, and has no RESQ_METRICS_HASH_KEY binding yet.
+Secret version1 is ENABLED; direct secret IAM bindings for that runtime are empty.
+The exact principal/secret/secretmanager.versions.access Policy Troubleshooter
+request returned HTTP403, with effective access NOT_ESTABLISHED. No payload,
+IAM mutation, impersonation, secret rotation or Functions deployment occurred.
+Do not infer access from the operator's credentials or synthetic Auth tests.
+Granting access to the shared runtime would affect other workloads using it;
+no such grant was made. Existing revokeRefreshTokens code remains preserved;
+real client reauthentication has not been tested on employee identities.
+
+One metadata-only recursive run was launched as session37964, with encrypted
+private evidence/readback required. Completion must be recorded separately;
+no policy gap, backup, final57 pass or deployment is inferred from launch.
+
+The metadata diagnostic completed exit0 with encrypted readback:217 collections,
+6414 existing documents,5 missing parents and90 unclassified documents. Private
+evidence is under _גיבוי/unified-20261002/metadata-diagnostic-a6b5dc8a-762a-42d2-88ce-21861c3785c3.
+Public output suppressed IDs and unknown labels. In-memory correlation to tracked
+source identified bulletin_rate_limits(3),bulletin_requests(11),
+schedule_identity_state(1),schedule_people(75). The latter two were resolved from
+the explicit COLLECTIONS contract and childRef wrapper, not guessed by the AST.
+
+Two PRE reviews approved nine exact policies: the four observed schemas plus
+schedule_source_bindings, schedule_person_link_index, schedule_identity_operations,
+schedule_identity_audit and global schedule_person_link_reservations. State is
+the exact current singleton. All nine are encrypted export/manual-only restore,
+restricted_identity, humanReadable forbidden, retention unresolved. Rate state is
+temporary and identity audit is audit_log. No identity replay, exclusion, TTL or
+deletion was introduced. Exact deny Rules preserve existing catch-all behavior.
+
+New evidence:78 policy/manual-plan assertions PASS; changed coverage200 paths
+PASS;150 emulator-only denial assertions PASS across three roles and ten paths,
+including exact singleton creation and unknown-state sibling. Expected denial
+diagnostics remain; emulator stopped intentionally with Ctrl-C. Reconciliation of
+the encrypted90 gap paths against the repaired policy gives zero unclassified
+paths in that observed interval, without another metadata scan. This is not a
+point-in-time guarantee, full backup or live deployment evidence.

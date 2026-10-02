@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {diagnoseMetadata} from '../ops-nested-policy-diagnostic.mjs';
+import {createRequire} from 'node:module';
+const policy=createRequire(import.meta.url)('../functions/backup-policy.js');
+const privatePaths=[];
+const api={listCollectionPaths:async p=>p?[]:['unknown'],listDocumentMetadata:async()=>({documents:[{path:'unknown/private-id',exists:true}]})};
+const r=await diagnoseMetadata(api,policy,new Set(),{onUnknown:p=>privatePaths.push(p)});
+assert.deepEqual(privatePaths,['unknown/private-id']);
+assert.ok(!JSON.stringify(r).includes('private-id'));
+assert.equal(r.unclassifiedPatterns[0].pattern,'{unknown_collection}/{id}');
+console.log(JSON.stringify({newCallbackAssertions:3,passed:3,liveReads:0}));

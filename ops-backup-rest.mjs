@@ -59,7 +59,8 @@ export function convertRestValue(value, prefix) {
 }
 export function createRestBackupApi({projectId, getCredential, fetchImpl=globalThis.fetch,
   timeoutMs=30000, maxRequests=10000, maxResponseBytes=16*1024*1024,
-  maxTotalBytes=128*1024*1024, maxDocuments=50000}) {
+  maxTotalBytes=128*1024*1024, maxDocuments=50000, metadataOnly=false}) {
+  requireThat(typeof metadataOnly === 'boolean');
   requireThat(projectId === 'station-102' || projectId === 'demo-resq');
   requireThat(typeof getCredential === 'function' && typeof fetchImpl === 'function');
   requireThat(Number.isInteger(timeoutMs) && timeoutMs>0 && timeoutMs<=60000);
@@ -113,10 +114,14 @@ export function createRestBackupApi({projectId, getCredential, fetchImpl=globalT
       } while(pageToken);
       return [...ids].map(id=>parent?`${parent}/${id}`:id);
     },
-    async listDocuments(collection,pageToken) {
+    async [metadataOnly ? 'listDocumentMetadata' : 'listDocuments'](collection,pageToken) {
       const encoded=location(collection,1); pageToken=token(pageToken);
       const pageKey=JSON.stringify([collection,pageToken||'']); requireThat(!seenPages.has(pageKey)); seenPages.add(pageKey);
       const query=new URLSearchParams({pageSize:'100',showMissing:'true'}); if(pageToken) query.set('pageToken',pageToken);
+      if(metadataOnly) {
+        query.set('mask.fieldPaths','__name__');
+        query.set('fields','documents(name,createTime,updateTime),nextPageToken');
+      }
       const result=await request(`${base}/${encoded}?${query}`);
       requireThat(Object.keys(result).every(k=>['documents','nextPageToken'].includes(k)));
       requireThat(result.documents === undefined || Array.isArray(result.documents));
@@ -125,11 +130,13 @@ export function createRestBackupApi({projectId, getCredential, fetchImpl=globalT
         requireThat(object(doc) && typeof doc.name==='string' && doc.name.startsWith(prefix+'/'));
         requireThat(Object.keys(doc).every(k=>['name','fields','createTime','updateTime'].includes(k)));
         requireThat(doc.fields===undefined || object(doc.fields));
+        if(metadataOnly) requireThat(doc.fields === undefined);
         const p=doc.name.slice(prefix.length+1); segments(p,0);
         requireThat(p.slice(0,p.lastIndexOf('/'))===collection && !seen.has(p) && !seenDocuments.has(p)); seen.add(p); seenDocuments.add(p);
         requireThat(++totalDocuments<=maxDocuments);
         const missing=doc.createTime===undefined && doc.updateTime===undefined && doc.fields===undefined;
         if(!missing) { timestamp(doc.createTime); timestamp(doc.updateTime); }
+        if(metadataOnly) return {path:p,exists:!missing};
         return {path:p,data:missing?null:convertRestFields(doc.fields===undefined ? {} : doc.fields,prefix)};
       });
       const nextPageToken=token(result.nextPageToken);

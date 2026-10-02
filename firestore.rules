@@ -2263,6 +2263,35 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Source-backed server-only bulletin and scheduling identity evidence.
+    match /stations/{sid}/bulletin_requests/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/bulletin_rate_limits/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_people/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_source_bindings/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_person_link_index/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_identity_state/current {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_identity_operations/{id} {
+      allow read, write: if false;
+    }
+    match /stations/{sid}/schedule_identity_audit/{id} {
+      allow read, write: if false;
+    }
+    match /schedule_person_link_reservations/{id} {
+      allow read, write: if false;
+    }
+
     // ---------- ברירת מחדל: הכל חסום ----------
 
     match /{document=**} {
